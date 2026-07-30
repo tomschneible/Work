@@ -1,7 +1,14 @@
 # Bubble Sheet Scanner
 
-Extracts multiple-choice answers from scanned bubble sheets into an Excel
-spreadsheet.
+Extracts multiple-choice answers into an Excel spreadsheet, from either:
+
+- **scanned/photographed bubble sheets** (`bubble_scanner.cli`) — image
+  processing against a geometry template, described below, or
+- **text-based "Score Details" report PDFs** (`bubble_scanner.score_report_cli`)
+  such as the College Board SAT/PSAT Suite report — text parsing of the
+  "Questions Overview" table, no image processing involved. See "Score
+  report PDFs" below; everything else in this README is about the
+  bubble-sheet path.
 
 - By default, odd-numbered questions use choices **A, B, C, D** and
   even-numbered questions use **F, G, H, J** — the standard ACT convention
@@ -43,6 +50,36 @@ answer sheet (English/Math/Reading/Science); use
 `templates/default_template.yaml` as a starting point for any other layout
 (see "Building your own template").
 
+## Score report PDFs
+
+Some answers don't come from a scanned sheet at all — services like the
+College Board SAT/PSAT Suite provide a "Score Details" PDF export with a
+text-based "Questions Overview" table (Question | Section | Correct Answer
+| Your Answer | Actions). For these, use the separate `score_report_cli`
+instead of the bubble-sheet pipeline — no template or image processing
+needed, just text parsing:
+
+```bash
+python -m bubble_scanner.score_report_cli \
+  --input Score_Details.pdf \
+  --output answers.xlsx
+```
+
+`--input` accepts one or more PDFs and/or directories of them, combined
+into one spreadsheet with columns `Source | Module | Question | Section |
+Your Answer`. Only the plain answer value is kept (e.g. `D`, `18`,
+`11/28`) — the "; Correct"/"; Incorrect" suffix and Correct Answer column
+are dropped, since only what the student answered matters here. A
+`Module` counter increments whenever question numbering restarts (these
+reports commonly have several same-named sections, e.g. two "Reading and
+Writing" modules, each numbered 1..N), so rows stay unambiguous even
+though the raw "Question" number repeats.
+
+This path is implemented in `bubble_scanner/score_report.py` (parsing) and
+`bubble_scanner/score_report_export.py` (spreadsheet export); tests build
+synthetic report PDFs (`tests/score_report_synth.py`) rather than
+committing a real (likely personal/copyrighted) score report.
+
 ## macOS drag-and-drop app
 
 You can turn this into a real `.app` icon on a Mac: drop one or more PDFs/
@@ -50,6 +87,12 @@ images onto it and it writes a timestamped spreadsheet to your Desktop and
 opens it automatically. This still requires a one-time Python setup (there's
 no way to produce a fully standalone, dependency-free executable without
 building on macOS itself), but after that it's just an icon.
+
+`scripts/mac_droplet.sh` currently wraps the bubble-sheet pipeline
+(`bubble_scanner.cli`) only; score report PDFs need
+`bubble_scanner.score_report_cli` from the command line for now (a second
+droplet, or one that auto-detects which kind of PDF was dropped, is a
+straightforward follow-up if useful).
 
 **One-time setup** (Terminal):
 
