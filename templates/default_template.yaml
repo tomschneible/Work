@@ -1,0 +1,46 @@
+# Example / starting-point template for a 50-question, 2-column bubble
+# sheet. Tune these numbers against a real scan of your sheet:
+#
+#   1. Print your sheet and fill in a few known bubbles.
+#   2. Scan/photograph it and run the pipeline once.
+#   3. If detected positions are off, adjust x_start/y_start/row_height/
+#      bubble_spacing_x below (all in pixels, measured on an image resized
+#      to page.width x page.height) and re-run.
+#
+# Odd-numbered questions use F/G/H/J, even-numbered use A/B/C/D (per
+# bubble_scanner.template.Template.choices_for), so column geometry only
+# needs a single x_start per column — both choice sets have 4 options.
+
+page:
+  width: 1700
+  height: 2200
+
+columns:
+  - first_question: 1
+    last_question: 25
+    x_start: 260
+    y_start: 320
+    row_height: 62
+  - first_question: 26
+    last_question: 50
+    x_start: 980
+    y_start: 320
+    row_height: 62
+
+bubble_spacing_x: 55
+bubble_radius: 16
+
+choices:
+  even: [A, B, C, D]
+  odd: [F, G, H, J]
+
+thresholds:
+  # Minimum fraction of a bubble's interior that must be dark to count as
+  # a mark at all. Lower this if light/partial pencil marks are being
+  # missed; raise it if scan noise is being read as marks.
+  fill_ratio_min: 0.35
+  # How close another bubble's fill ratio must be to the darkest bubble in
+  # the same question to also be treated as marked (this is what flags
+  # MULTIPLE answers). Raise it to be more sensitive to double-bubbling;
+  # lower it if single, slightly-uneven marks are being flagged as multiple.
+  relative_margin: 0.15
