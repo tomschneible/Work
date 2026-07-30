@@ -10,6 +10,11 @@ Extracts multiple-choice answers into an Excel spreadsheet, from either:
   report PDFs" below; everything else in this README is about the
   bubble-sheet path.
 
+`bubble_scanner.auto_cli` combines both: point it at a mix of scanned
+sheets and score-report PDFs and it auto-detects each file's type and
+routes it accordingly (see "macOS drag-and-drop app"), which is what the
+Mac droplet app uses.
+
 - By default, odd-numbered questions use choices **A, B, C, D** and
   even-numbered questions use **F, G, H, J** — the standard ACT convention
   (`bubble_scanner/template.py:Template.choices_for`). This is configurable
@@ -82,17 +87,19 @@ committing a real (likely personal/copyrighted) score report.
 
 ## macOS drag-and-drop app
 
-You can turn this into a real `.app` icon on a Mac: drop one or more PDFs/
-images onto it and it writes a timestamped spreadsheet to your Desktop and
-opens it automatically. This still requires a one-time Python setup (there's
-no way to produce a fully standalone, dependency-free executable without
-building on macOS itself), but after that it's just an icon.
+You can turn this into a real `.app` icon on a Mac: drop scanned bubble
+sheets, score-report PDFs, or a mix of both onto it, and it writes a
+timestamped spreadsheet to your Desktop and opens it automatically. This
+still requires a one-time Python setup (there's no way to produce a fully
+standalone, dependency-free executable without building on macOS itself),
+but after that it's just an icon.
 
-`scripts/mac_droplet.sh` currently wraps the bubble-sheet pipeline
-(`bubble_scanner.cli`) only; score report PDFs need
-`bubble_scanner.score_report_cli` from the command line for now (a second
-droplet, or one that auto-detects which kind of PDF was dropped, is a
-straightforward follow-up if useful).
+`scripts/mac_droplet.sh` calls `bubble_scanner.auto_cli`, which
+auto-detects each dropped file's type (images are always treated as
+bubble sheets; a PDF is treated as a score report if it actually parses
+as one, otherwise as a scanned bubble sheet) and routes it accordingly.
+Mixed drops land as two tabs in one spreadsheet: "Bubble Sheet Answers"
+and "Score Report Answers".
 
 **One-time setup** (Terminal):
 
@@ -122,15 +129,17 @@ chmod +x scripts/mac_droplet.sh
 5. **File → Save**, name it `Bubble Sheet Scanner`, and save it as an
    **Application** (e.g. to your Desktop or Applications folder).
 
-**To use it:** drag one or more scanned PDFs/images onto the app's icon. It
-writes `~/Desktop/bubble_scan_results_<timestamp>.xlsx` and opens it. Errors
-(e.g. missing setup, a page the pipeline couldn't read) show as a macOS
-alert dialog instead of silently failing, since a droplet app has no
-visible terminal.
+**To use it:** drag one or more scanned PDFs/images and/or score-report
+PDFs onto the app's icon, in any mix. It writes
+`~/Desktop/scanned_answers_<timestamp>.xlsx` and opens it. Errors (e.g.
+missing setup, a page the pipeline couldn't read) show as a macOS alert
+dialog instead of silently failing, since a droplet app has no visible
+terminal.
 
-By default the droplet scores against `templates/act_answer_sheet.yaml`. To
-point it at a different template, add an env var line before the script
-call in the same Automator action:
+By default any bubble-sheet inputs are scored against
+`templates/act_answer_sheet.yaml` (score-report PDFs don't need a template
+at all). To point bubble-sheet scoring at a different template, add an env
+var line before the script call in the same Automator action:
 
 ```bash
 export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
