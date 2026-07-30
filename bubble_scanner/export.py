@@ -1,10 +1,10 @@
 """Write sheet results to an .xlsx spreadsheet.
 
-Layout: one "Overview" tab summarizing every scanned sheet (alignment,
-grid-detection fallbacks, whether anything needs review), plus one tab
-per scanned sheet with a "Question" column and one column per section
-(e.g. English, Mathematics, Reading, Science) -- matching the sheet's own
-layout rather than one column per individual question.
+Layout: one tab per scanned sheet, each with a "Question" column and one
+column per section (e.g. English, Mathematics, Reading, Science) --
+matching the sheet's own layout rather than one column per individual
+question. The first sheet's tab is the workbook's active tab, so the
+output lands there when opened.
 """
 from __future__ import annotations
 
@@ -49,32 +49,6 @@ def _safe_sheet_title(label: str, used: Dict[str, int]) -> str:
     return title[: 31 - len(suffix)] + suffix
 
 
-def _write_overview(wb: Workbook, results: List[SheetResult], sheet_titles: List[str]) -> None:
-    ws = wb.create_sheet(title="Overview")
-    header = ["Sheet", "Tab", "Alignment", "Grid Detection", "Needs Review"]
-    ws.append(header)
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-
-    for result, tab_title in zip(results, sheet_titles):
-        grid_detection = (
-            "fixed coordinates (" + ", ".join(result.fallback_sections) + ")"
-            if result.fallback_sections
-            else "auto-detected"
-        )
-        row = [
-            result.label,
-            tab_title,
-            "contour" if result.used_contour_alignment else "resized (no border found)",
-            grid_detection,
-            "YES" if result.has_review_items else "",
-        ]
-        ws.append(row)
-
-    for col_index in range(1, len(header) + 1):
-        ws.column_dimensions[get_column_letter(col_index)].width = 22
-
-
 def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) -> None:
     header = ["Question"] + sections
     ws.append(header)
@@ -114,9 +88,10 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
 
 
 def add_bubble_sheet_answers_sheet(wb: Workbook, results: List[SheetResult], title: str = "") -> None:
-    """Add an Overview tab plus one tab per scanned sheet to an existing
-    workbook (used both standalone by write_xlsx and alongside a
-    score-report sheet when a batch mixes both input types).
+    """Add one tab per scanned sheet to an existing workbook (used both
+    standalone by write_xlsx and alongside a score-report sheet when a
+    batch mixes both input types). The first sheet's tab becomes the
+    workbook's active tab.
 
     `title` is accepted for backwards compatibility but no longer names a
     single combined tab, since each sheet now gets its own tab.
@@ -129,11 +104,12 @@ def add_bubble_sheet_answers_sheet(wb: Workbook, results: List[SheetResult], tit
     used_titles: Dict[str, int] = {}
     sheet_titles = [_safe_sheet_title(r.label, used_titles) for r in results]
 
-    _write_overview(wb, results, sheet_titles)
-
+    first_index = len(wb.worksheets)
     for result, tab_title in zip(results, sheet_titles):
         ws = wb.create_sheet(title=tab_title)
         _write_sheet_tab(ws, result, sections)
+
+    wb.active = first_index
 
 
 def write_xlsx(results: List[SheetResult], output_path: str | Path) -> None:

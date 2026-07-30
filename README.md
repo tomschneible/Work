@@ -98,9 +98,9 @@ but after that it's just an icon.
 auto-detects each dropped file's type (images are always treated as
 bubble sheets; a PDF is treated as a score report if it actually parses
 as one, otherwise as a scanned bubble sheet) and routes it accordingly.
-Bubble sheets land in an "Overview" tab plus one tab per sheet (see
-"How it works" below); any score-report PDFs land in a separate
-"Score Report Answers" tab -- all in the same spreadsheet.
+Each bubble sheet gets its own tab (see "How it works" below), opening on
+the first one; any score-report PDFs land in a separate "Score Report
+Answers" tab -- all in the same spreadsheet.
 
 **One-time setup** (Terminal). Copy this block exactly -- do not leave in
 any `<` `>` placeholder characters, since those are shell redirection
@@ -186,7 +186,7 @@ export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
    corrected by that section's own median observed shift, so one bad
    contour doesn't sink the section. A section only falls back to raw,
    uncorrected template coordinates if detection can't establish the
-   expected structure at all -- see "Grid Detection" in the Overview tab.
+   expected structure at all (rare, and only on a genuinely poor scan).
 5. **Detect marks** (`bubble_scanner/detect.py`) — thresholds the image once
    per sheet using `max(B, G, R)` per pixel (equivalent to HSV "Value")
    rather than grayscale luminance, then measures what fraction of each
@@ -198,15 +198,14 @@ export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
    relative margin of the darkest bubble in that question — this is what
    allows partial/light marks through while still catching genuine
    double-bubbling.
-6. **Export** (`bubble_scanner/export.py`) — an "Overview" tab summarizing
-   every scanned sheet (alignment, grid detection fallbacks, whether
-   anything needs review), plus one tab per scanned sheet with a Question
-   column and one column per section (e.g. English, Mathematics, Reading,
-   Science) — matching the sheet's own layout rather than one column per
-   individual question. Blank answers are highlighted amber, `MULTIPLE`
-   answers red (with the candidate letters in a cell comment), and
-   low-confidence detections (marked but only marginally above the floor)
-   are italicized for manual review.
+6. **Export** (`bubble_scanner/export.py`) — one tab per scanned sheet, with
+   a Question column and one column per section (e.g. English, Mathematics,
+   Reading, Science) — matching the sheet's own layout rather than one
+   column per individual question. The output opens on the first sheet's
+   tab. Blank answers are highlighted amber, `MULTIPLE` answers red (with
+   the candidate letters in a cell comment), and low-confidence detections
+   (marked but only marginally above the floor) are italicized for manual
+   review.
 
 ## Building your own template
 

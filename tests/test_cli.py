@@ -55,7 +55,8 @@ def test_cli_accepts_multiple_input_paths(tmp_path):
     assert output_path.exists()
 
     wb = load_workbook(output_path)
-    assert set(wb.sheetnames) == {"Overview", "a", "b"}
+    assert set(wb.sheetnames) == {"a", "b"}
+    assert wb.active.title == "a"
 
     ws_a = wb["a"]
     assert [c.value for c in ws_a[1]] == ["Question", "Answers"]
