@@ -91,11 +91,12 @@ def test_auto_cli_produces_two_tabs_for_mixed_input(tmp_path):
 
     assert exit_code == 0
     wb = load_workbook(output_path)
-    assert set(wb.sheetnames) == {"Bubble Sheet Answers", "Score Report Answers"}
+    assert set(wb.sheetnames) == {"Overview", "sheet", "Score Report Answers"}
 
-    bubble_ws = wb["Bubble Sheet Answers"]
-    bubble_row = list(bubble_ws.iter_rows(min_row=2, values_only=True))[0]
-    assert bubble_row[3:5] == ("F", "A")
+    bubble_ws = wb["sheet"]
+    assert [c.value for c in bubble_ws[1]] == ["Question", "Answers"]
+    assert bubble_ws.cell(row=2, column=2).value == "F"  # Q1
+    assert bubble_ws.cell(row=3, column=2).value == "A"  # Q2
 
     score_ws = wb["Score Report Answers"]
     score_rows = list(score_ws.iter_rows(min_row=2, values_only=True))
@@ -115,7 +116,7 @@ def test_auto_cli_handles_bubble_only_input_without_requiring_score_reports(tmp_
 
     assert exit_code == 0
     wb = load_workbook(output_path)
-    assert wb.sheetnames == ["Bubble Sheet Answers"]
+    assert wb.sheetnames == ["Overview", "sheet"]
 
 
 def test_auto_cli_handles_score_report_only_input_without_needing_a_valid_template(tmp_path):

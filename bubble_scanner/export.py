@@ -1,13 +1,22 @@
-"""Write sheet results to an .xlsx spreadsheet."""
+"""Write sheet results to an .xlsx spreadsheet.
+
+Layout: one "Overview" tab summarizing every scanned sheet (alignment,
+grid-detection fallbacks, whether anything needs review), plus one tab
+per scanned sheet with a "Question" column and one column per section
+(e.g. English, Mathematics, Reading, Science) -- matching the sheet's own
+layout rather than one column per individual question.
+"""
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 
 from .pipeline import SheetResult
 
@@ -15,63 +24,82 @@ BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="so
 MULTIPLE_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
-FIXED_COLUMNS = ["Sheet", "Alignment", "Needs Review"]
+_INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
 
 
-def _column_order(results: List[SheetResult]) -> List[Tuple[str, int]]:
-    """(section, question) keys in the order they should appear as columns,
-    following the order questions were produced in (i.e. the template's
-    declared section/column order), taking the union across all sheets in
-    case sheets were scored against slightly different templates."""
-    seen = set()
-    order = []
+def _section_order(results: List[SheetResult]) -> List[str]:
+    """Section names in first-seen order (i.e. the template's declared
+    order), taking the union across all sheets in case they were scored
+    against slightly different templates."""
+    seen: List[str] = []
     for result in results:
         for q in result.questions:
-            key = (q.section, q.question)
-            if key not in seen:
-                seen.add(key)
-                order.append(key)
-    return order
+            if q.section not in seen:
+                seen.append(q.section)
+    return seen
 
 
-def add_bubble_sheet_answers_sheet(
-    wb: Workbook, results: List[SheetResult], title: str = "Bubble Sheet Answers"
-) -> None:
-    """Add a worksheet with bubble-sheet results to an existing workbook
-    (used both standalone by write_xlsx and alongside a score-report sheet
-    when a batch mixes both input types)."""
-    if not results:
-        raise ValueError("No results to export")
+def _safe_sheet_title(label: str, used: Dict[str, int]) -> str:
+    title = _INVALID_SHEET_NAME_CHARS.sub("_", label)[:31] or "Sheet"
+    if title not in used:
+        used[title] = 0
+        return title
+    used[title] += 1
+    suffix = f" ({used[title]})"
+    return title[: 31 - len(suffix)] + suffix
 
-    columns = _column_order(results)
 
-    ws = wb.create_sheet(title=title)
-
-    header = FIXED_COLUMNS + [f"{section}_Q{question}" for section, question in columns]
+def _write_overview(wb: Workbook, results: List[SheetResult], sheet_titles: List[str]) -> None:
+    ws = wb.create_sheet(title="Overview")
+    header = ["Sheet", "Tab", "Alignment", "Grid Detection", "Needs Review"]
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
-    num_fixed = len(FIXED_COLUMNS)
-
-    for result in results:
-        by_key = {(q.section, q.question): q for q in result.questions}
+    for result, tab_title in zip(results, sheet_titles):
+        grid_detection = (
+            "fixed coordinates (" + ", ".join(result.fallback_sections) + ")"
+            if result.fallback_sections
+            else "auto-detected"
+        )
         row = [
             result.label,
+            tab_title,
             "contour" if result.used_contour_alignment else "resized (no border found)",
+            grid_detection,
             "YES" if result.has_review_items else "",
         ]
-        for key in columns:
-            q = by_key.get(key)
+        ws.append(row)
+
+    for col_index in range(1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(col_index)].width = 22
+
+
+def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) -> None:
+    header = ["Question"] + sections
+    ws.append(header)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    by_section: Dict[str, Dict[int, "object"]] = {name: {} for name in sections}
+    for q in result.questions:
+        by_section[q.section][q.question] = q
+
+    max_questions = max((max(qs.keys(), default=0) for qs in by_section.values()), default=0)
+
+    for row_num in range(1, max_questions + 1):
+        row = [row_num]
+        for name in sections:
+            q = by_section[name].get(row_num)
             row.append(q.answer if q else "")
         ws.append(row)
 
         row_index = ws.max_row
-        for col_offset, key in enumerate(columns, start=1):
-            q = by_key.get(key)
+        for col_offset, name in enumerate(sections, start=2):
+            q = by_section[name].get(row_num)
             if q is None:
                 continue
-            cell = ws.cell(row=row_index, column=num_fixed + col_offset)
+            cell = ws.cell(row=row_index, column=col_offset)
             if q.answer == "MULTIPLE":
                 cell.fill = MULTIPLE_FILL
                 cell.comment = Comment(", ".join(q.candidates), "bubble_scanner")
@@ -80,8 +108,32 @@ def add_bubble_sheet_answers_sheet(
             if q.low_confidence:
                 cell.font = LOW_CONFIDENCE_FONT
 
-    for col_index in range(1, len(header) + 1):
-        ws.column_dimensions[get_column_letter(col_index)].width = 12
+    ws.column_dimensions["A"].width = 10
+    for col_index in range(2, len(header) + 1):
+        ws.column_dimensions[get_column_letter(col_index)].width = 14
+
+
+def add_bubble_sheet_answers_sheet(wb: Workbook, results: List[SheetResult], title: str = "") -> None:
+    """Add an Overview tab plus one tab per scanned sheet to an existing
+    workbook (used both standalone by write_xlsx and alongside a
+    score-report sheet when a batch mixes both input types).
+
+    `title` is accepted for backwards compatibility but no longer names a
+    single combined tab, since each sheet now gets its own tab.
+    """
+    if not results:
+        raise ValueError("No results to export")
+
+    sections = _section_order(results)
+
+    used_titles: Dict[str, int] = {}
+    sheet_titles = [_safe_sheet_title(r.label, used_titles) for r in results]
+
+    _write_overview(wb, results, sheet_titles)
+
+    for result, tab_title in zip(results, sheet_titles):
+        ws = wb.create_sheet(title=tab_title)
+        _write_sheet_tab(ws, result, sections)
 
 
 def write_xlsx(results: List[SheetResult], output_path: str | Path) -> None:

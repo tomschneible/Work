@@ -5,11 +5,12 @@ tolerance for light or partial marks.
 from __future__ import annotations
 
 import dataclasses
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 
+from . import grid_detect
 from .template import Bubble, Template
 
 
@@ -67,9 +68,13 @@ def _bubble_fill_ratio(binary: np.ndarray, x: int, y: int, radius: int) -> float
     return marked / total
 
 
-def score_bubbles(binary: np.ndarray, bubbles: List[Bubble], radius: int) -> Dict[str, float]:
-    """Score already-binarized image regions covered by each bubble."""
-    return {b.choice: _bubble_fill_ratio(binary, b.x, b.y, radius) for b in bubbles}
+def score_bubbles(binary: np.ndarray, bubbles: List[Tuple[str, int, int]], radius: int) -> Dict[str, float]:
+    """Score already-binarized image regions covered by each bubble.
+
+    `bubbles` is a list of (choice, x, y) tuples, wherever they came from
+    (a template's nominal coordinates or grid_detect's per-sheet detected
+    positions)."""
+    return {choice: _bubble_fill_ratio(binary, x, y, radius) for choice, x, y in bubbles}
 
 
 def decide_answer(
@@ -107,15 +112,33 @@ def decide_answer(
     return "MULTIPLE", candidates, low_confidence
 
 
-def evaluate_sheet(image: np.ndarray, template: Template) -> List[QuestionResult]:
+def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[QuestionResult], List[str]]:
+    """Score every bubble on a sheet.
+
+    Returns (results, sections_using_fixed_coordinates) -- the second list
+    names any sections where grid_detect couldn't establish the expected
+    bubble layout on this specific sheet and fell back to the template's
+    fixed nominal coordinates uncorrected, which is a real accuracy risk
+    (see grid_detect module docstring) worth surfacing to the caller.
+    """
     binary = binarize(image)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     all_bubbles = template.bubbles()
     results = []
+    fallback_sections = []
     # Iterate in template-declared section order (not dict/alphabetical order)
     # so output columns follow the sheet's actual layout.
     for section in template.sections:
+        detected = grid_detect.locate_section_bubbles(gray, template, section)
+        if detected is None:
+            fallback_sections.append(section.name)
+
         for question in range(1, section.num_questions + 1):
-            bubbles = all_bubbles[(section.name, question)]
+            if detected is not None:
+                bubbles = detected[question]
+            else:
+                bubbles = [(b.choice, b.x, b.y) for b in all_bubbles[(section.name, question)]]
+
             fill_ratios = score_bubbles(binary, bubbles, template.bubble_radius)
             answer, candidates, low_confidence = decide_answer(
                 fill_ratios,
@@ -132,4 +155,4 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> List[QuestionResult
                     low_confidence=low_confidence,
                 )
             )
-    return results
+    return results, fallback_sections

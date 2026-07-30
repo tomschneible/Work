@@ -98,8 +98,9 @@ but after that it's just an icon.
 auto-detects each dropped file's type (images are always treated as
 bubble sheets; a PDF is treated as a score report if it actually parses
 as one, otherwise as a scanned bubble sheet) and routes it accordingly.
-Mixed drops land as two tabs in one spreadsheet: "Bubble Sheet Answers"
-and "Score Report Answers".
+Bubble sheets land in an "Overview" tab plus one tab per sheet (see
+"How it works" below); any score-report PDFs land in a separate
+"Score Report Answers" tab -- all in the same spreadsheet.
 
 **One-time setup** (Terminal). Copy this block exactly -- do not leave in
 any `<` `>` placeholder characters, since those are shell redirection
@@ -172,22 +173,40 @@ export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
    more question columns (start position + row spacing), plus bubble
    spacing/radius and the two choice sets. Bubble pixel coordinates are
    derived from this, not hardcoded.
-4. **Detect** (`bubble_scanner/detect.py`) — thresholds the image once per
-   sheet using `max(B, G, R)` per pixel (equivalent to HSV "Value") rather
-   than grayscale luminance, then measures what fraction of each bubble's
-   interior is dark. Using the max channel instead of luminance is what lets
-   marks be told apart from printed accent-color ink: a saturated color
-   stays bright in whichever channel gives it its hue, while a genuine
-   pencil/pen mark is dark in every channel. Per question, a bubble counts
-   as "marked" if it clears an absolute floor *and* is within a relative
-   margin of the darkest bubble in that question — this is what allows
-   partial/light marks through while still catching genuine double-bubbling.
-5. **Export** (`bubble_scanner/export.py`) — one row per sheet, one column
-   per question (named `<Section>_Q<n>`, e.g. `English_Q1`). Blank answers
-   are highlighted amber, `MULTIPLE` answers red (with the candidate letters
-   in a cell comment), and low-confidence detections (marked but only
-   marginally above the floor) are italicized for manual review. A "Needs
-   Review" column flags any such row.
+4. **Locate bubbles** (`bubble_scanner/grid_detect.py`) — a template's
+   coordinates are calibrated against one reference render, and real-world
+   inputs drift from that by more than you'd expect: even a "born-digital"
+   PDF at a page size differing by under 1% has been observed to shift
+   answers by nearly a full row, enough to read every answer off the wrong
+   bubble. So for each section, the actual printed bubbles are detected
+   fresh on every sheet (glyph contours clustered into rows/column-groups)
+   and matched to the template's known question layout by count and order,
+   not absolute position; occasional individual misses (e.g. a heavy mark's
+   ink forming an oversized contour) fall back to the nominal position
+   corrected by that section's own median observed shift, so one bad
+   contour doesn't sink the section. A section only falls back to raw,
+   uncorrected template coordinates if detection can't establish the
+   expected structure at all -- see "Grid Detection" in the Overview tab.
+5. **Detect marks** (`bubble_scanner/detect.py`) — thresholds the image once
+   per sheet using `max(B, G, R)` per pixel (equivalent to HSV "Value")
+   rather than grayscale luminance, then measures what fraction of each
+   bubble's interior is dark. Using the max channel instead of luminance is
+   what lets marks be told apart from printed accent-color ink: a saturated
+   color stays bright in whichever channel gives it its hue, while a
+   genuine pencil/pen mark is dark in every channel. Per question, a bubble
+   counts as "marked" if it clears an absolute floor *and* is within a
+   relative margin of the darkest bubble in that question — this is what
+   allows partial/light marks through while still catching genuine
+   double-bubbling.
+6. **Export** (`bubble_scanner/export.py`) — an "Overview" tab summarizing
+   every scanned sheet (alignment, grid detection fallbacks, whether
+   anything needs review), plus one tab per scanned sheet with a Question
+   column and one column per section (e.g. English, Mathematics, Reading,
+   Science) — matching the sheet's own layout rather than one column per
+   individual question. Blank answers are highlighted amber, `MULTIPLE`
+   answers red (with the candidate letters in a cell comment), and
+   low-confidence detections (marked but only marginally above the floor)
+   are italicized for manual review.
 
 ## Building your own template
 

@@ -30,7 +30,7 @@ def test_blank_dropout_color_sheet_is_not_read_as_all_marked():
     template = load_template()
     image = make_blank_sheet(template, ink_color=CORAL, letters=True)
 
-    results = evaluate_sheet(image, template)
+    results, _ = evaluate_sheet(image, template)
     non_blank = [(r.section, r.question, r.answer) for r in results if r.answer != ""]
     assert non_blank == [], (
         f"expected every question blank, got {len(non_blank)} non-blank "
@@ -47,7 +47,7 @@ def test_dropout_color_sheet_still_detects_real_marks():
     b = [x for x in bubbles_by_q[("English", 1)] if x.choice == "A"][0]
     fill_bubble(image, b.x, b.y, template.bubble_radius, coverage=1.0, darkness=25)
 
-    results = {(r.section, r.question): r for r in evaluate_sheet(image, template)}
+    results = {(r.section, r.question): r for r in evaluate_sheet(image, template)[0]}
     assert results[("English", 1)].answer == "A"
     assert results[("English", 2)].answer == ""
     assert results[("Mathematics", 1)].answer == ""
@@ -62,7 +62,7 @@ def test_dropout_color_sheet_detects_multiple_marks():
         b = [x for x in bubbles_by_q[("Science", 2)] if x.choice == choice][0]
         fill_bubble(image, b.x, b.y, template.bubble_radius, coverage=1.0, darkness=25)
 
-    results = {(r.section, r.question): r for r in evaluate_sheet(image, template)}
+    results = {(r.section, r.question): r for r in evaluate_sheet(image, template)[0]}
     result = results[("Science", 2)]
     assert result.answer == "MULTIPLE"
     assert set(result.candidates) == {"F", "H"}

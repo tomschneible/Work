@@ -55,12 +55,15 @@ def test_cli_accepts_multiple_input_paths(tmp_path):
     assert output_path.exists()
 
     wb = load_workbook(output_path)
-    ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
-    assert len(rows) == 2
-    sheets_by_name = {row[0]: row for row in rows}
-    assert sheets_by_name["a"][3] == "F"  # Answers_Q1
-    assert sheets_by_name["b"][3] == "G"
+    assert set(wb.sheetnames) == {"Overview", "a", "b"}
+
+    ws_a = wb["a"]
+    assert [c.value for c in ws_a[1]] == ["Question", "Answers"]
+    assert ws_a.cell(row=2, column=2).value == "F"  # Q1
+
+    ws_b = wb["b"]
+    assert ws_b.cell(row=2, column=2).value == "G"  # Q1
+    assert ws_b.cell(row=3, column=2).value == "A"  # Q2
 
 
 def test_cli_reports_missing_input(tmp_path, capsys):

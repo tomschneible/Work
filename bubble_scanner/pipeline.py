@@ -17,23 +17,28 @@ class SheetResult:
     source: str
     used_contour_alignment: bool
     questions: List[QuestionResult]
+    fallback_sections: List[str] = dataclasses.field(default_factory=list)
 
     @property
     def has_review_items(self) -> bool:
-        return any(q.answer in ("", "MULTIPLE") or q.low_confidence for q in self.questions)
+        return (
+            any(q.answer in ("", "MULTIPLE") or q.low_confidence for q in self.questions)
+            or bool(self.fallback_sections)
+        )
 
 
 def process_path(path: str | Path, template: Template) -> List[SheetResult]:
     results = []
     for label, image in load_sheets(path):
         alignment = align_to_template(image, template.page_width, template.page_height)
-        questions = evaluate_sheet(alignment.image, template)
+        questions, fallback_sections = evaluate_sheet(alignment.image, template)
         results.append(
             SheetResult(
                 label=label,
                 source=str(path),
                 used_contour_alignment=alignment.used_contour,
                 questions=questions,
+                fallback_sections=fallback_sections,
             )
         )
     return results

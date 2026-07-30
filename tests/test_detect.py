@@ -79,7 +79,7 @@ def test_evaluate_sheet_end_to_end():
     answers = {1: ["F"], 2: ["B"], 3: [], 4: ["A", "C"], 5: ["J"], 6: ["D"]}
     image = render_sheet(template, answers)
 
-    results = {r.question: r for r in evaluate_sheet(image, template)}
+    results = {r.question: r for r in evaluate_sheet(image, template)[0]}
     assert results[1].answer == "F"
     assert results[2].answer == "B"
     assert results[3].answer == ""  # left blank
@@ -95,5 +95,5 @@ def test_evaluate_sheet_tolerates_partial_sloppy_marks():
     # 55% coverage and lighter gray pencil-like mark instead of solid fill.
     image = render_sheet(template, answers, coverage=0.55, darkness=110)
 
-    results = {r.question: r for r in evaluate_sheet(image, template)}
+    results = {r.question: r for r in evaluate_sheet(image, template)[0]}
     assert results[1].answer == "G"
