@@ -101,16 +101,26 @@ as one, otherwise as a scanned bubble sheet) and routes it accordingly.
 Mixed drops land as two tabs in one spreadsheet: "Bubble Sheet Answers"
 and "Score Report Answers".
 
-**One-time setup** (Terminal):
+**One-time setup** (Terminal). Copy this block exactly -- do not leave in
+any `<` `>` placeholder characters, since those are shell redirection
+operators and will make `git clone` fail with a confusing "no such file or
+directory" instead of actually cloning anything. If your repo lives
+somewhere other than the URL below, grab the real one from GitHub's green
+"Code" button on the repo page:
 
 ```bash
-git clone <https://github.com/tomschneible/Work> ~/bubble-sheet-scanner
+git clone -b claude/bubble-sheet-scanner-7q6uf7 https://github.com/tomschneible/Work.git ~/bubble-sheet-scanner
 cd ~/bubble-sheet-scanner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 chmod +x scripts/mac_droplet.sh
 ```
+
+(This code currently lives only on the `claude/bubble-sheet-scanner-7q6uf7`
+branch, not yet merged to the repo's default branch -- that's why the
+branch is pinned with `-b` above. Once/if it's merged, a plain `git clone`
+of the default branch will work too.)
 
 **Build the droplet app** (Automator, no coding required):
 
