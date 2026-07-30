@@ -110,18 +110,13 @@ somewhere other than the URL below, grab the real one from GitHub's green
 "Code" button on the repo page:
 
 ```bash
-git clone -b claude/bubble-sheet-scanner-7q6uf7 https://github.com/tomschneible/Work.git ~/bubble-sheet-scanner
+git clone https://github.com/tomschneible/Work.git ~/bubble-sheet-scanner
 cd ~/bubble-sheet-scanner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 chmod +x scripts/mac_droplet.sh
 ```
-
-(This code currently lives only on the `claude/bubble-sheet-scanner-7q6uf7`
-branch, not yet merged to the repo's default branch -- that's why the
-branch is pinned with `-b` above. Once/if it's merged, a plain `git clone`
-of the default branch will work too.)
 
 **Build the droplet app** (Automator, no coding required):
 
