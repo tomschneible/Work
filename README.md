@@ -104,7 +104,7 @@ and "Score Report Answers".
 **One-time setup** (Terminal):
 
 ```bash
-git clone <this repo's URL> ~/bubble-sheet-scanner   # or wherever you keep it
+git clone <https://github.com/tomschneible/Work> ~/bubble-sheet-scanner
 cd ~/bubble-sheet-scanner
 python3 -m venv .venv
 source .venv/bin/activate
