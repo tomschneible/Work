@@ -1,0 +1,60 @@
+# Calibrated against the sample ACT-style answer sheet ("Page 2" / bubble
+# grid page) provided for this project: a single letter-size page with four
+# independently-numbered tests (English, Mathematics, Reading, Science),
+# each laid out in 5 columns of questions.
+#
+# Coordinates were measured directly from the sheet's vector PDF rendered
+# at 200 DPI (1700x2200 px) by detecting each bubble glyph's bounding box,
+# not eyeballed -- they should need little to no adjustment for a clean
+# scan/print of the same sheet. Re-measure if your copy is a different ACT
+# form/printing with a shifted layout.
+#
+# IMPORTANT: on this sheet, ODD-numbered questions use A/B/C/D and
+# EVEN-numbered questions use F/G/H/J (the standard ACT convention) --
+# the reverse of even=ABCD/odd=FGHJ. Swap the `choices` block below if
+# your actual answer key convention differs.
+
+page:
+  width: 1700
+  height: 2200
+
+sections:
+  - name: English
+    columns:
+      - {first_question: 1, last_question: 10, x_start: 288.5, y_start: 640, row_height: 23}
+      - {first_question: 11, last_question: 20, x_start: 534.5, y_start: 640, row_height: 23}
+      - {first_question: 21, last_question: 30, x_start: 779.5, y_start: 640, row_height: 23}
+      - {first_question: 31, last_question: 40, x_start: 1024.5, y_start: 640, row_height: 23}
+      - {first_question: 41, last_question: 50, x_start: 1270.5, y_start: 640, row_height: 23}
+  - name: Mathematics
+    columns:
+      - {first_question: 1, last_question: 10, x_start: 288.5, y_start: 962.5, row_height: 23}
+      - {first_question: 11, last_question: 20, x_start: 534.5, y_start: 962.5, row_height: 23}
+      - {first_question: 21, last_question: 30, x_start: 779.5, y_start: 962.5, row_height: 23}
+      - {first_question: 31, last_question: 40, x_start: 1024.5, y_start: 962.5, row_height: 23}
+      - {first_question: 41, last_question: 45, x_start: 1270.5, y_start: 962.5, row_height: 23}
+  - name: Reading
+    columns:
+      - {first_question: 1, last_question: 8, x_start: 288.5, y_start: 1284.5, row_height: 23}
+      - {first_question: 9, last_question: 16, x_start: 534.5, y_start: 1284.5, row_height: 23}
+      - {first_question: 17, last_question: 24, x_start: 779.5, y_start: 1284.5, row_height: 23}
+      - {first_question: 25, last_question: 32, x_start: 1024.5, y_start: 1284.5, row_height: 23}
+      - {first_question: 33, last_question: 36, x_start: 1270.5, y_start: 1284.5, row_height: 23}
+  - name: Science
+    columns:
+      - {first_question: 1, last_question: 8, x_start: 288.5, y_start: 1560.5, row_height: 23}
+      - {first_question: 9, last_question: 16, x_start: 534.5, y_start: 1560.5, row_height: 23}
+      - {first_question: 17, last_question: 24, x_start: 779.5, y_start: 1560.5, row_height: 23}
+      - {first_question: 25, last_question: 32, x_start: 1024.5, y_start: 1560.5, row_height: 23}
+      - {first_question: 33, last_question: 40, x_start: 1270.5, y_start: 1560.5, row_height: 23}
+
+bubble_spacing_x: 30.67
+bubble_radius: 11
+
+choices:
+  odd: [A, B, C, D]
+  even: [F, G, H, J]
+
+thresholds:
+  fill_ratio_min: 0.35
+  relative_margin: 0.15

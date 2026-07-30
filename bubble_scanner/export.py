@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -15,40 +15,60 @@ BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="so
 MULTIPLE_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
+FIXED_COLUMNS = ["Sheet", "Alignment", "Needs Review"]
+
+
+def _column_order(results: List[SheetResult]) -> List[Tuple[str, int]]:
+    """(section, question) keys in the order they should appear as columns,
+    following the order questions were produced in (i.e. the template's
+    declared section/column order), taking the union across all sheets in
+    case sheets were scored against slightly different templates."""
+    seen = set()
+    order = []
+    for result in results:
+        for q in result.questions:
+            key = (q.section, q.question)
+            if key not in seen:
+                seen.add(key)
+                order.append(key)
+    return order
+
 
 def write_xlsx(results: List[SheetResult], output_path: str | Path) -> None:
     if not results:
         raise ValueError("No results to export")
 
-    num_questions = max(q.question for r in results for q in r.questions)
+    columns = _column_order(results)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Answers"
 
-    header = ["Sheet", "Alignment", "Needs Review"] + [f"Q{i}" for i in range(1, num_questions + 1)]
+    header = FIXED_COLUMNS + [f"{section}_Q{question}" for section, question in columns]
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
+    num_fixed = len(FIXED_COLUMNS)
+
     for result in results:
-        answers_by_question = {q.question: q for q in result.questions}
+        by_key = {(q.section, q.question): q for q in result.questions}
         row = [
             result.label,
             "contour" if result.used_contour_alignment else "resized (no border found)",
             "YES" if result.has_review_items else "",
         ]
-        for i in range(1, num_questions + 1):
-            q = answers_by_question.get(i)
+        for key in columns:
+            q = by_key.get(key)
             row.append(q.answer if q else "")
         ws.append(row)
 
         row_index = ws.max_row
-        for i in range(1, num_questions + 1):
-            q = answers_by_question.get(i)
+        for col_offset, key in enumerate(columns, start=1):
+            q = by_key.get(key)
             if q is None:
                 continue
-            cell = ws.cell(row=row_index, column=3 + i)
+            cell = ws.cell(row=row_index, column=num_fixed + col_offset)
             if q.answer == "MULTIPLE":
                 cell.fill = MULTIPLE_FILL
                 cell.comment = Comment(", ".join(q.candidates), "bubble_scanner")

@@ -13,7 +13,14 @@ import numpy as np
 from bubble_scanner.template import Template
 
 
-def make_blank_sheet(template: Template, with_border: bool = True) -> np.ndarray:
+def make_blank_sheet(
+    template: Template, with_border: bool = True, ink_color=(0, 0, 0), letters: bool = False
+) -> np.ndarray:
+    """Render an unmarked sheet. `ink_color` (BGR) lets tests simulate sheets
+    printed in a saturated "dropout" accent color (e.g. coral, as real ACT
+    sheets use) instead of plain black -- `letters=True` additionally draws
+    a bold letter inside each bubble, mimicking how much ink such sheets
+    actually put inside an unmarked bubble."""
     image = np.full((template.page_height, template.page_width, 3), 255, dtype=np.uint8)
     if with_border:
         cv2.rectangle(
@@ -23,9 +30,21 @@ def make_blank_sheet(template: Template, with_border: bool = True) -> np.ndarray
             (0, 0, 0),
             4,
         )
+    thickness = 2 if not letters else 3
     for bubbles in template.bubbles().values():
         for b in bubbles:
-            cv2.circle(image, (b.x, b.y), template.bubble_radius, (0, 0, 0), 2)
+            cv2.circle(image, (b.x, b.y), template.bubble_radius, ink_color, thickness)
+            if letters:
+                cv2.putText(
+                    image,
+                    b.choice,
+                    (b.x - 6, b.y + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    ink_color,
+                    thickness,
+                    cv2.LINE_AA,
+                )
     return image
 
 
@@ -47,17 +66,36 @@ def fill_bubble(
 
 def render_sheet(
     template: Template,
-    answers: Dict[int, Iterable[str]],
+    answers: Dict,
     coverage: float = 1.0,
     darkness: int = 20,
     with_border: bool = True,
+    ink_color=(0, 0, 0),
+    letters: bool = False,
 ) -> np.ndarray:
-    """Render a sheet where `answers[question]` lists the choice letters to
-    mark for that question (empty/absent -> left blank)."""
-    image = make_blank_sheet(template, with_border=with_border)
+    """Render a sheet where `answers[key]` lists the choice letters to mark
+    for that question (empty/absent -> left blank). `key` is either a plain
+    question number (only valid when the template has exactly one section)
+    or a (section_name, question) tuple for multi-section templates."""
+    image = make_blank_sheet(template, with_border=with_border, ink_color=ink_color, letters=letters)
     bubbles_by_q = template.bubbles()
-    for question, marks in answers.items():
-        for bubble in bubbles_by_q[question]:
+
+    if len(template.sections) == 1:
+        only_section = template.sections[0].name
+    else:
+        only_section = None
+
+    for key, marks in answers.items():
+        if isinstance(key, tuple):
+            section_question = key
+        else:
+            if only_section is None:
+                raise ValueError(
+                    "Plain int question keys require a single-section template; "
+                    "use (section_name, question) tuples instead"
+                )
+            section_question = (only_section, key)
+        for bubble in bubbles_by_q[section_question]:
             if bubble.choice in marks:
                 fill_bubble(
                     image, bubble.x, bubble.y, template.bubble_radius, coverage, darkness

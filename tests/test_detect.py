@@ -6,8 +6,13 @@ from tests.synth import render_sheet
 def make_template() -> Template:
     data = {
         "page": {"width": 900, "height": 700},
-        "columns": [
-            {"first_question": 1, "last_question": 6, "x_start": 150, "y_start": 100, "row_height": 80},
+        "sections": [
+            {
+                "name": "Answers",
+                "columns": [
+                    {"first_question": 1, "last_question": 6, "x_start": 150, "y_start": 100, "row_height": 80},
+                ],
+            }
         ],
         "bubble_spacing_x": 60,
         "bubble_radius": 18,
