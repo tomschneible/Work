@@ -102,6 +102,11 @@ Each bubble sheet gets its own tab (see "How it works" below), opening on
 the first one; any score-report PDFs land in a separate "Score Report
 Answers" tab -- all in the same spreadsheet.
 
+This program lives in the `bubble_scanner/` subdirectory of the
+`tomschneible/Work` repo (a monorepo -- other unrelated programs may live
+in sibling directories at the repo root). All commands and paths below
+assume you're inside `bubble_scanner/`, not the repo root.
+
 **One-time setup** (Terminal). Copy this block exactly -- do not leave in
 any `<` `>` placeholder characters, since those are shell redirection
 operators and will make `git clone` fail with a confusing "no such file or
@@ -110,8 +115,8 @@ somewhere other than the URL below, grab the real one from GitHub's green
 "Code" button on the repo page:
 
 ```bash
-git clone https://github.com/tomschneible/Work.git ~/bubble-sheet-scanner
-cd ~/bubble-sheet-scanner
+git clone https://github.com/tomschneible/Work.git ~/Work
+cd ~/Work/bubble_scanner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -130,7 +135,7 @@ chmod +x scripts/mac_droplet.sh
    with wherever you actually cloned the repo in step 1):
 
    ```bash
-   ~/bubble-sheet-scanner/scripts/mac_droplet.sh "$@"
+   ~/Work/bubble_scanner/scripts/mac_droplet.sh "$@"
    ```
 5. **File → Save**, name it `Bubble Sheet Scanner`, and save it as an
    **Application** (e.g. to your Desktop or Applications folder).
@@ -148,8 +153,8 @@ at all). To point bubble-sheet scoring at a different template, add an env
 var line before the script call in the same Automator action:
 
 ```bash
-export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
-~/bubble-sheet-scanner/scripts/mac_droplet.sh "$@"
+export BUBBLE_TEMPLATE=~/Work/bubble_scanner/templates/default_template.yaml
+~/Work/bubble_scanner/scripts/mac_droplet.sh "$@"
 ```
 
 ## How it works
