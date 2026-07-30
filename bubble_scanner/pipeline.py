@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import List
+from typing import Iterable, List
 
 from .align import align_to_template
 from .detect import QuestionResult, evaluate_sheet
@@ -36,4 +36,22 @@ def process_path(path: str | Path, template: Template) -> List[SheetResult]:
                 questions=questions,
             )
         )
+    return results
+
+
+def process_paths(paths: Iterable[str | Path], template: Template) -> List[SheetResult]:
+    """Process several files/directories (e.g. a batch of dropped PDFs) into
+    one combined result list, de-duplicating sheet labels that collide
+    across inputs (e.g. two different PDFs both containing a "page1")."""
+    results: List[SheetResult] = []
+    seen_labels: dict[str, int] = {}
+    for path in paths:
+        for result in process_path(path, template):
+            label = result.label
+            if label in seen_labels:
+                seen_labels[label] += 1
+                result.label = f"{label}_{seen_labels[label]}"
+            else:
+                seen_labels[label] = 0
+            results.append(result)
     return results

@@ -1,7 +1,7 @@
 import cv2
 
 from bubble_scanner.export import write_xlsx
-from bubble_scanner.pipeline import SheetResult, process_path
+from bubble_scanner.pipeline import SheetResult, process_path, process_paths
 from bubble_scanner.template import Template
 from tests.synth import render_sheet
 
@@ -49,6 +49,29 @@ def test_process_path_reads_directory_of_images(tmp_path):
     results = process_path(tmp_path, template)
     assert len(results) == 2
     assert {r.label for r in results} == {"sheet_1", "sheet_2"}
+
+
+def test_process_paths_combines_multiple_inputs_and_dedupes_labels(tmp_path):
+    template = make_template()
+
+    dir_a = tmp_path / "batch_a"
+    dir_a.mkdir()
+    cv2.imwrite(str(dir_a / "sheet.png"), render_sheet(template, {1: ["F"]}))
+
+    dir_b = tmp_path / "batch_b"
+    dir_b.mkdir()
+    cv2.imwrite(str(dir_b / "sheet.png"), render_sheet(template, {1: ["G"]}))
+
+    results = process_paths([dir_a, dir_b], template)
+    assert len(results) == 2
+    labels = {r.label for r in results}
+    assert labels == {"sheet", "sheet_1"}, "colliding labels from different inputs should be disambiguated"
+
+    by_label = {r.label: r for r in results}
+    answers_a = {q.question: q.answer for q in by_label["sheet"].questions}
+    answers_b = {q.question: q.answer for q in by_label["sheet_1"].questions}
+    assert answers_a[1] == "F"
+    assert answers_b[1] == "G"
 
 
 def test_write_xlsx_produces_file(tmp_path):

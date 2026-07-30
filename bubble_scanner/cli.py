@@ -1,6 +1,9 @@
 """Command-line entry point.
 
     python -m bubble_scanner.cli --input scans/ --template templates/default_template.yaml --output results.xlsx
+
+`--input` accepts one or more paths (files, PDFs, or directories); all
+sheets found are combined into a single spreadsheet.
 """
 from __future__ import annotations
 
@@ -9,14 +12,17 @@ import sys
 from pathlib import Path
 
 from .export import write_xlsx
-from .pipeline import process_path
+from .pipeline import process_paths
 from .template import Template
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scan bubble sheets into a spreadsheet.")
     parser.add_argument(
-        "--input", required=True, help="Image file, PDF file, or directory of scans"
+        "--input",
+        required=True,
+        nargs="+",
+        help="One or more image files, PDF files, and/or directories of scans",
     )
     parser.add_argument(
         "--template", required=True, help="Path to the template YAML describing sheet geometry"
@@ -31,14 +37,16 @@ def main(argv: list[str] | None = None) -> int:
     template = Template.from_yaml(args.template)
     template.validate()
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"Input path does not exist: {input_path}", file=sys.stderr)
+    input_paths = [Path(p) for p in args.input]
+    missing = [p for p in input_paths if not p.exists()]
+    if missing:
+        for p in missing:
+            print(f"Input path does not exist: {p}", file=sys.stderr)
         return 1
 
-    results = process_path(input_path, template)
+    results = process_paths(input_paths, template)
     if not results:
-        print(f"No scans found at: {input_path}", file=sys.stderr)
+        print(f"No scans found at: {', '.join(str(p) for p in input_paths)}", file=sys.stderr)
         return 1
 
     write_xlsx(results, args.output)

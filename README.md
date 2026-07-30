@@ -35,11 +35,64 @@ python -m bubble_scanner.cli \
   --output results.xlsx
 ```
 
-`--input` may be a single image, a single PDF, or a directory of scans.
+`--input` accepts one or more images, PDFs, and/or directories of scans in a
+single run (`--input a.pdf b.pdf scans/`); everything found is combined into
+one spreadsheet.
 `templates/act_answer_sheet.yaml` is calibrated for the standard ACT-style
 answer sheet (English/Math/Reading/Science); use
 `templates/default_template.yaml` as a starting point for any other layout
 (see "Building your own template").
+
+## macOS drag-and-drop app
+
+You can turn this into a real `.app` icon on a Mac: drop one or more PDFs/
+images onto it and it writes a timestamped spreadsheet to your Desktop and
+opens it automatically. This still requires a one-time Python setup (there's
+no way to produce a fully standalone, dependency-free executable without
+building on macOS itself), but after that it's just an icon.
+
+**One-time setup** (Terminal):
+
+```bash
+git clone <this repo's URL> ~/bubble-sheet-scanner   # or wherever you keep it
+cd ~/bubble-sheet-scanner
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+chmod +x scripts/mac_droplet.sh
+```
+
+**Build the droplet app** (Automator, no coding required):
+
+1. Open **Automator** (Spotlight → "Automator") → **New Document** → choose
+   **Application** → Choose.
+2. In the search box on the left, find **"Run Shell Script"** and drag it
+   into the empty workflow area on the right.
+3. At the top of that action, set **Shell** to `/bin/bash` and **Pass
+   input** to **"as arguments"**.
+4. Replace the placeholder script text with this one line (replace the path
+   with wherever you actually cloned the repo in step 1):
+
+   ```bash
+   ~/bubble-sheet-scanner/scripts/mac_droplet.sh "$@"
+   ```
+5. **File → Save**, name it `Bubble Sheet Scanner`, and save it as an
+   **Application** (e.g. to your Desktop or Applications folder).
+
+**To use it:** drag one or more scanned PDFs/images onto the app's icon. It
+writes `~/Desktop/bubble_scan_results_<timestamp>.xlsx` and opens it. Errors
+(e.g. missing setup, a page the pipeline couldn't read) show as a macOS
+alert dialog instead of silently failing, since a droplet app has no
+visible terminal.
+
+By default the droplet scores against `templates/act_answer_sheet.yaml`. To
+point it at a different template, add an env var line before the script
+call in the same Automator action:
+
+```bash
+export BUBBLE_TEMPLATE=~/bubble-sheet-scanner/templates/default_template.yaml
+~/bubble-sheet-scanner/scripts/mac_droplet.sh "$@"
+```
 
 ## How it works
 
