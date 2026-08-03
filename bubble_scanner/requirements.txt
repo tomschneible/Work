@@ -1,4 +1,8 @@
-opencv-python-headless>=4.9,<5
+# Capped below 4.11: opencv-python-headless wheels from 4.11 onward require
+# macOS 13 (Apple Silicon) / macOS 14 (Intel) minimum. Staying under that
+# keeps the floor at macOS 11 (Apple Silicon) / macOS 12 (Intel) instead.
+# Raise this cap only if you're intentionally dropping support for older Macs.
+opencv-python-headless>=4.9,<4.11
 numpy>=1.24,<2.0
 PyMuPDF>=1.23,<2
 openpyxl>=3.1,<4

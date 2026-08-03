@@ -37,6 +37,18 @@ Mac droplet app uses.
 - Accepts image files (JPG/PNG/TIFF/BMP), PDFs (each page = one sheet), or a
   directory containing a mix of both.
 
+## Requirements
+
+- Python 3.9+ (macOS doesn't ship Python 3 -- install it via
+  [python.org](https://www.python.org/downloads/macos/) or Homebrew).
+- On macOS, the practical floor is **macOS 11 (Big Sur) on Apple Silicon /
+  macOS 12 (Monterey) on Intel**, set by `requirements.txt`'s
+  `opencv-python-headless` pin (`<4.11` -- newer OpenCV 4.x releases only
+  ship wheels for macOS 13+/14+, so raising that cap raises this floor;
+  see the comment in `requirements.txt`). PyMuPDF, openpyxl, and PyYAML are
+  all more lenient or platform-independent, so OpenCV is the binding
+  constraint. Linux/Windows aren't version-constrained this way.
+
 ## Usage
 
 ```bash
