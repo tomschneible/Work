@@ -24,8 +24,8 @@ def test_score_report_cli_end_to_end(tmp_path):
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     assert len(rows) == 2
     # No matching reference key for this synthetic report -> plain "Module N" labels.
-    assert rows[0][2:] == ("Module 1", 1, "Reading and Writing", "D")
-    assert rows[1][2:] == ("Module 1", 2, "Reading and Writing", "D")
+    assert rows[0] == ("Unknown", "Reading and Writing - Module 1", 1, "D")
+    assert rows[1] == ("Unknown", "Reading and Writing - Module 1", 2, "D")
 
 
 def test_score_report_cli_reports_missing_input(tmp_path, capsys):

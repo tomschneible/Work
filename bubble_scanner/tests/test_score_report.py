@@ -108,8 +108,8 @@ def test_write_score_report_xlsx(tmp_path):
     wb = load_workbook(out_path)
     ws = wb.active
     header = [c.value for c in ws[1]]
-    assert header == ["Source", "Test", "Module", "Question", "Section", "Your Answer"]
+    assert header == ["Test", "Section / Module", "Question", "Your Answer"]
     data_rows = list(ws.iter_rows(min_row=2, values_only=True))
     # No annotate_rows call here -- falls back to plain "Module N" / "Unknown".
-    assert data_rows[0][1:] == ("Unknown", "Module 1", 1, "Reading and Writing", "D")
-    assert data_rows[1][2:] == ("Module 1", 2, "Reading and Writing", "D")
+    assert data_rows[0] == ("Unknown", "Reading and Writing - Module 1", 1, "D")
+    assert data_rows[1] == ("Unknown", "Reading and Writing - Module 1", 2, "D")

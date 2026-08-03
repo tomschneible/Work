@@ -83,13 +83,15 @@ python -m bubble_scanner.score_report_cli \
 ```
 
 `--input` accepts one or more PDFs and/or directories of them, combined
-into one spreadsheet with columns `Source | Test | Module | Question |
-Section | Your Answer`. Only the plain answer value is kept in "Your
-Answer" (e.g. `D`, `18`, `11/28`) — the "; Correct"/"; Incorrect" suffix is
-dropped, since only what the student answered matters there. "Module"
-starts as a plain "Module N" label (N = which occurrence of that section
-this is -- these reports commonly have two same-named modules per section,
-e.g. two "Reading and Writing" modules, each numbered 1..N, so rows stay
+into one spreadsheet with columns `Test | Section / Module | Question |
+Your Answer`. Only the plain answer value is kept in "Your Answer" (e.g.
+`D`, `18`, `11/28`) — the "; Correct"/"; Incorrect" suffix is dropped,
+since only what the student answered matters there. "Section / Module"
+reads e.g. "Reading and Writing - Module 1" -- the section always comes
+first so it's clear at a glance which module you're looking at, and starts
+as a plain "Module N" label (N = which occurrence of that section this is
+-- these reports commonly have two same-named modules per section, e.g.
+two "Reading and Writing" modules, each numbered 1..N, so rows stay
 unambiguous even though the raw "Question" number repeats).
 
 This path is implemented in `bubble_scanner/score_report.py` (parsing) and

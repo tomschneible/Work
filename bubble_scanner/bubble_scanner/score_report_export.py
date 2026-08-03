@@ -22,7 +22,7 @@ def add_score_report_answers_sheet(
 
     ws = wb.create_sheet(title=title)
 
-    header = ["Source", "Test", "Module", "Question", "Section", "Your Answer"]
+    header = ["Test", "Section / Module", "Question", "Your Answer"]
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -30,10 +30,12 @@ def add_score_report_answers_sheet(
     for row in rows:
         module_label = row.module_label or f"Module {row.module}"
         test = row.test or "Unknown"
-        ws.append([row.source, test, module_label, row.question, row.section, row.your_answer])
+        section_module = f"{row.section} - {module_label}"
+        ws.append([test, section_module, row.question, row.your_answer])
 
-    for col_index in range(1, len(header) + 1):
-        ws.column_dimensions[get_column_letter(col_index)].width = 18
+    column_widths = [18, 34, 10, 14]
+    for col_index, width in enumerate(column_widths, start=1):
+        ws.column_dimensions[get_column_letter(col_index)].width = width
 
 
 def write_score_report_xlsx(rows: List[ScoreReportRow], output_path: str | Path) -> None:

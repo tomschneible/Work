@@ -103,9 +103,9 @@ def test_auto_cli_produces_two_tabs_for_mixed_input(tmp_path):
     score_ws = wb["Score Report Answers"]
     score_rows = list(score_ws.iter_rows(min_row=2, values_only=True))
     # No matching reference key for this synthetic report -> plain "Module N" labels.
-    assert [r[2:] for r in score_rows] == [
-        ("Module 1", 1, "Reading and Writing", "D"),
-        ("Module 1", 2, "Reading and Writing", "D"),
+    assert score_rows == [
+        ("Unknown", "Reading and Writing - Module 1", 1, "D"),
+        ("Unknown", "Reading and Writing - Module 1", 2, "D"),
     ]
 
 
