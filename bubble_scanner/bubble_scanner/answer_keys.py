@@ -149,18 +149,23 @@ def load_answer_keys(
     return AnswerKeyLibrary.from_csv_text(text)
 
 
-def _acceptable_values(report_value: str) -> List[str]:
-    """Grid-in "Correct Answer" values may list several acceptable forms,
-    e.g. ".3928, .3929, 11/28" -- split them so a key storing any one
-    canonical form still matches."""
-    return [v.strip() for v in report_value.split(",")]
+def _acceptable_values(value: str) -> List[str]:
+    """Grid-in correct-answer values, whether from a score report or the
+    reference key CSV, may list several acceptable forms, e.g.
+    ".3928, .3929, 11/28" -- split them so any shared form counts as a
+    match regardless of which side (or both) lists more than one."""
+    return [v.strip() for v in value.split(",")]
 
 
 def _match_fraction(key_answers: Dict[int, str], actual_answers: Dict[int, str]) -> float:
     common = set(key_answers) & set(actual_answers)
     if not common:
         return 0.0
-    matches = sum(1 for q in common if key_answers[q] in _acceptable_values(actual_answers[q]))
+    matches = sum(
+        1
+        for q in common
+        if set(_acceptable_values(key_answers[q])) & set(_acceptable_values(actual_answers[q]))
+    )
     return matches / len(common)
 
 
