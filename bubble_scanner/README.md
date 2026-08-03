@@ -190,11 +190,14 @@ chmod +x scripts/mac_droplet.sh
    **Application** (e.g. to your Desktop or Applications folder).
 
 **To use it:** drag one or more scanned PDFs/images and/or score-report
-PDFs onto the app's icon, in any mix. It writes
-`~/Desktop/scanned_answers_<timestamp>.xlsx` and opens it. Errors (e.g.
-missing setup, a page the pipeline couldn't read) show as a macOS alert
-dialog instead of silently failing, since a droplet app has no visible
-terminal.
+PDFs onto the app's icon, in any mix. It writes the spreadsheet to your
+Desktop named after whatever you dropped -- `<name>_answers.xlsx` for a
+single file, `<first name>_and_N_others_answers.xlsx` for multiple -- and
+opens it. Dropping the same file(s) again doesn't overwrite the previous
+result; it numbers the new one `<name>_answers (2).xlsx` and so on, the
+same way Finder/Chrome handle duplicate downloads. Errors (e.g. missing
+setup, a page the pipeline couldn't read) show as a macOS alert dialog
+instead of silently failing, since a droplet app has no visible terminal.
 
 By default any bubble-sheet inputs are scored against
 `templates/act_answer_sheet.yaml` (score-report PDFs don't need a template
