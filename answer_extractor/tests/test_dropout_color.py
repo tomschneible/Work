@@ -15,8 +15,8 @@ neutral pencil/pen marks. Using the bundled act_answer_sheet.yaml template
 bug to actually manifest -- a handful of bubbles isn't enough ink for Otsu
 to misbehave the same way.
 """
-from bubble_scanner.detect import evaluate_sheet
-from bubble_scanner.template import Template
+from answer_extractor.detect import evaluate_sheet
+from answer_extractor.template import Template
 from tests.synth import fill_bubble, make_blank_sheet
 
 CORAL = (100, 110, 230)  # BGR: saturated coral/red, similar to real ACT sheets

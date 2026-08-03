@@ -7,7 +7,7 @@ everyone gets the same Module 1, then Module 2 is one of two different
 question sets depending on Module 1 performance. A score report never
 states in plain text which Module 2 variant a student got -- that's
 external knowledge someone has to maintain per test. This module holds
-that reference data (bubble_scanner/answer_keys/sat_answer_keys.csv) and
+that reference data (answer_extractor/answer_keys/sat_answer_keys.csv) and
 matches a parsed report against it.
 
 The matching signal is the report's own "Correct Answer" column (Bluebook's
@@ -38,14 +38,19 @@ from typing import Dict, List, Optional, Tuple
 from .score_report import ScoreReportRow, group_by_module, section_module_index
 
 _BUNDLED_CSV_PATH = Path(__file__).parent / "answer_keys" / "sat_answer_keys.csv"
-_CACHE_PATH = Path.home() / ".cache" / "bubble_scanner" / "sat_answer_keys.csv"
+_CACHE_PATH = Path.home() / ".cache" / "answer_extractor" / "sat_answer_keys.csv"
+# NOTE: the branch segment below intentionally still reads
+# "claude/bubble-sheet-scanner-7q6uf7" -- that's the actual git branch name
+# (a session identifier from when this project was first built), which was
+# NOT renamed when the program itself was renamed to "Answer Extractor".
+# Only the in-repo path after it changed to match the new package layout.
 _DEFAULT_RAW_URL = (
     "https://raw.githubusercontent.com/tomschneible/Work/"
-    "claude/bubble-sheet-scanner-7q6uf7/bubble_scanner/answer_keys/sat_answer_keys.csv"
+    "claude/bubble-sheet-scanner-7q6uf7/answer_extractor/answer_extractor/answer_keys/sat_answer_keys.csv"
 )
 # Override for testing, a different branch, or a fork -- e.g.
-# BUBBLE_SCANNER_ANSWER_KEYS_URL=file:///path/to/keys.csv
-_URL_ENV_VAR = "BUBBLE_SCANNER_ANSWER_KEYS_URL"
+# ANSWER_EXTRACTOR_ANSWER_KEYS_URL=file:///path/to/keys.csv
+_URL_ENV_VAR = "ANSWER_EXTRACTOR_ANSWER_KEYS_URL"
 
 _REQUIRED_COLUMNS = ["Test", "Section", "Question", "Module1", "Module2Easy", "Module2Hard"]
 

@@ -1,8 +1,8 @@
 import cv2
 from openpyxl import load_workbook
 
-from bubble_scanner.auto_cli import classify_inputs, main
-from bubble_scanner.template import Template
+from answer_extractor.auto_cli import classify_inputs, main
+from answer_extractor.template import Template
 from tests.score_report_synth import write_score_report_pdf
 from tests.synth import render_sheet
 

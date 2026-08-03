@@ -2,14 +2,14 @@
 scanned bubble sheet or a text-based score-report PDF, and routes it to
 the matching pipeline. Both kinds can be mixed in the same run; results
 land as separate tabs in one spreadsheet. This is what the macOS droplet
-(scripts/mac_droplet.sh) calls -- use bubble_scanner.cli or
-bubble_scanner.score_report_cli directly if you only ever have one kind
+(scripts/mac_droplet.sh) calls -- use answer_extractor.cli or
+answer_extractor.score_report_cli directly if you only ever have one kind
 of input and want a plain, single-purpose CLI.
 
 Detection: images are always treated as bubble sheets (no text layer to
 inspect). PDFs are routed by whether they actually parse as a score
 report -- a real score-report PDF always yields at least one answer row
-via bubble_scanner.score_report.parse_score_report; a scanned/vector-print
+via answer_extractor.score_report.parse_score_report; a scanned/vector-print
 bubble sheet PDF has no matching text table and yields none.
 """
 from __future__ import annotations

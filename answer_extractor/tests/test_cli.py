@@ -1,8 +1,8 @@
 import cv2
 from openpyxl import load_workbook
 
-from bubble_scanner.cli import main
-from bubble_scanner.template import Template
+from answer_extractor.cli import main
+from answer_extractor.template import Template
 from tests.synth import render_sheet
 
 

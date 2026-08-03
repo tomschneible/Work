@@ -76,7 +76,7 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
             cell = ws.cell(row=row_index, column=col_offset)
             if q.answer == "MULTIPLE":
                 cell.fill = MULTIPLE_FILL
-                cell.comment = Comment(", ".join(q.candidates), "bubble_scanner")
+                cell.comment = Comment(", ".join(q.candidates), "answer_extractor")
             elif q.answer == "":
                 cell.fill = BLANK_FILL
             if q.low_confidence:

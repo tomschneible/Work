@@ -1,6 +1,6 @@
 from openpyxl import load_workbook
 
-from bubble_scanner.score_report_cli import main
+from answer_extractor.score_report_cli import main
 from tests.score_report_synth import write_score_report_pdf
 
 

@@ -9,7 +9,7 @@
 #      to page.width x page.height) and re-run.
 #
 # Odd-numbered questions use F/G/H/J, even-numbered use A/B/C/D by default
-# (bubble_scanner.template.Template.choices_for) -- swap the `choices` block
+# (answer_extractor.template.Template.choices_for) -- swap the `choices` block
 # below if your sheet uses the opposite convention (e.g. the standard ACT
 # answer sheet uses ODD=A/B/C/D, EVEN=F/G/H/J; see templates/act_answer_sheet.yaml).
 #

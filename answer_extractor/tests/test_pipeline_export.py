@@ -1,8 +1,8 @@
 import cv2
 
-from bubble_scanner.export import write_xlsx
-from bubble_scanner.pipeline import SheetResult, process_path, process_paths
-from bubble_scanner.template import Template
+from answer_extractor.export import write_xlsx
+from answer_extractor.pipeline import SheetResult, process_path, process_paths
+from answer_extractor.template import Template
 from tests.synth import render_sheet
 
 

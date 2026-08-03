@@ -29,7 +29,7 @@ class ScoreReportRow:
     section: str
     your_answer: str
     correct_answer: str = ""
-    # Filled in by bubble_scanner.answer_keys.annotate_rows, not by parsing
+    # Filled in by answer_extractor.answer_keys.annotate_rows, not by parsing
     # itself -- a plain "Module N" label (always available) upgraded to
     # "Module 2 (Easier)"/"Module 2 (Harder)" when a reference answer key
     # confidently identifies which second-module variant this is.
@@ -115,7 +115,7 @@ def section_module_index(rows: List[ScoreReportRow]) -> "dict[int, int]":
 def base_module_labels(rows: List[ScoreReportRow]) -> "dict[int, str]":
     """Plain "Module N" labels (N = occurrence within that row's section)
     with no answer-key knowledge required -- always available, and what
-    bubble_scanner.answer_keys.annotate_rows upgrades to e.g.
+    answer_extractor.answer_keys.annotate_rows upgrades to e.g.
     "Module 2 (Harder)" when a reference key confidently matches."""
     return {module_num: f"Module {idx}" for module_num, idx in section_module_index(rows).items()}
 

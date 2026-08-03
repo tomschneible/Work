@@ -1,16 +1,16 @@
-"""Tests for bubble_scanner.answer_keys: identifying which known SAT test
+"""Tests for answer_extractor.answer_keys: identifying which known SAT test
 a score report is from, and whether each section's second module was the
 easier or harder adaptive variant -- using synthetic reference keys and
 synthetic score-report PDFs throughout (no real SAT content)."""
 import pytest
 
-from bubble_scanner.answer_keys import (
+from answer_extractor.answer_keys import (
     AnswerKeyLibrary,
     annotate_rows,
     identify_test_and_modules,
     load_answer_keys,
 )
-from bubble_scanner.score_report import base_module_labels, parse_score_report
+from answer_extractor.score_report import base_module_labels, parse_score_report
 from tests.score_report_synth import write_score_report_pdf
 
 SAMPLE_CSV = """Test,Section,Question,Module1,Module2Easy,Module2Hard

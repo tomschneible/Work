@@ -1,5 +1,5 @@
-from bubble_scanner.detect import decide_answer, evaluate_sheet
-from bubble_scanner.template import Template
+from answer_extractor.detect import decide_answer, evaluate_sheet
+from answer_extractor.template import Template
 from tests.synth import render_sheet
 
 

@@ -1,5 +1,5 @@
 """Build a minimal synthetic "Score Details"-style PDF for testing
-bubble_scanner.score_report, without needing to commit a real (likely
+answer_extractor.score_report, without needing to commit a real (likely
 copyrighted) score report.
 """
 from __future__ import annotations

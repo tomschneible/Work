@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 
-from bubble_scanner.align import align_to_template
-from bubble_scanner.template import Template
+from answer_extractor.align import align_to_template
+from answer_extractor.template import Template
 from tests.synth import render_sheet
 
 

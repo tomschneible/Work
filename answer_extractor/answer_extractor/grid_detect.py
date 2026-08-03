@@ -1,7 +1,7 @@
 """Locate the actual bubble grid on a scanned sheet, rather than trusting a
 template's fixed pixel coordinates.
 
-Why this exists: bubble_scanner.template.Template coordinates are
+Why this exists: answer_extractor.template.Template coordinates are
 calibrated against one reference render. Real-world inputs -- even a
 "born-digital" PDF at a very slightly different page size, let alone an
 actual photographed/scanned sheet -- routinely drift from that reference

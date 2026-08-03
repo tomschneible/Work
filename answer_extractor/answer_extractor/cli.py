@@ -1,6 +1,6 @@
 """Command-line entry point.
 
-    python -m bubble_scanner.cli --input scans/ --template templates/default_template.yaml --output results.xlsx
+    python -m answer_extractor.cli --input scans/ --template templates/default_template.yaml --output results.xlsx
 
 `--input` accepts one or more paths (files, PDFs, or directories); all
 sheets found are combined into a single spreadsheet.

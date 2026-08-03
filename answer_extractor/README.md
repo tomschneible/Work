@@ -1,23 +1,23 @@
-# Bubble Sheet Scanner
+# Answer Extractor
 
 Extracts multiple-choice answers into an Excel spreadsheet, from either:
 
-- **scanned/photographed bubble sheets** (`bubble_scanner.cli`) — image
+- **scanned/photographed bubble sheets** (`answer_extractor.cli`) — image
   processing against a geometry template, described below, or
-- **text-based "Score Details" report PDFs** (`bubble_scanner.score_report_cli`)
+- **text-based "Score Details" report PDFs** (`answer_extractor.score_report_cli`)
   such as the College Board SAT/PSAT Suite report — text parsing of the
   "Questions Overview" table, no image processing involved. See "Score
   report PDFs" below; everything else in this README is about the
   bubble-sheet path.
 
-`bubble_scanner.auto_cli` combines both: point it at a mix of scanned
+`answer_extractor.auto_cli` combines both: point it at a mix of scanned
 sheets and score-report PDFs and it auto-detects each file's type and
 routes it accordingly (see "macOS drag-and-drop app"), which is what the
 Mac droplet app uses.
 
 - By default, odd-numbered questions use choices **A, B, C, D** and
   even-numbered questions use **F, G, H, J** — the standard ACT convention
-  (`bubble_scanner/template.py:Template.choices_for`). This is configurable
+  (`answer_extractor/template.py:Template.choices_for`). This is configurable
   per template; swap the `choices:` block if your sheet uses the opposite
   mapping.
 - Supports sheets with multiple independently-numbered sections (e.g. an
@@ -53,7 +53,7 @@ Mac droplet app uses.
 
 ```bash
 pip install -r requirements.txt
-python -m bubble_scanner.cli \
+python -m answer_extractor.cli \
   --input scans/ \
   --template templates/act_answer_sheet.yaml \
   --output results.xlsx
@@ -77,7 +77,7 @@ instead of the bubble-sheet pipeline — no template or image processing
 needed, just text parsing:
 
 ```bash
-python -m bubble_scanner.score_report_cli \
+python -m answer_extractor.score_report_cli \
   --input Score_Details.pdf \
   --output answers.xlsx
 ```
@@ -94,8 +94,8 @@ as a plain "Module N" label (N = which occurrence of that section this is
 two "Reading and Writing" modules, each numbered 1..N, so rows stay
 unambiguous even though the raw "Question" number repeats).
 
-This path is implemented in `bubble_scanner/score_report.py` (parsing) and
-`bubble_scanner/score_report_export.py` (spreadsheet export); tests build
+This path is implemented in `answer_extractor/score_report.py` (parsing) and
+`answer_extractor/score_report_export.py` (spreadsheet export); tests build
 synthetic report PDFs (`tests/score_report_synth.py`) rather than
 committing a real (likely personal/copyrighted) score report.
 
@@ -106,7 +106,7 @@ adaptive: everyone gets the same Module 1, then Module 2 is one of two
 different question sets (easier/harder) depending on Module 1 performance.
 A score report never states in plain text which variant was administered
 -- that's external knowledge, and grading against the wrong variant's key
-would be wrong. `bubble_scanner/answer_keys.py` figures this out using a
+would be wrong. `answer_extractor/answer_keys.py` figures this out using a
 signal the report *does* give you: its own "Correct Answer" column (which
 we parse but otherwise discard) is Bluebook's ground truth for whatever
 was actually administered, so comparing it against a reference key for the
@@ -114,7 +114,7 @@ right test/variant should match ~100%, while a wrong test/variant only
 agrees by chance (~25% on 4-option questions) -- a clean, high-confidence
 signal rather than a fuzzy one.
 
-- Reference keys live in `bubble_scanner/answer_keys/sat_answer_keys.csv`
+- Reference keys live in `answer_extractor/answer_keys/sat_answer_keys.csv`
   (columns `Test, Section, Question, Module1, Module2Easy, Module2Hard`),
   one row per question per test. It's a plain CSV rather than a spreadsheet
   file specifically so it's editable directly in GitHub's web UI (a binary
@@ -145,7 +145,7 @@ still requires a one-time Python setup (there's no way to produce a fully
 standalone, dependency-free executable without building on macOS itself),
 but after that it's just an icon.
 
-`scripts/mac_droplet.sh` calls `bubble_scanner.auto_cli`, which
+`scripts/mac_droplet.sh` calls `answer_extractor.auto_cli`, which
 auto-detects each dropped file's type (images are always treated as
 bubble sheets; a PDF is treated as a score report if it actually parses
 as one, otherwise as a scanned bubble sheet) and routes it accordingly.
@@ -153,10 +153,10 @@ Each bubble sheet gets its own tab (see "How it works" below), opening on
 the first one; any score-report PDFs land in a separate "Score Report
 Answers" tab -- all in the same spreadsheet.
 
-This program lives in the `bubble_scanner/` subdirectory of the
+This program lives in the `answer_extractor/` subdirectory of the
 `tomschneible/Work` repo (a monorepo -- other unrelated programs may live
 in sibling directories at the repo root). All commands and paths below
-assume you're inside `bubble_scanner/`, not the repo root.
+assume you're inside `answer_extractor/`, not the repo root.
 
 **One-time setup** (Terminal). Copy this block exactly -- do not leave in
 any `<` `>` placeholder characters, since those are shell redirection
@@ -167,7 +167,7 @@ somewhere other than the URL below, grab the real one from GitHub's green
 
 ```bash
 git clone https://github.com/tomschneible/Work.git ~/Work
-cd ~/Work/bubble_scanner
+cd ~/Work/answer_extractor
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -186,9 +186,9 @@ chmod +x scripts/mac_droplet.sh
    with wherever you actually cloned the repo in step 1):
 
    ```bash
-   ~/Work/bubble_scanner/scripts/mac_droplet.sh "$@"
+   ~/Work/answer_extractor/scripts/mac_droplet.sh "$@"
    ```
-5. **File → Save**, name it `Bubble Sheet Scanner`, and save it as an
+5. **File → Save**, name it `Answer Extractor`, and save it as an
    **Application** (e.g. to your Desktop or Applications folder).
 
 **To use it:** drag one or more scanned PDFs/images and/or score-report
@@ -207,27 +207,27 @@ at all). To point bubble-sheet scoring at a different template, add an env
 var line before the script call in the same Automator action:
 
 ```bash
-export BUBBLE_TEMPLATE=~/Work/bubble_scanner/templates/default_template.yaml
-~/Work/bubble_scanner/scripts/mac_droplet.sh "$@"
+export ANSWER_EXTRACTOR_TEMPLATE=~/Work/answer_extractor/templates/default_template.yaml
+~/Work/answer_extractor/scripts/mac_droplet.sh "$@"
 ```
 
 ## How it works
 
-1. **Load** (`bubble_scanner/loading.py`) — reads images directly, or
+1. **Load** (`answer_extractor/loading.py`) — reads images directly, or
    rasterizes PDF pages via PyMuPDF.
-2. **Align** (`bubble_scanner/align.py`) — finds the sheet's outer rectangular
+2. **Align** (`answer_extractor/align.py`) — finds the sheet's outer rectangular
    border (or page edge) in the photo/scan and perspective-warps it to the
    template's reference page size, so skewed or off-center photos still line
    up with the template's bubble coordinates. If no clean border is found,
    the image is resized directly and the result is flagged in the output
    ("Alignment" column) so you know to double check that sheet.
-3. **Template** (`bubble_scanner/template.py`) — a YAML file describing the
+3. **Template** (`answer_extractor/template.py`) — a YAML file describing the
    sheet's geometry: page size, one or more named **sections** (independently
    numbered question blocks — most sheets have just one), each with one or
    more question columns (start position + row spacing), plus bubble
    spacing/radius and the two choice sets. Bubble pixel coordinates are
    derived from this, not hardcoded.
-4. **Locate bubbles** (`bubble_scanner/grid_detect.py`) — a template's
+4. **Locate bubbles** (`answer_extractor/grid_detect.py`) — a template's
    coordinates are calibrated against one reference render, and real-world
    inputs drift from that by more than you'd expect: even a "born-digital"
    PDF at a page size differing by under 1% has been observed to shift
@@ -241,7 +241,7 @@ export BUBBLE_TEMPLATE=~/Work/bubble_scanner/templates/default_template.yaml
    contour doesn't sink the section. A section only falls back to raw,
    uncorrected template coordinates if detection can't establish the
    expected structure at all (rare, and only on a genuinely poor scan).
-5. **Detect marks** (`bubble_scanner/detect.py`) — thresholds the image once
+5. **Detect marks** (`answer_extractor/detect.py`) — thresholds the image once
    per sheet using `max(B, G, R)` per pixel (equivalent to HSV "Value")
    rather than grayscale luminance, then measures what fraction of each
    bubble's interior is dark. Using the max channel instead of luminance is
@@ -252,7 +252,7 @@ export BUBBLE_TEMPLATE=~/Work/bubble_scanner/templates/default_template.yaml
    relative margin of the darkest bubble in that question — this is what
    allows partial/light marks through while still catching genuine
    double-bubbling.
-6. **Export** (`bubble_scanner/export.py`) — one tab per scanned sheet, with
+6. **Export** (`answer_extractor/export.py`) — one tab per scanned sheet, with
    a Question column and one column per section (e.g. English, Mathematics,
    Reading, Science) — matching the sheet's own layout rather than one
    column per individual question. The output opens on the first sheet's

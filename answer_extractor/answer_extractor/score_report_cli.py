@@ -1,8 +1,8 @@
 """Command-line entry point for extracting answers from text-based score
 report PDFs (e.g. College Board SAT/PSAT Suite "Score Details" reports) --
-as opposed to scanned bubble sheets, see bubble_scanner.cli for those.
+as opposed to scanned bubble sheets, see answer_extractor.cli for those.
 
-    python -m bubble_scanner.score_report_cli --input Score_Details.pdf --output answers.xlsx
+    python -m answer_extractor.score_report_cli --input Score_Details.pdf --output answers.xlsx
 
 `--input` accepts one or more PDFs and/or directories of them; everything
 found is combined into a single spreadsheet.

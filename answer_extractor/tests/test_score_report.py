@@ -1,5 +1,5 @@
-from bubble_scanner.score_report import parse_score_report, parse_score_reports
-from bubble_scanner.score_report_export import write_score_report_xlsx
+from answer_extractor.score_report import parse_score_report, parse_score_reports
+from answer_extractor.score_report_export import write_score_report_xlsx
 from tests.score_report_synth import write_score_report_pdf
 
 

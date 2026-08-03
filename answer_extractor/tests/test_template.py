@@ -1,6 +1,6 @@
 import pytest
 
-from bubble_scanner.template import Template
+from answer_extractor.template import Template
 
 
 def make_template(**overrides) -> Template:

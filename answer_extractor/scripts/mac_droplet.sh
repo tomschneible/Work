@@ -1,12 +1,12 @@
 #!/bin/bash
-# Wrapper invoked by the "Bubble Sheet Scanner.app" Automator droplet (see
+# Wrapper invoked by the "Answer Extractor.app" Automator droplet (see
 # README.md "macOS drag-and-drop app" section). Not meant to be run
 # directly by hand, though it works fine that way too:
 #
 #   scripts/mac_droplet.sh sheet1.pdf sheet2.jpg score_details.pdf ...
 #
 # Takes the dropped file/folder paths as arguments and runs them through
-# bubble_scanner.auto_cli, which auto-detects whether each one is a
+# answer_extractor.auto_cli, which auto-detects whether each one is a
 # scanned bubble sheet or a text-based score-report PDF and routes it
 # accordingly -- both kinds can be dropped together in one go, landing as
 # separate tabs in one spreadsheet. Writes the spreadsheet to the Desktop
@@ -18,17 +18,17 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"  # `python -m bubble_scanner.auto_cli` needs the repo root on sys.path
+cd "$REPO_ROOT"  # `python -m answer_extractor.auto_cli` needs the repo root on sys.path
 VENV_PYTHON="$REPO_ROOT/.venv/bin/python"
-TEMPLATE="${BUBBLE_TEMPLATE:-$REPO_ROOT/templates/act_answer_sheet.yaml}"
+TEMPLATE="${ANSWER_EXTRACTOR_TEMPLATE:-$REPO_ROOT/templates/act_answer_sheet.yaml}"
 
 notify() {
-  osascript -e "display notification \"$1\" with title \"Bubble Sheet Scanner\"" >/dev/null 2>&1 || true
+  osascript -e "display notification \"$1\" with title \"Answer Extractor\"" >/dev/null 2>&1 || true
 }
 
 fail() {
   local message="$1"
-  osascript -e "display alert \"Bubble Sheet Scanner\" message \"$message\" as critical" >/dev/null 2>&1 || true
+  osascript -e "display alert \"Answer Extractor\" message \"$message\" as critical" >/dev/null 2>&1 || true
   exit 1
 }
 
@@ -61,7 +61,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 set +e
-ERROR_OUTPUT="$("$VENV_PYTHON" -m bubble_scanner.auto_cli --input "$@" --template "$TEMPLATE" --output "$OUTPUT" 2>&1 >/dev/null)"
+ERROR_OUTPUT="$("$VENV_PYTHON" -m answer_extractor.auto_cli --input "$@" --template "$TEMPLATE" --output "$OUTPUT" 2>&1 >/dev/null)"
 STATUS=$?
 set -e
 

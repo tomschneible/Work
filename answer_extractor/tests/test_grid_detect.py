@@ -9,9 +9,9 @@ template coordinates.
 import cv2
 import numpy as np
 
-from bubble_scanner.detect import evaluate_sheet
-from bubble_scanner.grid_detect import locate_section_bubbles
-from bubble_scanner.template import Template
+from answer_extractor.detect import evaluate_sheet
+from answer_extractor.grid_detect import locate_section_bubbles
+from answer_extractor.template import Template
 from tests.synth import render_sheet
 
 

@@ -10,7 +10,7 @@ from typing import Dict, Iterable, Optional
 import cv2
 import numpy as np
 
-from bubble_scanner.template import Template
+from answer_extractor.template import Template
 
 
 def make_blank_sheet(
