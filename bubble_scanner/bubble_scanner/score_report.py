@@ -28,6 +28,13 @@ class ScoreReportRow:
     question: int
     section: str
     your_answer: str
+    correct_answer: str = ""
+    # Filled in by bubble_scanner.answer_keys.annotate_rows, not by parsing
+    # itself -- a plain "Module N" label (always available) upgraded to
+    # "Module 2 (Easier)"/"Module 2 (Harder)" when a reference answer key
+    # confidently identifies which second-module variant this is.
+    test: str = ""
+    module_label: str = ""
 
 
 def _extract_lines(path: str | Path) -> List[str]:
@@ -58,6 +65,7 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
         if question_line.isdigit() and review_line == "Review" and _ROW_ANSWER_RE.match(answer_line):
             question = int(question_line)
             section = lines[i + 1].strip()
+            correct_answer = lines[i + 2].strip()
             your_answer = answer_line.rsplit(";", 1)[0].strip()
 
             if previous_question is not None and question <= previous_question:
@@ -71,12 +79,45 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
                     question=question,
                     section=section,
                     your_answer=your_answer,
+                    correct_answer=correct_answer,
                 )
             )
             i += 5
         else:
             i += 1
     return rows
+
+
+def group_by_module(rows: List[ScoreReportRow]) -> "dict[int, List[ScoreReportRow]]":
+    """Group rows by their `module` counter, preserving counter order."""
+    blocks: "dict[int, List[ScoreReportRow]]" = {}
+    for row in rows:
+        blocks.setdefault(row.module, []).append(row)
+    return blocks
+
+
+def section_module_index(rows: List[ScoreReportRow]) -> "dict[int, int]":
+    """For each `module` counter value, return which occurrence (1st, 2nd,
+    ...) of *that row's section* it is. This is robust to how sections are
+    ordered in the PDF (e.g. all of one section's modules before the
+    next), unlike the raw `module` counter which just counts resets
+    globally regardless of section."""
+    blocks = group_by_module(rows)
+    counts: "dict[str, int]" = {}
+    result: "dict[int, int]" = {}
+    for module_num in sorted(blocks):
+        section = blocks[module_num][0].section
+        counts[section] = counts.get(section, 0) + 1
+        result[module_num] = counts[section]
+    return result
+
+
+def base_module_labels(rows: List[ScoreReportRow]) -> "dict[int, str]":
+    """Plain "Module N" labels (N = occurrence within that row's section)
+    with no answer-key knowledge required -- always available, and what
+    bubble_scanner.answer_keys.annotate_rows upgrades to e.g.
+    "Module 2 (Harder)" when a reference key confidently matches."""
+    return {module_num: f"Module {idx}" for module_num, idx in section_module_index(rows).items()}
 
 
 def _iter_pdfs(path: str | Path) -> List[Path]:

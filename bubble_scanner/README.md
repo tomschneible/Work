@@ -83,19 +83,56 @@ python -m bubble_scanner.score_report_cli \
 ```
 
 `--input` accepts one or more PDFs and/or directories of them, combined
-into one spreadsheet with columns `Source | Module | Question | Section |
-Your Answer`. Only the plain answer value is kept (e.g. `D`, `18`,
-`11/28`) — the "; Correct"/"; Incorrect" suffix and Correct Answer column
-are dropped, since only what the student answered matters here. A
-`Module` counter increments whenever question numbering restarts (these
-reports commonly have several same-named sections, e.g. two "Reading and
-Writing" modules, each numbered 1..N), so rows stay unambiguous even
-though the raw "Question" number repeats.
+into one spreadsheet with columns `Source | Test | Module | Question |
+Section | Your Answer`. Only the plain answer value is kept in "Your
+Answer" (e.g. `D`, `18`, `11/28`) — the "; Correct"/"; Incorrect" suffix is
+dropped, since only what the student answered matters there. "Module"
+starts as a plain "Module N" label (N = which occurrence of that section
+this is -- these reports commonly have two same-named modules per section,
+e.g. two "Reading and Writing" modules, each numbered 1..N, so rows stay
+unambiguous even though the raw "Question" number repeats).
 
 This path is implemented in `bubble_scanner/score_report.py` (parsing) and
 `bubble_scanner/score_report_export.py` (spreadsheet export); tests build
 synthetic report PDFs (`tests/score_report_synth.py`) rather than
 committing a real (likely personal/copyrighted) score report.
+
+### Identifying the test and the adaptive module 2 variant
+
+The digital SAT's Reading & Writing and Math sections are each two-stage
+adaptive: everyone gets the same Module 1, then Module 2 is one of two
+different question sets (easier/harder) depending on Module 1 performance.
+A score report never states in plain text which variant was administered
+-- that's external knowledge, and grading against the wrong variant's key
+would be wrong. `bubble_scanner/answer_keys.py` figures this out using a
+signal the report *does* give you: its own "Correct Answer" column (which
+we parse but otherwise discard) is Bluebook's ground truth for whatever
+was actually administered, so comparing it against a reference key for the
+right test/variant should match ~100%, while a wrong test/variant only
+agrees by chance (~25% on 4-option questions) -- a clean, high-confidence
+signal rather than a fuzzy one.
+
+- Reference keys live in `bubble_scanner/answer_keys/sat_answer_keys.csv`
+  (columns `Test, Section, Question, Module1, Module2Easy, Module2Hard`),
+  one row per question per test. It's a plain CSV rather than a spreadsheet
+  file specifically so it's editable directly in GitHub's web UI (a binary
+  .xlsx can only be replaced wholesale there, not edited cell-by-cell).
+- To avoid every machine needing a `git pull` whenever a new test's keys
+  are added, both CLIs fetch the *latest* copy of that file straight from
+  GitHub over HTTPS on each run, cache it locally, and fall back to the
+  cache (then the copy bundled in your checkout) if offline -- so editing
+  the file on GitHub reaches every machine automatically, and grading still
+  works without a network connection using the last-known keys. Pass
+  `--no-refresh-keys` to skip the network fetch and use the cache/bundled
+  copy outright (e.g. for a fully offline run, or in tests).
+- Identification runs automatically and degrades gracefully: with no
+  confident match (unknown test, or no reference data at all), the "Test"
+  column reads "Unknown" and "Module" stays a plain "Module N" -- it never
+  blocks extracting the underlying answers.
+
+To add a new test, append rows to `sat_answer_keys.csv` (via a PR, or
+editing directly on GitHub) -- one row per question, with that question's
+correct answer for Module 1, the easier Module 2, and the harder Module 2.
 
 ## macOS drag-and-drop app
 

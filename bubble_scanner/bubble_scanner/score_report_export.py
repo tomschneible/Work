@@ -22,13 +22,15 @@ def add_score_report_answers_sheet(
 
     ws = wb.create_sheet(title=title)
 
-    header = ["Source", "Module", "Question", "Section", "Your Answer"]
+    header = ["Source", "Test", "Module", "Question", "Section", "Your Answer"]
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
     for row in rows:
-        ws.append([row.source, row.module, row.question, row.section, row.your_answer])
+        module_label = row.module_label or f"Module {row.module}"
+        test = row.test or "Unknown"
+        ws.append([row.source, test, module_label, row.question, row.section, row.your_answer])
 
     for col_index in range(1, len(header) + 1):
         ws.column_dimensions[get_column_letter(col_index)].width = 18

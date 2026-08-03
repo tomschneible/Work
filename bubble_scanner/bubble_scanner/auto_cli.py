@@ -21,6 +21,7 @@ from typing import List, Tuple
 
 from openpyxl import Workbook
 
+from .answer_keys import annotate_rows, load_answer_keys
 from .export import add_bubble_sheet_answers_sheet
 from .loading import IMAGE_SUFFIXES, PDF_SUFFIXES
 from .pipeline import process_paths
@@ -81,6 +82,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--output", required=True, help="Path to write the combined .xlsx to")
+    parser.add_argument(
+        "--no-refresh-keys",
+        action="store_true",
+        help=(
+            "Skip fetching the latest answer key reference data over the network; use the "
+            "last cached copy (or the one bundled in this checkout) instead"
+        ),
+    )
     return parser
 
 
@@ -116,6 +125,11 @@ def main(argv: list[str] | None = None) -> int:
             summary_parts.append(f"{len(results)} bubble sheet(s)")
 
     if score_rows:
+        try:
+            library = load_answer_keys(refresh=not args.no_refresh_keys)
+            score_rows = annotate_rows(score_rows, library)
+        except Exception as exc:  # answer-key identification is a bonus, not required for extraction
+            print(f"Warning: answer key identification skipped ({exc})", file=sys.stderr)
         add_score_report_answers_sheet(wb, score_rows)
         num_reports = len({row.source for row in score_rows})
         summary_parts.append(f"{len(score_rows)} score-report question(s) from {num_reports} file(s)")

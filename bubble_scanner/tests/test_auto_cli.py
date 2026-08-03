@@ -86,6 +86,7 @@ def test_auto_cli_produces_two_tabs_for_mixed_input(tmp_path):
             str(template_path),
             "--output",
             str(output_path),
+            "--no-refresh-keys",
         ]
     )
 
@@ -101,7 +102,11 @@ def test_auto_cli_produces_two_tabs_for_mixed_input(tmp_path):
 
     score_ws = wb["Score Report Answers"]
     score_rows = list(score_ws.iter_rows(min_row=2, values_only=True))
-    assert [r[2:] for r in score_rows] == [(1, "Reading and Writing", "D"), (2, "Reading and Writing", "D")]
+    # No matching reference key for this synthetic report -> plain "Module N" labels.
+    assert [r[2:] for r in score_rows] == [
+        ("Module 1", 1, "Reading and Writing", "D"),
+        ("Module 1", 2, "Reading and Writing", "D"),
+    ]
 
 
 def test_auto_cli_handles_bubble_only_input_without_requiring_score_reports(tmp_path):
@@ -134,6 +139,7 @@ def test_auto_cli_handles_score_report_only_input_without_needing_a_valid_templa
             str(tmp_path / "nonexistent_template.yaml"),
             "--output",
             str(output_path),
+            "--no-refresh-keys",
         ]
     )
 
