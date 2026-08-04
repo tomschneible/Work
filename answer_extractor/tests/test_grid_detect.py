@@ -82,31 +82,56 @@ def test_match_to_slots_far_item_with_no_nearby_alternative_leaves_slot_empty():
 # fell back to uncorrected nominal coordinates for all of it -- English,
 # Math, and Reading all silently fell back on the real sheet, corrupting the
 # majority of that student's answers instead of just one row's.
+#
+# A first version of this fix dropped any row sparse relative to the
+# others, with no regard for whether the count was actually over
+# `expected_rows`. That broke a *different* real sheet: a pencil smudge
+# dragged between two rows left a stray 2-box cluster above a section
+# whose real row count already matched expected_rows exactly (one real row
+# also lost most of its own boxes to the same smudge, coincidentally
+# balancing the total back to the right count) -- dropping the "sparse"
+# row made the count come out one *short* instead, which fails the same
+# exact-match check from the other direction. Trimming only an actual
+# excess, down to exactly expected_rows, fixes the real bug without ever
+# discarding a row when there wasn't a surplus to explain in the first
+# place.
 
 
 def _row(n: int) -> list:
     return [_Box(x=i, y=0, w=10, h=10) for i in range(n)]
 
 
-def test_drop_sparse_rows_removes_a_stray_low_count_row():
+def test_drop_sparse_rows_trims_a_stray_low_count_row_down_to_expected():
     rows = [_row(20), _row(21), _row(19), _row(3)]
-    result = _drop_sparse_rows(rows)
+    result = _drop_sparse_rows(rows, expected_rows=3)
     assert [len(r) for r in result] == [20, 21, 19]
 
 
-def test_drop_sparse_rows_keeps_a_genuinely_short_row():
-    # A column with fewer active questions near the bottom of a section
-    # (e.g. Math's 5th column having 9 questions where the others have 10)
-    # only shrinks one column's contribution to that row, not the whole
-    # row -- it shouldn't be treated the same as a handful of stray boxes.
-    rows = [_row(20), _row(21), _row(16), _row(19)]
-    result = _drop_sparse_rows(rows)
-    assert [len(r) for r in result] == [20, 21, 16, 19]
+def test_drop_sparse_rows_leaves_a_genuinely_sparse_row_when_count_is_not_over():
+    # Mirrors the real second bug: total count already equals
+    # expected_rows, so nothing should be dropped even though one row is
+    # much sparser than the rest (a real row degraded by a smudge, not a
+    # stray extra one).
+    rows = [_row(16), _row(17), _row(2), _row(19)]
+    result = _drop_sparse_rows(rows, expected_rows=4)
+    assert result == rows
+
+
+def test_drop_sparse_rows_leaves_rows_alone_when_count_is_under_expected():
+    rows = [_row(20), _row(3)]
+    result = _drop_sparse_rows(rows, expected_rows=5)
+    assert result == rows
 
 
 def test_drop_sparse_rows_is_a_no_op_when_nothing_is_sparse():
     rows = [_row(20), _row(19), _row(18)]
-    assert _drop_sparse_rows(rows) == rows
+    assert _drop_sparse_rows(rows, expected_rows=3) == rows
+
+
+def test_drop_sparse_rows_trims_multiple_excess_rows():
+    rows = [_row(20), _row(2), _row(19), _row(1), _row(21)]
+    result = _drop_sparse_rows(rows, expected_rows=3)
+    assert [len(r) for r in result] == [20, 19, 21]
 
 
 def make_template() -> Template:

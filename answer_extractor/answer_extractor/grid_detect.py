@@ -114,25 +114,32 @@ def _cluster_rows(boxes: List[_Box], y_tolerance: float) -> List[List[_Box]]:
     return rows
 
 
-def _drop_sparse_rows(rows: List[List[_Box]]) -> List[List[_Box]]:
-    """Drop clustered "rows" that are implausibly sparse compared to the
-    rest -- real bubble rows span every column (close to `num_columns *
-    len(choices)` boxes), while stray text in the ROI's generous vertical
-    padding (observed on a real scan: a few glyph-sized characters from
-    the *next* section's header, e.g. "TEST 2: MATHEMATICS", bleeding into
-    the current section's extended search window) clusters into its own
-    row with only a handful of boxes concentrated in one narrow x range.
+def _drop_sparse_rows(rows: List[List[_Box]], expected_rows: int) -> List[List[_Box]]:
+    """If there are more clustered "rows" than the section expects, drop
+    the sparsest ones down to exactly `expected_rows` -- real bubble rows
+    span every column (close to `num_columns * len(choices)` boxes), while
+    stray marks in the ROI's generous vertical padding (observed on real
+    scans: a few glyph-sized characters from the *next* section's header
+    bleeding in; a pencil smudge dragged between two rows) cluster into
+    their own sparse row with only a handful of boxes.
 
-    Left undropped, that extra row makes the section's row count come out
-    one too many, which previously failed the exact-row-count check for
-    the *entire* section and fell back to uncorrected nominal coordinates
-    for every question in it -- far more damaging than losing one row's
-    worth of detection would be on its own.
+    Only trims an actual *excess* -- if the count is already at or below
+    `expected_rows`, every row is left alone, even a genuinely sparse one
+    (observed on another real scan: a real question row with only 2
+    detected boxes, everything else in it lost to the same smudge, still
+    the correct row and not to be discarded). Dropping only when there's
+    a surplus to explain is what keeps this from trading one failure mode
+    for the opposite one: previously an undropped extra row made the
+    section's count come out one too many and fell back to uncorrected
+    nominal coordinates for *every* question in it; blindly dropping
+    "sparse-looking" rows regardless of surplus did the same by removing a
+    real row instead.
     """
-    if not rows:
+    if len(rows) <= expected_rows:
         return rows
-    median_count = statistics.median(len(r) for r in rows)
-    return [r for r in rows if len(r) >= median_count / 2]
+    keep = sorted(rows, key=len, reverse=True)[:expected_rows]
+    keep_ids = {id(r) for r in keep}
+    return [r for r in rows if id(r) in keep_ids]
 
 
 def _split_columns(row_boxes: List[_Box], gap_threshold: float) -> List[List[_Box]]:
@@ -265,9 +272,9 @@ def locate_section_bubbles(
 
     row_tolerance = radius * _ROW_Y_TOLERANCE_RATIO
     rows = _cluster_rows(boxes, row_tolerance)
-    rows = _drop_sparse_rows(rows)
 
     expected_rows = max(c.last_question - c.first_question + 1 for c in section.columns)
+    rows = _drop_sparse_rows(rows, expected_rows)
     if len(rows) != expected_rows:
         return None
 
