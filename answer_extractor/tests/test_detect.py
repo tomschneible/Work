@@ -115,6 +115,19 @@ def test_decide_answer_high_shared_baseline_single_mark_still_wins():
     assert candidates == ["C"]
 
 
+def test_decide_answer_unusually_bold_unmarked_choice_is_not_multiple():
+    # Regression case from a real scan: one unmarked bubble happened to be
+    # printed more boldly than its neighbors (thicker ring + letter, not a
+    # student mark -- confirmed against the source image), landing only
+    # ~0.146 below the genuinely marked choice after baseline subtraction.
+    # relative_margin=0.13 (act_answer_sheet.yaml's tuned value) must not
+    # flag this as MULTIPLE.
+    ratios = {"F": 0.988, "G": 0.735, "H": 0.842, "J": 0.597}
+    answer, candidates, _ = decide_answer(ratios, 0.20, 0.13)
+    assert answer == "F"
+    assert candidates == ["F"]
+
+
 # -- evaluate_sheet: rendered-image tests ------------------------------------
 
 

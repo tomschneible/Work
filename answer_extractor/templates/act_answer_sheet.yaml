@@ -65,4 +65,13 @@ thresholds:
   # (including light/partial ones) start at 0.24 and climb from there --
   # 0.20 sits in the clear gap between the two.
   fill_ratio_min: 0.20
-  relative_margin: 0.15
+  # A real scanned sheet had one blank bubble printed unusually boldly
+  # (thicker ring+letter than its neighbors, not a real second mark --
+  # confirmed against the source scan) that landed only 0.146 below the
+  # genuinely-marked choice in the same question after baseline
+  # subtraction -- just inside the old 0.15 margin, misreading a clean
+  # single answer as MULTIPLE. 0.13 excludes it while still catching a
+  # real uneven double-mark (two bubbles both solidly filled, one lighter
+  # than the other) -- verified against both real sheets end-to-end: this
+  # is the only answer either changes.
+  relative_margin: 0.13
