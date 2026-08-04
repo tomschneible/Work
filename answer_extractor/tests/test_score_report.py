@@ -60,6 +60,47 @@ def test_parse_handles_grid_in_numeric_and_fraction_answers(tmp_path):
     assert answers == {17: "11/28", 19: "54", 21: "73"}
 
 
+def test_parse_handles_section_names_wrapped_across_two_lines(tmp_path):
+    rows_in = [
+        (1, ("Reading and", "Writing"), "D", "D", "Correct"),
+        (2, ("Reading and", "Writing"), "B", "D", "Incorrect"),
+        (1, "Math", "A", "A", "Correct"),
+    ]
+    path = tmp_path / "report.pdf"
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    assert [r.section for r in rows] == ["Reading and Writing", "Reading and Writing", "Math"]
+    assert [r.question for r in rows] == [1, 2, 1]
+
+
+def test_parse_handles_omitted_answers(tmp_path):
+    rows_in = [
+        (1, "Math", "A", "", "Omitted"),
+        (2, "Math", "B", "B", "Correct"),
+    ]
+    path = tmp_path / "report.pdf"
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    assert [r.your_answer for r in rows] == ["", "B"]
+    assert [r.correct_answer for r in rows] == ["A", "B"]
+
+
+def test_parse_ignores_trailing_domain_column(tmp_path):
+    rows_in = [
+        (1, ("Reading and", "Writing"), "D", "D", "Correct"),
+        (2, "Math", "A", "", "Omitted"),
+    ]
+    path = tmp_path / "report.pdf"
+    write_score_report_pdf(path, rows_in, domain="Standard English Conventions")
+
+    rows = parse_score_report(path)
+    assert [r.question for r in rows] == [1, 2]
+    assert [r.section for r in rows] == ["Reading and Writing", "Math"]
+    assert [r.your_answer for r in rows] == ["D", ""]
+
+
 def test_parse_spans_multiple_pages(tmp_path):
     rows_in = [(i, "Math", "A", "A", "Correct") for i in range(1, 41)]
     path = tmp_path / "report.pdf"

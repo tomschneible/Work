@@ -12,13 +12,10 @@ resets) is tracked to keep rows unambiguous.
 from __future__ import annotations
 
 import dataclasses
-import re
 from pathlib import Path
 from typing import Iterable, List
 
 import fitz  # PyMuPDF
-
-_ROW_ANSWER_RE = re.compile(r".+;\s*(Correct|Incorrect)\s*$")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,43 +45,69 @@ def _extract_lines(path: str | Path) -> List[str]:
         doc.close()
 
 
+def _parse_your_answer(raw: str) -> str:
+    """The "Your Answer" cell is either a skipped question ("Omitted", no
+    letter/value) or "<value>; Correct"/"<value>; Incorrect" -- strip the
+    trailing status, leaving "" for an omitted question."""
+    if raw == "Omitted":
+        return ""
+    if ";" in raw:
+        return raw.rsplit(";", 1)[0].strip()
+    return raw
+
+
 def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
     """Parse one score-report PDF into a flat list of answer rows, in the
-    order questions appear in the "Questions Overview" table."""
+    order questions appear in the "Questions Overview" table.
+
+    Each row's rightmost column is a "Review" link, which -- unlike the
+    surrounding fields -- never changes text and never spans more than one
+    line, making it a reliable anchor. From each "Review" occurrence, walk
+    backward: the "Your Answer" and "Correct Answer" cells are always the
+    two lines immediately before it, and the section name is whatever
+    non-numeric line(s) precede those, terminated by the question number.
+    Scanning backward from a fixed anchor (rather than forward with fixed
+    offsets) naturally handles section names that wrap to one or two lines
+    and doesn't care what, if anything, follows "Review" (e.g. a "Domain"
+    column present in some report layouts but not others).
+    """
     path = Path(path)
-    lines = _extract_lines(path)
+    lines = [line.strip() for line in _extract_lines(path)]
 
     rows: List[ScoreReportRow] = []
     module = 1
     previous_question = None
-    i = 0
-    while i < len(lines) - 4:
-        question_line = lines[i].strip()
-        review_line = lines[i + 4].strip()
-        answer_line = lines[i + 3].strip()
-        if question_line.isdigit() and review_line == "Review" and _ROW_ANSWER_RE.match(answer_line):
-            question = int(question_line)
-            section = lines[i + 1].strip()
-            correct_answer = lines[i + 2].strip()
-            your_answer = answer_line.rsplit(";", 1)[0].strip()
+    for j, line in enumerate(lines):
+        if line != "Review" or j < 3:
+            continue
 
-            if previous_question is not None and question <= previous_question:
-                module += 1
-            previous_question = question
+        k = j - 3
+        section_parts: List[str] = []
+        while k >= 0 and not lines[k].isdigit():
+            section_parts.append(lines[k])
+            k -= 1
+        if k < 0:
+            continue  # No question number found above -- not a real row.
 
-            rows.append(
-                ScoreReportRow(
-                    source=path.stem,
-                    module=module,
-                    question=question,
-                    section=section,
-                    your_answer=your_answer,
-                    correct_answer=correct_answer,
-                )
+        question = int(lines[k])
+        section = " ".join(reversed(section_parts))
+        correct_answer = lines[j - 2]
+        your_answer = _parse_your_answer(lines[j - 1])
+
+        if previous_question is not None and question <= previous_question:
+            module += 1
+        previous_question = question
+
+        rows.append(
+            ScoreReportRow(
+                source=path.stem,
+                module=module,
+                question=question,
+                section=section,
+                your_answer=your_answer,
+                correct_answer=correct_answer,
             )
-            i += 5
-        else:
-            i += 1
+        )
     return rows
 
 
