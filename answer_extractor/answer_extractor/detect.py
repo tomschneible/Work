@@ -77,6 +77,30 @@ def score_bubbles(binary: np.ndarray, bubbles: List[Tuple[str, int, int]], radiu
     return {choice: _bubble_fill_ratio(binary, x, y, radius) for choice, x, y in bubbles}
 
 
+def _baseline_adjust(fill_ratios: Dict[str, float]) -> Dict[str, float]:
+    """Subtract each question's own minimum fill ratio from every choice in
+    it before deciding an answer.
+
+    A printed bubble's outline and choice letter are themselves dark ink,
+    not just the paper it sits on -- on some scans (bolder print, lower
+    scan resolution, a tighter sample radius relative to the bubble) that
+    baseline "ink floor" is high enough that even a completely blank bubble
+    clears `fill_ratio_min` on its own, and all four choices in a question
+    end up within `relative_margin` of each other purely from that shared
+    baseline, which reads as MULTIPLE even though nothing was marked. Since
+    the baseline is common to every choice in the same question (same font,
+    same print, same scan pass), the least-filled choice in the row is a
+    good per-question estimate of it; subtracting it out leaves only the
+    genuine pencil/pen marking, and does nothing when there's no such
+    baseline to begin with (subtracting 0 changes nothing), so clean scans
+    are unaffected.
+    """
+    if not fill_ratios:
+        return {}
+    baseline = min(fill_ratios.values())
+    return {choice: ratio - baseline for choice, ratio in fill_ratios.items()}
+
+
 def decide_answer(
     fill_ratios: Dict[str, float],
     fill_ratio_min: float,
@@ -84,22 +108,24 @@ def decide_answer(
 ) -> tuple[str, List[str], bool]:
     """Turn per-choice fill ratios into (answer, candidates, low_confidence).
 
-    A choice counts as "marked" if its fill ratio clears the absolute floor
-    AND is within `relative_margin` of the darkest bubble in the question.
-    The relative check is what catches genuinely multiple answers (two
-    bubbles both solidly filled) while the absolute floor keeps stray pencil
-    smudges or scan noise from being read as an answer.
+    A choice counts as "marked" if its fill ratio (after subtracting the
+    question's own baseline ink level -- see `_baseline_adjust`) clears the
+    absolute floor AND is within `relative_margin` of the darkest bubble in
+    the question. The relative check is what catches genuinely multiple
+    answers (two bubbles both solidly filled) while the absolute floor
+    keeps stray pencil smudges or scan noise from being read as an answer.
     """
     if not fill_ratios:
         return "", [], False
 
-    max_ratio = max(fill_ratios.values())
+    adjusted = _baseline_adjust(fill_ratios)
+    max_ratio = max(adjusted.values())
     if max_ratio < fill_ratio_min:
         return "", [], False
 
     candidates = [
         choice
-        for choice, ratio in fill_ratios.items()
+        for choice, ratio in adjusted.items()
         if ratio >= fill_ratio_min and ratio >= max_ratio - relative_margin
     ]
     # Preserve a stable, human-friendly order (matches choice definition order).

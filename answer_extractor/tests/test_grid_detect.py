@@ -10,9 +10,64 @@ import cv2
 import numpy as np
 
 from answer_extractor.detect import evaluate_sheet
-from answer_extractor.grid_detect import locate_section_bubbles
+from answer_extractor.grid_detect import _match_to_slots, locate_section_bubbles
 from answer_extractor.template import Template
 from tests.synth import render_sheet
+
+
+# -- _match_to_slots: pure logic tests ----------------------------------------
+#
+# Regression coverage for a second real bug found against a real scanned ACT
+# sheet: a question-number label (e.g. "34") occasionally has a glyph sized
+# like a real bubble and gets swept into the same row. The old
+# implementation truncated to `items[:n_slots]`, which -- when that made the
+# item count exactly match the slot count -- forced every item into a slot
+# left-to-right with no way to reject the spurious one, silently shifting
+# every real bubble in the row one slot over and never sampling the actual
+# (in the real case, solidly marked) last bubble at all.
+
+
+def test_match_to_slots_exact_match():
+    result = _match_to_slots([10.0, 20.0, 30.0], lambda x: x, [10.0, 20.0, 30.0])
+    assert result == [10.0, 20.0, 30.0]
+
+
+def test_match_to_slots_missing_item_in_middle_does_not_shift_later_ones():
+    # Slot 1 (nominal 20.0) has no detected item; slots 0 and 2 shouldn't
+    # cascade into the wrong item as a result.
+    result = _match_to_slots([10.0, 30.0], lambda x: x, [10.0, 20.0, 30.0])
+    assert result == [10.0, None, 30.0]
+
+
+def test_match_to_slots_extra_item_beyond_max_distance_is_dropped():
+    # Real scenario: a question-number label sitting ~26px left of the
+    # first real bubble, with 4 real bubbles at their normal ~4px jitter.
+    # Without a distance cap, forcing all 5 items into 4 slots shifts F/G/H
+    # into G/H/J's slots and drops the real (marked) J bubble entirely.
+    items = [1244.5, 1274.5, 1305.0, 1336.0, 1366.5]
+    nominal = [1270.5, 1301.17, 1331.83, 1362.5]
+    result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.3)
+    assert result == [1274.5, 1305.0, 1336.0, 1366.5]
+
+
+def test_match_to_slots_extra_item_within_max_distance_still_wins_on_cost():
+    # A stray item close enough to plausibly be the real bubble should
+    # still be preferred over leaving that slot empty.
+    items = [10.0, 21.0, 30.0]
+    nominal = [10.0, 20.0, 30.0]
+    result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.0)
+    assert result == [10.0, 21.0, 30.0]
+
+
+def test_match_to_slots_far_item_with_no_nearby_alternative_leaves_slot_empty():
+    # Mirrors the real row-35 case: the only item near slot 0 is implausibly
+    # far away (the label), and no other item is close enough either --
+    # slot 0 should come back empty (falls back to the section's median
+    # shift) rather than being stolen by the far-off item.
+    items = [1244.5, 1335.5, 1366.5]
+    nominal = [1270.5, 1301.17, 1331.83, 1362.5]
+    result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.3)
+    assert result == [None, None, 1335.5, 1366.5]
 
 
 def make_template() -> Template:

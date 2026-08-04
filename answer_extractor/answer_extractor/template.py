@@ -22,7 +22,11 @@ A template is a YAML file (see templates/*.yaml) with:
     even: [A, B, C, D]      - answer letters for even-numbered questions
     odd:  [F, G, H, J]      - answer letters for odd-numbered questions
   thresholds:
-    fill_ratio_min          - minimum darkness fraction to count as "marked"
+    fill_ratio_min          - minimum darkness fraction to count as "marked",
+                               measured after subtracting each question's own
+                               baseline ink level (the printed ring + choice
+                               letter, present even on a truly blank bubble --
+                               see detect._baseline_adjust), not raw darkness
     relative_margin         - how close to the darkest bubble another bubble
                                must be to also count as "marked" (catches
                                multiple-answer and light/partial marks)

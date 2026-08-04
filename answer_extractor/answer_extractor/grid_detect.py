@@ -27,12 +27,17 @@ than an uncorrected nominal position.
 Falls back to the template's fixed nominal coordinates (no correction) only
 for a section where detection can't establish the expected row structure
 at all -- see locate_section_bubbles's return value.
+
+Also observed on a real scan: the opposite of a missing glyph -- a
+question-number label (e.g. "34") whose glyph happened to be sized like a
+real bubble slipped into a row's group as a 5th item for 4 slots. See
+_match_to_slots for how that's handled without displacing the real
+(possibly genuinely marked) bubbles next to it.
 """
 from __future__ import annotations
 
 import dataclasses
 import statistics
-from itertools import combinations
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import cv2
@@ -133,38 +138,89 @@ def _section_roi(section: Section, template: Template) -> Tuple[int, int, int, i
 
 
 def _match_to_slots(
-    items: List[_T], item_x: Callable[[_T], float], nominal_xs: Sequence[float]
+    items: List[_T],
+    item_x: Callable[[_T], float],
+    nominal_xs: Sequence[float],
+    max_distance: Optional[float] = None,
 ) -> List[Optional[_T]]:
-    """Assign each of `items` (already sorted left-to-right, at most as
-    many as `nominal_xs`) to the nominal slot that minimizes total x
-    distance, preserving left-to-right order -- i.e. a missing item can be
-    anywhere in the sequence (not just the last slot), and everything
-    after it still lines up correctly instead of cascading into the wrong
-    slot. Returns a list the same length as `nominal_xs`, with None for
-    any slot that had no item assigned.
+    """Assign `items` (already sorted left-to-right) to the nominal slot
+    that minimizes total x distance, preserving left-to-right order on
+    *both* sides -- i.e. a missing item can be anywhere in the sequence
+    (not just the last slot) without shifting everything after it into the
+    wrong slot, and likewise a spurious extra item (real example: a
+    question-number label whose glyph happened to be sized like a bubble
+    and got swept up into the same row) doesn't get force-fit into a slot
+    and shift everything after *it*. Returns a list the same length as
+    `nominal_xs`, with None for any slot that had no item assigned; any
+    item left over (more items than slots, or too far from every
+    remaining slot) is simply not included in the result.
 
     A greedy "each item claims its nearest slot" approach breaks exactly
     this case: if the first real item is missing, the second item is
     nearest to slot 0, not slot 1, and greedy assignment shifts every
     subsequent item one slot to the left.
+
+    This is a small order-preserving (non-crossing) alignment, solved by
+    DP: at each (item, slot) position, either skip the item, skip the
+    slot, or match them (only allowed within `max_distance`, when given).
+    We maximize the number of matches first, and minimize total distance
+    among those as a tiebreak -- so an item is only left unmatched (or a
+    slot left empty) when matching it would leave *fewer* slots filled
+    overall, not just because a slightly cheaper pairing exists elsewhere.
+    `max_distance` is what keeps a wildly-out-of-place item (that label)
+    from being counted as a "match" purely because leaving a slot empty
+    looks worse on the match-count objective; without it, a lone stray
+    item several bubbles away could still get force-matched to whatever
+    slot remains, same failure as the truncation this replaced.
     """
-    n_slots = len(nominal_xs)
-    items = items[:n_slots]
     n_items = len(items)
+    n_slots = len(nominal_xs)
+    if n_slots == 0:
+        return []
     if n_items == 0:
         return [None] * n_slots
 
-    best_combo = None
-    best_cost = None
-    for combo in combinations(range(n_slots), n_items):
-        cost = sum(abs(item_x(items[i]) - nominal_xs[combo[i]]) for i in range(n_items))
-        if best_cost is None or cost < best_cost:
-            best_cost = cost
-            best_combo = combo
+    xs = [item_x(it) for it in items]
+
+    # dp[i][j] = (-matches, cost): the best (most matches, then lowest
+    # total distance) achievable aligning items[:i] with slots[:j].
+    # Matches are negated so plain tuple comparison (min()) simultaneously
+    # maximizes match count and minimizes cost.
+    dp: List[List[Tuple[int, float]]] = [[(0, 0.0)] * (n_slots + 1) for _ in range(n_items + 1)]
+    back: List[List[Optional[str]]] = [[None] * (n_slots + 1) for _ in range(n_items + 1)]
+
+    for i in range(n_items + 1):
+        for j in range(n_slots + 1):
+            if i == 0 and j == 0:
+                continue
+            best_key: Optional[Tuple[int, float]] = None
+            best_choice: Optional[str] = None
+            if i > 0 and (best_key is None or dp[i - 1][j] < best_key):
+                best_key, best_choice = dp[i - 1][j], "skip_item"
+            if j > 0 and (best_key is None or dp[i][j - 1] < best_key):
+                best_key, best_choice = dp[i][j - 1], "skip_slot"
+            if i > 0 and j > 0:
+                dist = abs(xs[i - 1] - nominal_xs[j - 1])
+                if max_distance is None or dist <= max_distance:
+                    prev_matches, prev_cost = dp[i - 1][j - 1]
+                    key = (prev_matches - 1, prev_cost + dist)
+                    if best_key is None or key < best_key:
+                        best_key, best_choice = key, "match"
+            dp[i][j] = best_key
+            back[i][j] = best_choice
 
     result: List[Optional[_T]] = [None] * n_slots
-    for item_index, slot_index in enumerate(best_combo):
-        result[slot_index] = items[item_index]
+    i, j = n_items, n_slots
+    while i > 0 or j > 0:
+        choice = back[i][j]
+        if choice == "match":
+            result[j - 1] = items[i - 1]
+            i -= 1
+            j -= 1
+        elif choice == "skip_item":
+            i -= 1
+        else:
+            j -= 1
     return result
 
 
@@ -223,7 +279,17 @@ def locate_section_bubbles(
 
             boxes_sorted = sorted(group, key=lambda b: b.cx) if group else []
             nominal_xs = [x for _, x in nominal_slots]
-            matched_boxes = _match_to_slots(boxes_sorted, lambda b: b.cx, nominal_xs)
+            # Cap how far a box can be from a slot and still count as that
+            # bubble: a real bubble lands within a few px of nominal, but a
+            # question-number label occasionally sized like a bubble glyph
+            # (e.g. a bold 2-digit number) can slip into the same group,
+            # roughly a full bubble-spacing away from the nearest real
+            # choice. Without this cap it would still get force-matched to
+            # whichever slot is otherwise least bad, silently displacing
+            # the real (possibly genuinely marked) bubble there.
+            matched_boxes = _match_to_slots(
+                boxes_sorted, lambda b: b.cx, nominal_xs, max_distance=template.bubble_spacing_x / 2
+            )
             detected[question] = [
                 (box.cx, box.cy) if box is not None else None for box in matched_boxes
             ]

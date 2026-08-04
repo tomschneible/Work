@@ -56,5 +56,13 @@ choices:
   even: [F, G, H, J]
 
 thresholds:
-  fill_ratio_min: 0.35
+  # fill_ratio_min is compared against each bubble's fill ratio *after*
+  # subtracting that question's own baseline ink level (see
+  # detect._baseline_adjust) -- the printed ring outline + choice letter
+  # are themselves dark ink, so even a truly blank bubble on a real scan
+  # isn't 0. Measured directly against real scanned sheets: blank bubbles
+  # cluster at 0.00-0.15 (post-baseline-subtraction), genuine marks
+  # (including light/partial ones) start at 0.24 and climb from there --
+  # 0.20 sits in the clear gap between the two.
+  fill_ratio_min: 0.20
   relative_margin: 0.15

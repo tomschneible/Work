@@ -1,4 +1,6 @@
-from answer_extractor.detect import decide_answer, evaluate_sheet
+import pytest
+
+from answer_extractor.detect import _baseline_adjust, decide_answer, evaluate_sheet
 from answer_extractor.template import Template
 from tests.synth import render_sheet
 
@@ -69,6 +71,48 @@ def test_stray_smudge_below_floor_does_not_trigger_multiple():
     answer, candidates, _ = decide_answer(ratios, 0.35, 0.15)
     assert answer == "A"
     assert candidates == ["A"]
+
+
+# -- _baseline_adjust / real-scan "high baseline ink" regression -------------
+#
+# Regression coverage for a real bug found against a real scanned ACT sheet:
+# the printed bubble ring + choice letter are themselves dark ink, so even a
+# truly blank bubble isn't near 0 -- on that scan, blank bubbles measured
+# ~0.38-0.51 raw. Since fill_ratio_min (0.35) sat below that noise floor,
+# every choice in a blank question cleared it and all four ended up within
+# relative_margin of each other, reading as MULTIPLE despite nothing being
+# marked. Subtracting each question's own minimum (a per-question estimate
+# of that shared baseline) before deciding fixes it without needing raw
+# pixel measurements to already be near 0, and does nothing when they
+# already are (clean scans/synthetic tests are unaffected).
+
+
+def test_baseline_adjust_subtracts_the_row_minimum():
+    ratios = {"A": 0.47, "B": 0.48, "C": 0.38, "D": 0.51}
+    assert _baseline_adjust(ratios) == pytest.approx({"A": 0.09, "B": 0.10, "C": 0.0, "D": 0.13})
+
+
+def test_baseline_adjust_is_a_no_op_when_blanks_are_already_near_zero():
+    ratios = {"A": 0.9, "B": 0.02, "C": 0.0, "D": 0.01}
+    assert _baseline_adjust(ratios) == ratios
+
+
+def test_decide_answer_high_shared_baseline_blank_question_is_not_multiple():
+    # All four choices carry the same ~0.4-0.5 "printed ring + letter" ink
+    # floor and nothing is actually marked -- must read blank, not MULTIPLE.
+    ratios = {"A": 0.466, "B": 0.478, "C": 0.383, "D": 0.506}
+    answer, candidates, _ = decide_answer(ratios, 0.20, 0.15)
+    assert answer == ""
+    assert candidates == []
+
+
+def test_decide_answer_high_shared_baseline_single_mark_still_wins():
+    # Same ~0.4-0.5 baseline on the unmarked choices, but one choice is
+    # genuinely (if lightly) marked well above it.
+    ratios = {"A": 0.502, "B": 0.514, "C": 0.771, "D": 0.526}
+    answer, candidates, _ = decide_answer(ratios, 0.20, 0.15)
+    assert answer == "C"
+    assert candidates == ["C"]
 
 
 # -- evaluate_sheet: rendered-image tests ------------------------------------
