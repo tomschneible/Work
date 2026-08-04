@@ -1,8 +1,17 @@
+import numpy as np
 import pytest
 
-from answer_extractor.detect import _baseline_adjust, decide_answer, evaluate_sheet
+from answer_extractor.detect import (
+    _baseline_adjust,
+    _crop_patch,
+    _partial_mark_choice,
+    _residual_ratio,
+    build_choice_templates,
+    decide_answer,
+    evaluate_sheet,
+)
 from answer_extractor.template import Template
-from tests.synth import render_sheet
+from tests.synth import fill_bubble, make_blank_sheet, render_sheet
 
 
 def make_template() -> Template:
@@ -126,6 +135,94 @@ def test_decide_answer_unusually_bold_unmarked_choice_is_not_multiple():
     answer, candidates, _ = decide_answer(ratios, 0.20, 0.13)
     assert answer == "F"
     assert candidates == ["F"]
+
+
+# -- partial-mark detection (checkmarks/scribbles instead of solid fills) ----
+#
+# Real ACT sheets explicitly instruct against marking with a checkmark
+# instead of filling the bubble in -- but real students do it anyway. A
+# checkmark only covers a small fraction of the bubble's area, often too
+# little for score_bubbles's area-based fill ratio to distinguish from the
+# printed ring + letter's own ink, so evaluate_sheet only consults this
+# secondary "how much extra ink does this bubble have vs. its usual
+# unmarked appearance" signal for questions the ordinary fill-ratio signal
+# already gave up on (blank or MULTIPLE) -- see the threshold comment on
+# _PARTIAL_MARK_MIN_TOP/_PARTIAL_MARK_MIN_GAP for why it's deliberately not
+# trusted to override an already-confident fill-ratio answer.
+
+
+def test_partial_mark_choice_picks_a_clear_isolated_leader():
+    residuals = {"A": 0.02, "B": 0.03, "C": 0.12, "D": 0.01}
+    assert _partial_mark_choice(residuals) == "C"
+
+
+def test_partial_mark_choice_none_when_nothing_clears_the_floor():
+    residuals = {"A": 0.02, "B": 0.03, "C": 0.05, "D": 0.01}
+    assert _partial_mark_choice(residuals) is None
+
+
+def test_partial_mark_choice_none_when_top_two_are_not_isolated():
+    # Regression case from a real scan: a question confirmed genuinely
+    # blank still had one choice edge out the others by a small amount --
+    # not enough of a gap to trust as a real, isolated mark.
+    residuals = {"A": 0.145, "B": 0.066, "C": 0.13, "D": 0.18}
+    assert _partial_mark_choice(residuals) is None
+
+
+def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():
+    # A 21x21 all-white image with a 5x5 dark square baked into every "A"
+    # occurrence except one, which additionally has a second dark square
+    # elsewhere in the bubble -- the common square is "normal" ink (an
+    # unmarked bubble's ring/letter) and shouldn't count; the extra one
+    # should.
+    binary = np.zeros((60, 60), dtype=np.uint8)
+    common_coords = [(10, 10), (10, 30), (10, 50), (30, 10)]
+    for x, y in common_coords:
+        binary[y - 2 : y + 3, x - 2 : x + 3] = 255
+    marked_x, marked_y = 30, 30
+    binary[marked_y - 2 : marked_y + 3, marked_x - 2 : marked_x + 3] = 255
+    binary[marked_y - 2 : marked_y + 3, marked_x + 4 : marked_x + 9] = 255  # the "extra" ink
+
+    all_coords = common_coords + [(marked_x, marked_y)]
+    templates = build_choice_templates(binary, {"A": all_coords}, radius=8)
+
+    unmarked_ratio = _residual_ratio(binary, 10, 10, radius=8, choice_template=templates["A"])
+    marked_ratio = _residual_ratio(binary, marked_x, marked_y, radius=8, choice_template=templates["A"])
+    assert marked_ratio > unmarked_ratio
+    assert unmarked_ratio == pytest.approx(0.0, abs=1e-6)
+
+
+def test_evaluate_sheet_catches_a_light_partial_mark_fill_ratio_alone_misses():
+    template = make_template()
+    # Fill every question solidly except Q3, whose F is marked at low
+    # enough coverage/darkness that fill_ratio alone reads it as blank
+    # (verified directly: decide_answer returns "" at this template's
+    # thresholds), so the only way it comes through is via the
+    # residual/partial-mark path.
+    answers = {1: ["F"], 2: ["B"], 4: ["A"], 5: ["J"], 6: ["D"]}
+    image = render_sheet(template, answers, letters=True)
+    bubble = next(b for b in template.bubbles()[("Answers", 3)] if b.choice == "F")
+    fill_bubble(image, bubble.x, bubble.y, template.bubble_radius, coverage=0.4, darkness=30)
+
+    results, _ = evaluate_sheet(image, template)
+    q3 = next(r for r in results if r.question == 3)
+    assert q3.answer == "F"
+    assert q3.low_confidence  # always flagged when it came from the secondary signal
+
+
+def test_evaluate_sheet_never_overrides_an_already_confident_answer():
+    # Even if a bubble happens to look unusual under the residual signal,
+    # evaluate_sheet must not touch a question fill_ratio already answered
+    # confidently -- the secondary signal is only ever consulted when
+    # fill_ratio itself came back blank or MULTIPLE.
+    template = make_template()
+    answers = {1: ["F"], 2: ["B"], 3: ["H"], 4: ["A"], 5: ["J"], 6: ["D"]}
+    image = render_sheet(template, answers, letters=True)
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r for r in results}
+    assert by_q[3].answer == "H"
+    assert not by_q[3].low_confidence
 
 
 # -- evaluate_sheet: rendered-image tests ------------------------------------

@@ -77,6 +77,98 @@ def score_bubbles(binary: np.ndarray, bubbles: List[Tuple[str, int, int]], radiu
     return {choice: _bubble_fill_ratio(binary, x, y, radius) for choice, x, y in bubbles}
 
 
+_PATCH_PAD_EXTRA = 4  # beyond bubble_radius, room enough to capture the full ring+letter glyph
+
+
+def _crop_patch(binary: np.ndarray, x: int, y: int, pad: int) -> np.ndarray:
+    """Crop a (2*pad+1)-square float patch centered at (x, y), zero-padded
+    past the image edge (rather than raising/clipping the patch size) so
+    every patch for a given radius is the same shape and can be stacked."""
+    size = 2 * pad + 1
+    h, w = binary.shape
+    patch = np.zeros((size, size), dtype=np.float32)
+    x0, y0 = x - pad, y - pad
+    sx0, sy0 = max(0, x0), max(0, y0)
+    sx1, sy1 = min(w, x0 + size), min(h, y0 + size)
+    if sx0 < sx1 and sy0 < sy1:
+        patch[sy0 - y0 : sy1 - y0, sx0 - x0 : sx1 - x0] = binary[sy0:sy1, sx0:sx1]
+    return patch
+
+
+def build_choice_templates(
+    binary: np.ndarray, bubbles_by_choice: Dict[str, List[Tuple[int, int]]], radius: int
+) -> Dict[str, np.ndarray]:
+    """Learn what an *unmarked* bubble normally looks like, per choice
+    letter -- the printed ring outline plus that letter's own glyph --
+    by averaging every occurrence of that letter across a section.
+
+    This is the basis for `_partial_mark_choice`'s "does this bubble have
+    ink beyond what's normally there" signal, used to catch marks too
+    faint or small (e.g. a checkmark instead of a filled-in bubble --
+    explicitly called out as an "incorrect mark" on a real ACT sheet's own
+    instructions, but real students do it anyway) for score_bubbles's
+    area-based fill ratio to reliably pick up. Most occurrences of a given
+    letter are unmarked (typically ~3 of 4 per question), so the average
+    is dominated by the unmarked appearance even without filtering out the
+    marked minority first.
+    """
+    pad = radius + _PATCH_PAD_EXTRA
+    templates: Dict[str, np.ndarray] = {}
+    for choice, coords in bubbles_by_choice.items():
+        if not coords:
+            continue
+        stack = np.stack([_crop_patch(binary, x, y, pad) for x, y in coords])
+        templates[choice] = np.mean(stack, axis=0)
+    return templates
+
+
+def _residual_ratio(binary: np.ndarray, x: int, y: int, radius: int, choice_template: np.ndarray) -> float:
+    """How much *extra* ink this specific bubble has beyond what's normally
+    there for this choice letter (see `build_choice_templates`), as a
+    fraction of the sampled area -- pixels that are dark here but not
+    usually dark for this letter contribute; pixels that are dark here
+    *and* usually dark (the ring, the letter's own strokes) don't."""
+    pad = radius + _PATCH_PAD_EXTRA
+    patch = _crop_patch(binary, x, y, pad)
+    mask = np.zeros_like(patch, dtype=np.uint8)
+    cv2.circle(mask, (pad, pad), max(1, int(radius * 0.85)), 255, -1)
+    total = cv2.countNonZero(mask)
+    if total == 0:
+        return 0.0
+    residual = np.clip(patch - choice_template, 0, 255)
+    return float(np.sum(residual[mask > 0]) / (total * 255))
+
+
+# Thresholds for _partial_mark_choice, calibrated against four real scanned
+# ACT sheets (see grid_detect/detect module history): two questions
+# independently confirmed genuinely blank on one sheet topped out at a
+# 0.035 gap between the leading and second-place choice (one of them a
+# near-total tie at 0.002); real checkmark-style marks on another sheet
+# ranged roughly 0.03-0.1. There's no gap value that cleanly separates
+# every real case in that data -- these sit above the confirmed-blank
+# ceiling with a margin of safety, catching roughly half of that sheet's
+# checkmarked questions rather than all of them, in exchange for not
+# reviving a confirmed-blank question as a false mark again.
+_PARTIAL_MARK_MIN_TOP = 0.06
+_PARTIAL_MARK_MIN_GAP = 0.045
+
+
+def _partial_mark_choice(residuals: Dict[str, float]) -> "str | None":
+    """If exactly one choice stands out as a clear, isolated leader in the
+    residual-ink signal, return it; otherwise None. Only meant to be
+    consulted when score_bubbles's ordinary fill-ratio signal already came
+    back blank or MULTIPLE (see evaluate_sheet) -- this never overrides an
+    already-confident fill-ratio answer, since the residual signal alone
+    isn't reliable enough for that (see the threshold comment above)."""
+    if len(residuals) < 2:
+        return None
+    ranked = sorted(residuals.items(), key=lambda kv: kv[1], reverse=True)
+    (top_choice, top_value), (_, second_value) = ranked[0], ranked[1]
+    if top_value >= _PARTIAL_MARK_MIN_TOP and top_value - second_value >= _PARTIAL_MARK_MIN_GAP:
+        return top_choice
+    return None
+
+
 def _baseline_adjust(fill_ratios: Dict[str, float]) -> Dict[str, float]:
     """Subtract each question's own minimum fill ratio from every choice in
     it before deciding an answer.
@@ -159,18 +251,40 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
         if detected is None:
             fallback_sections.append(section.name)
 
+        section_bubbles = {}
+        bubbles_by_choice: Dict[str, List[Tuple[int, int]]] = {}
         for question in range(1, section.num_questions + 1):
             if detected is not None:
                 bubbles = detected[question]
             else:
                 bubbles = [(b.choice, b.x, b.y) for b in all_bubbles[(section.name, question)]]
+            section_bubbles[question] = bubbles
+            for choice, x, y in bubbles:
+                bubbles_by_choice.setdefault(choice, []).append((x, y))
+        # Built once per section and reused for every question in it (see
+        # build_choice_templates) -- only actually consulted below for
+        # questions the ordinary fill-ratio signal couldn't already decide.
+        choice_templates = build_choice_templates(binary, bubbles_by_choice, template.bubble_radius)
 
+        for question in range(1, section.num_questions + 1):
+            bubbles = section_bubbles[question]
             fill_ratios = score_bubbles(binary, bubbles, template.bubble_radius)
             answer, candidates, low_confidence = decide_answer(
                 fill_ratios,
                 template.thresholds.fill_ratio_min,
                 template.thresholds.relative_margin,
             )
+
+            if answer in ("", "MULTIPLE"):
+                residuals = {
+                    choice: _residual_ratio(binary, x, y, template.bubble_radius, choice_templates[choice])
+                    for choice, x, y in bubbles
+                    if choice in choice_templates
+                }
+                partial_mark = _partial_mark_choice(residuals)
+                if partial_mark is not None:
+                    answer, candidates, low_confidence = partial_mark, [partial_mark], True
+
             results.append(
                 QuestionResult(
                     section=section.name,
