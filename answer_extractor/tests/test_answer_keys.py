@@ -135,6 +135,40 @@ def test_empty_library_falls_back_to_plain_labels(tmp_path):
     assert result.module_labels == base_module_labels(rows)
 
 
+def test_identifies_module_variant_when_entire_section_is_omitted(tmp_path):
+    """A student who skips a whole section (e.g. ran out of time, or only
+    completed half the test) still gets a report where every question's
+    "Correct Answer" (Bluebook's ground truth) is filled in -- only "Your
+    Answer" is "Omitted". Identification relies on Correct Answer, so it
+    should still succeed with full confidence even though nothing in that
+    section was actually attempted."""
+    library = make_library()
+    path = tmp_path / "report.pdf"
+    rows_in = []
+    for q, answer in library.module1_answers("Practice B", "Reading and Writing").items():
+        rows_in.append((q, "Reading and Writing", answer, answer, "Correct"))
+    for q, answer in library.module2_variant_answers("Practice B", "Reading and Writing", "hard").items():
+        rows_in.append((q, "Reading and Writing", answer, answer, "Correct"))
+    # Math wasn't attempted at all -- every row Omitted, but Correct Answer
+    # (the identification signal) is still present for both modules.
+    for q, answer in library.module1_answers("Practice B", "Math").items():
+        rows_in.append((q, "Math", answer, "", "Omitted"))
+    for q, answer in library.module2_variant_answers("Practice B", "Math", "hard").items():
+        rows_in.append((q, "Math", answer, "", "Omitted"))
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    math_rows = [r for r in rows if r.section == "Math"]
+    assert len(math_rows) == 4
+    assert all(r.your_answer == "" for r in math_rows)
+
+    result = identify_test_and_modules(rows, library)
+    assert result.test == "Practice B"
+    assert result.test_confidence == pytest.approx(1.0)
+    labels = [label for module_num, label in result.module_labels.items()]
+    assert any("Harder" in label for label in labels)
+
+
 def test_handles_grid_in_style_multi_value_correct_answers(tmp_path):
     csv_text = """Test,Section,Question,Module1,Module2Easy,Module2Hard
 Practice C,Math,1,11/28,54,336
