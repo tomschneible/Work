@@ -114,6 +114,27 @@ def _cluster_rows(boxes: List[_Box], y_tolerance: float) -> List[List[_Box]]:
     return rows
 
 
+def _drop_sparse_rows(rows: List[List[_Box]]) -> List[List[_Box]]:
+    """Drop clustered "rows" that are implausibly sparse compared to the
+    rest -- real bubble rows span every column (close to `num_columns *
+    len(choices)` boxes), while stray text in the ROI's generous vertical
+    padding (observed on a real scan: a few glyph-sized characters from
+    the *next* section's header, e.g. "TEST 2: MATHEMATICS", bleeding into
+    the current section's extended search window) clusters into its own
+    row with only a handful of boxes concentrated in one narrow x range.
+
+    Left undropped, that extra row makes the section's row count come out
+    one too many, which previously failed the exact-row-count check for
+    the *entire* section and fell back to uncorrected nominal coordinates
+    for every question in it -- far more damaging than losing one row's
+    worth of detection would be on its own.
+    """
+    if not rows:
+        return rows
+    median_count = statistics.median(len(r) for r in rows)
+    return [r for r in rows if len(r) >= median_count / 2]
+
+
 def _split_columns(row_boxes: List[_Box], gap_threshold: float) -> List[List[_Box]]:
     ordered = sorted(row_boxes, key=lambda b: b.cx)
     groups: List[List[_Box]] = [[ordered[0]]]
@@ -244,6 +265,7 @@ def locate_section_bubbles(
 
     row_tolerance = radius * _ROW_Y_TOLERANCE_RATIO
     rows = _cluster_rows(boxes, row_tolerance)
+    rows = _drop_sparse_rows(rows)
 
     expected_rows = max(c.last_question - c.first_question + 1 for c in section.columns)
     if len(rows) != expected_rows:

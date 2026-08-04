@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from answer_extractor.detect import evaluate_sheet
-from answer_extractor.grid_detect import _match_to_slots, locate_section_bubbles
+from answer_extractor.grid_detect import _Box, _drop_sparse_rows, _match_to_slots, locate_section_bubbles
 from answer_extractor.template import Template
 from tests.synth import render_sheet
 
@@ -68,6 +68,45 @@ def test_match_to_slots_far_item_with_no_nearby_alternative_leaves_slot_empty():
     nominal = [1270.5, 1301.17, 1331.83, 1362.5]
     result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.3)
     assert result == [None, None, 1335.5, 1366.5]
+
+
+# -- _drop_sparse_rows: pure logic tests --------------------------------------
+#
+# Regression coverage for a third real bug found against a real scanned ACT
+# sheet, more damaging than the two above: a few glyph-sized characters from
+# the *next* section's header (e.g. "TEST 2: MATHEMATICS") fell inside the
+# current section's search window (padded generously to tolerate vertical
+# drift -- see _section_roi) and clustered into their own sparse "row". That
+# pushed the row count one over the expected count, which failed
+# locate_section_bubbles's exact-match check for the *entire section* and
+# fell back to uncorrected nominal coordinates for all of it -- English,
+# Math, and Reading all silently fell back on the real sheet, corrupting the
+# majority of that student's answers instead of just one row's.
+
+
+def _row(n: int) -> list:
+    return [_Box(x=i, y=0, w=10, h=10) for i in range(n)]
+
+
+def test_drop_sparse_rows_removes_a_stray_low_count_row():
+    rows = [_row(20), _row(21), _row(19), _row(3)]
+    result = _drop_sparse_rows(rows)
+    assert [len(r) for r in result] == [20, 21, 19]
+
+
+def test_drop_sparse_rows_keeps_a_genuinely_short_row():
+    # A column with fewer active questions near the bottom of a section
+    # (e.g. Math's 5th column having 9 questions where the others have 10)
+    # only shrinks one column's contribution to that row, not the whole
+    # row -- it shouldn't be treated the same as a handful of stray boxes.
+    rows = [_row(20), _row(21), _row(16), _row(19)]
+    result = _drop_sparse_rows(rows)
+    assert [len(r) for r in result] == [20, 21, 16, 19]
+
+
+def test_drop_sparse_rows_is_a_no_op_when_nothing_is_sparse():
+    rows = [_row(20), _row(19), _row(18)]
+    assert _drop_sparse_rows(rows) == rows
 
 
 def make_template() -> Template:
