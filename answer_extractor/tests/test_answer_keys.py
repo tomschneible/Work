@@ -169,6 +169,37 @@ def test_identifies_module_variant_when_entire_section_is_omitted(tmp_path):
     assert any("Harder" in label for label in labels)
 
 
+def test_identifies_test_when_reading_and_writing_is_entirely_omitted(tmp_path):
+    """Mirror of the above but for a student who only completed Math --
+    Reading and Writing's Module 1 (the section identification normally
+    keys off) is entirely Omitted, so the test must be identified from
+    Math's Module 1 instead."""
+    library = make_library()
+    path = tmp_path / "report.pdf"
+    rows_in = []
+    for q, answer in library.module1_answers("Practice A", "Reading and Writing").items():
+        rows_in.append((q, "Reading and Writing", answer, "", "Omitted"))
+    for q, answer in library.module2_variant_answers("Practice A", "Reading and Writing", "hard").items():
+        rows_in.append((q, "Reading and Writing", answer, "", "Omitted"))
+    for q, answer in library.module1_answers("Practice A", "Math").items():
+        rows_in.append((q, "Math", answer, answer, "Correct"))
+    for q, answer in library.module2_variant_answers("Practice A", "Math", "easy").items():
+        rows_in.append((q, "Math", answer, answer, "Correct"))
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    rw_rows = [r for r in rows if r.section == "Reading and Writing"]
+    assert len(rw_rows) == 6
+    assert all(r.your_answer == "" for r in rw_rows)
+
+    result = identify_test_and_modules(rows, library)
+    assert result.test == "Practice A"
+    assert result.test_confidence == pytest.approx(1.0)
+    labels = list(result.module_labels.values())
+    assert any("Harder" in label for label in labels)  # Reading and Writing module 2
+    assert any("Easier" in label for label in labels)  # Math module 2
+
+
 def test_handles_grid_in_style_multi_value_correct_answers(tmp_path):
     csv_text = """Test,Section,Question,Module1,Module2Easy,Module2Hard
 Practice C,Math,1,11/28,54,336
