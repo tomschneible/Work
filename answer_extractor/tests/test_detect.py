@@ -5,6 +5,7 @@ from answer_extractor.detect import (
     _baseline_adjust,
     _crop_patch,
     _partial_mark_choice,
+    _raw_top_gap,
     _residual_ratio,
     build_choice_templates,
     decide_answer,
@@ -167,6 +168,50 @@ def test_partial_mark_choice_none_when_top_two_are_not_isolated():
     # not enough of a gap to trust as a real, isolated mark.
     residuals = {"A": 0.145, "B": 0.066, "C": 0.13, "D": 0.18}
     assert _partial_mark_choice(residuals) is None
+
+
+def test_partial_mark_choice_looser_thresholds_catch_a_smaller_gap():
+    # The tie-break call site (evaluate_sheet, only reached when
+    # fill_ratio's own top two choices are already a near-tie -- see
+    # _raw_top_gap) passes looser thresholds than the blank/MULTIPLE path,
+    # since arbitrating between choices fill_ratio already found plausible
+    # needs less of a safety margin than detecting a mark from nothing.
+    from answer_extractor.detect import _TIEBREAK_MIN_GAP, _TIEBREAK_MIN_TOP
+
+    residuals = {"F": 0.088, "G": 0.059, "H": 0.038, "J": 0.049}
+    assert _partial_mark_choice(residuals) is None  # too weak for the strict thresholds
+    assert _partial_mark_choice(residuals, _TIEBREAK_MIN_TOP, _TIEBREAK_MIN_GAP) == "F"
+
+
+# -- _raw_top_gap: pure logic tests -------------------------------------------
+#
+# Regression coverage for a real scan where fill_ratio's own pick was
+# outright wrong -- not just "low confidence" -- because two choices'
+# *raw* fill ratios were a near-tie (0.664 vs 0.644) even though the
+# baseline-adjusted gap that low_confidence is computed from made it look
+# like an ordinary borderline call. A real answer that's simply darker
+# than the rest by a wide raw margin (confirmed against two other real,
+# unrelated scans) can still fall in low_confidence range after baseline
+# adjustment, so low_confidence alone can't distinguish "genuinely close
+# call" from "clearly darkest, just not by enough after adjustment" --
+# _raw_top_gap is what evaluate_sheet uses to tell them apart before
+# deciding whether the residual signal should be allowed to arbitrate.
+
+
+def test_raw_top_gap_computes_the_difference_between_the_top_two():
+    assert _raw_top_gap({"F": 0.664, "G": 0.644, "H": 0.557, "J": 0.458}) == pytest.approx(0.02)
+
+
+def test_raw_top_gap_none_with_fewer_than_two_choices():
+    assert _raw_top_gap({"A": 0.5}) is None
+    assert _raw_top_gap({}) is None
+
+
+def test_raw_top_gap_large_for_a_decisive_pick():
+    # A real, clearly-darkest answer (confirmed against the source scan)
+    # that still landed in low_confidence range after baseline adjustment
+    # -- its raw gap is nowhere near the near-tie case above.
+    assert _raw_top_gap({"A": 0.573, "B": 0.771, "C": 0.561, "D": 0.514}) == pytest.approx(0.198)
 
 
 def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():

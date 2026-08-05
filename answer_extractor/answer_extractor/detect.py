@@ -152,19 +152,54 @@ def _residual_ratio(binary: np.ndarray, x: int, y: int, radius: int, choice_temp
 _PARTIAL_MARK_MIN_TOP = 0.06
 _PARTIAL_MARK_MIN_GAP = 0.045
 
+# A looser pair used only to *tie-break between two choices fill_ratio
+# already considers close* (see _RAW_GAP_UNCERTAIN below), not to detect a
+# mark from nothing -- so they don't need the same margin of safety.
+# Calibrated the same way: every already-correct low-confidence single
+# answer across three real sheets had its own residual signal agree with
+# fill_ratio's pick by a wide margin (smallest observed: 0.11); these sit
+# comfortably below that.
+_TIEBREAK_MIN_TOP = 0.03
+_TIEBREAK_MIN_GAP = 0.02
 
-def _partial_mark_choice(residuals: Dict[str, float]) -> "str | None":
+
+# Below this raw (unadjusted -- baseline-subtracting both sides of a
+# comparison doesn't change their difference) gap between fill_ratio's top
+# two choices, its own pick isn't actually decisive, whatever
+# `low_confidence` says -- see _raw_top_gap. Calibrated the same way as
+# _TIEBREAK_MIN_TOP/_TIEBREAK_MIN_GAP: two real (confirmed-correct, via the
+# raw ink) picks that just happened to fall in low_confidence range had
+# raw gaps of 0.20+; two real checkmark cases fill_ratio got outright
+# wrong had raw gaps of 0.02 and 0.075. This sits in between.
+_RAW_GAP_UNCERTAIN = 0.10
+
+
+def _raw_top_gap(fill_ratios: Dict[str, float]) -> "float | None":
+    """The gap between fill_ratio's largest and second-largest raw value,
+    or None if there aren't at least two choices to compare."""
+    if len(fill_ratios) < 2:
+        return None
+    ranked = sorted(fill_ratios.values(), reverse=True)
+    return ranked[0] - ranked[1]
+
+
+def _partial_mark_choice(
+    residuals: Dict[str, float], min_top: float = _PARTIAL_MARK_MIN_TOP, min_gap: float = _PARTIAL_MARK_MIN_GAP
+) -> "str | None":
     """If exactly one choice stands out as a clear, isolated leader in the
-    residual-ink signal, return it; otherwise None. Only meant to be
-    consulted when score_bubbles's ordinary fill-ratio signal already came
-    back blank or MULTIPLE (see evaluate_sheet) -- this never overrides an
-    already-confident fill-ratio answer, since the residual signal alone
-    isn't reliable enough for that (see the threshold comment above)."""
+    residual-ink signal, return it; otherwise None. With the default
+    thresholds, only meant to be consulted when score_bubbles's ordinary
+    fill-ratio signal already came back blank or MULTIPLE (see
+    evaluate_sheet) -- this never overrides an already-confident
+    fill-ratio answer, since the residual signal alone isn't reliable
+    enough for that (see the threshold comment above). Pass the looser
+    `_TIEBREAK_MIN_TOP`/`_TIEBREAK_MIN_GAP` instead to use this as a
+    tie-break between choices fill_ratio already found plausible."""
     if len(residuals) < 2:
         return None
     ranked = sorted(residuals.items(), key=lambda kv: kv[1], reverse=True)
     (top_choice, top_value), (_, second_value) = ranked[0], ranked[1]
-    if top_value >= _PARTIAL_MARK_MIN_TOP and top_value - second_value >= _PARTIAL_MARK_MIN_GAP:
+    if top_value >= min_top and top_value - second_value >= min_gap:
         return top_choice
     return None
 
@@ -275,14 +310,27 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 template.thresholds.relative_margin,
             )
 
-            if answer in ("", "MULTIPLE"):
+            # Blank/MULTIPLE: see if a partial mark (e.g. a checkmark) explains
+            # it. A single answer whose own top two raw fill ratios are this
+            # close together isn't actually a decisive pick regardless of
+            # what `low_confidence` says (that's computed from the
+            # baseline-adjusted scale, which can flag a real, clearly-darkest
+            # answer as "low confidence" for unrelated reasons) -- let the
+            # residual signal arbitrate between the choices fill_ratio itself
+            # found plausible, rather than trusting a near-tie.
+            raw_gap = _raw_top_gap(fill_ratios)
+            uncertain_single = answer not in ("", "MULTIPLE") and raw_gap is not None and raw_gap < _RAW_GAP_UNCERTAIN
+            if answer in ("", "MULTIPLE") or uncertain_single:
                 residuals = {
                     choice: _residual_ratio(binary, x, y, template.bubble_radius, choice_templates[choice])
                     for choice, x, y in bubbles
                     if choice in choice_templates
                 }
-                partial_mark = _partial_mark_choice(residuals)
-                if partial_mark is not None:
+                if answer in ("", "MULTIPLE"):
+                    partial_mark = _partial_mark_choice(residuals)
+                else:
+                    partial_mark = _partial_mark_choice(residuals, _TIEBREAK_MIN_TOP, _TIEBREAK_MIN_GAP)
+                if partial_mark is not None and partial_mark != answer:
                     answer, candidates, low_confidence = partial_mark, [partial_mark], True
 
             results.append(
