@@ -4,11 +4,9 @@ import pytest
 from answer_extractor.detect import (
     QuestionResult,
     _baseline_adjust,
-    _combined_partial_mark_choice,
     _crop_patch,
     _infer_from_answer_pattern,
     _partial_mark_choice,
-    _raw_top_gap,
     _residual_ratio,
     build_choice_templates,
     decide_answer,
@@ -173,57 +171,20 @@ def test_partial_mark_choice_none_when_top_two_are_not_isolated():
     assert _partial_mark_choice(residuals) is None
 
 
-def test_partial_mark_choice_looser_thresholds_catch_a_smaller_gap():
-    # The tie-break call site (evaluate_sheet, only reached when
-    # fill_ratio's own top two choices are already a near-tie -- see
-    # _raw_top_gap) passes looser thresholds than the blank/MULTIPLE path,
-    # since arbitrating between choices fill_ratio already found plausible
-    # needs less of a safety margin than detecting a mark from nothing.
-    from answer_extractor.detect import _TIEBREAK_MIN_GAP, _TIEBREAK_MIN_TOP
-
-    residuals = {"F": 0.088, "G": 0.059, "H": 0.038, "J": 0.049}
-    assert _partial_mark_choice(residuals) is None  # too weak for the strict thresholds
-    assert _partial_mark_choice(residuals, _TIEBREAK_MIN_TOP, _TIEBREAK_MIN_GAP) == "F"
-
-
-# -- _combined_partial_mark_choice: pure logic tests --------------------------
-#
-# A user-reported second round: several questions on the same checkmarked
-# sheet stayed blank even after the strict residual-only check above,
-# because neither fill_ratio's own raw gap nor the residual gap alone
-# cleared its bar -- but a real (if faint) mark nudges *both* signals in
-# the same direction even when neither individually is convincing, while a
-# truly blank question doesn't. This combines them as a second, additive
-# check (never a replacement for the strict one, which stays as-is).
-
-
-def test_combined_partial_mark_choice_catches_a_mark_neither_signal_alone_would():
-    # Real scan case: fill_ratio's raw gap (0.059, English Q23-shaped) and
-    # the residual gap (0.036) are each too weak alone -- 0.059 < 0.10
-    # isn't decisive for fill_ratio, 0.036 < 0.045 misses the strict
-    # residual bar -- but together (0.095) clear _COMBINED_MIN_GAP.
-    fill_ratios = {"A": 0.708, "B": 0.648, "C": 0.581, "D": 0.64}
-    residuals = {"A": 0.09, "B": 0.053, "C": 0.054, "D": 0.043}
-    assert _partial_mark_choice(residuals) is None  # confirms neither alone would catch it
-    assert _combined_partial_mark_choice(fill_ratios, residuals) == "A"
-
-
-def test_combined_partial_mark_choice_none_for_a_confirmed_blank_question():
-    # Regression case: the same two questions independently confirmed
-    # genuinely blank (see _PARTIAL_MARK_MIN_GAP's comment) must also stay
-    # blank under the combined check, not just the strict one.
-    fill_ratios = {"A": 0.455, "B": 0.51, "C": 0.474, "D": 0.502}
-    residuals = {"A": 0.145, "B": 0.066, "C": 0.13, "D": 0.18}
-    assert _combined_partial_mark_choice(fill_ratios, residuals) is None
-
-
-def test_combined_partial_mark_choice_can_pick_a_choice_fill_ratio_did_not_favor():
-    # Residual is the more specific signal for *which* choice a partial
-    # mark is on -- the combined check trusts its top choice even when it
-    # differs from fill_ratio's own (noisier) raw top choice.
-    fill_ratios = {"F": 0.597, "G": 0.625, "H": 0.569, "J": 0.451}  # raw top: G
-    residuals = {"F": 0.074, "G": 0.038, "H": 0.033, "J": 0.04}  # residual top: F
-    assert _combined_partial_mark_choice(fill_ratios, residuals) == "F"
+def test_partial_mark_choice_none_for_a_bolder_printed_letter_across_a_blank_stretch():
+    # Regression case from a real scan: a different form printed "G"
+    # noticeably bolder than its neighbors across an entire section a
+    # student left blank (confirmed against the source scan and an
+    # explicit "did not finish" annotation on the page) -- its residual
+    # gap reached 0.044, just under the strict threshold. Two more
+    # permissive variants of this check (a looser tie-break pair, and a
+    # check that summed fill_ratio's raw gap with the residual gap) were
+    # tried and reverted after this same sheet proved neither has a safe
+    # threshold: this sheet's false-positive ceiling on those checks
+    # (0.13 combined, 0.044 tie-break) exceeded the weakest real signal
+    # either was built to catch on a different sheet (0.055, 0.029).
+    residuals = {"F": 0.049, "G": 0.093, "H": 0.045, "J": 0.041}
+    assert _partial_mark_choice(residuals) is None
 
 
 # -- _infer_from_answer_pattern: pure logic tests -----------------------------
@@ -340,37 +301,6 @@ def test_infer_from_answer_pattern_counts_the_total_across_both_sides():
     q4 = next(r for r in updated if r.question == 4)
     assert q4.answer == _idx0(4)
     assert q4.pattern_inferred
-
-
-# -- _raw_top_gap: pure logic tests -------------------------------------------
-#
-# Regression coverage for a real scan where fill_ratio's own pick was
-# outright wrong -- not just "low confidence" -- because two choices'
-# *raw* fill ratios were a near-tie (0.664 vs 0.644) even though the
-# baseline-adjusted gap that low_confidence is computed from made it look
-# like an ordinary borderline call. A real answer that's simply darker
-# than the rest by a wide raw margin (confirmed against two other real,
-# unrelated scans) can still fall in low_confidence range after baseline
-# adjustment, so low_confidence alone can't distinguish "genuinely close
-# call" from "clearly darkest, just not by enough after adjustment" --
-# _raw_top_gap is what evaluate_sheet uses to tell them apart before
-# deciding whether the residual signal should be allowed to arbitrate.
-
-
-def test_raw_top_gap_computes_the_difference_between_the_top_two():
-    assert _raw_top_gap({"F": 0.664, "G": 0.644, "H": 0.557, "J": 0.458}) == pytest.approx(0.02)
-
-
-def test_raw_top_gap_none_with_fewer_than_two_choices():
-    assert _raw_top_gap({"A": 0.5}) is None
-    assert _raw_top_gap({}) is None
-
-
-def test_raw_top_gap_large_for_a_decisive_pick():
-    # A real, clearly-darkest answer (confirmed against the source scan)
-    # that still landed in low_confidence range after baseline adjustment
-    # -- its raw gap is nowhere near the near-tie case above.
-    assert _raw_top_gap({"A": 0.573, "B": 0.771, "C": 0.561, "D": 0.514}) == pytest.approx(0.198)
 
 
 def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():

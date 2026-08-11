@@ -61,10 +61,16 @@ thresholds:
   # detect._baseline_adjust) -- the printed ring outline + choice letter
   # are themselves dark ink, so even a truly blank bubble on a real scan
   # isn't 0. Measured directly against real scanned sheets: blank bubbles
-  # cluster at 0.00-0.15 (post-baseline-subtraction), genuine marks
-  # (including light/partial ones) start at 0.24 and climb from there --
-  # 0.20 sits in the clear gap between the two.
-  fill_ratio_min: 0.20
+  # cluster at 0.00-0.15 (post-baseline-subtraction) on most sheets, but
+  # one particular scan/form ("XT" variant) prints "G" and "C" noticeably
+  # bolder than its other choices -- confirmed against the source scan on
+  # a 25-question stretch that student left entirely blank -- pushing
+  # unmarked G/C as high as 0.213 there, well past the old 0.20 floor, and
+  # producing a confident-looking wrong single answer instead of a blank.
+  # Genuine marks (including light/partial ones) start at 0.237 and climb
+  # from there -- 0.225 is the best available margin between that bolder
+  # sheet's worst false positive and the weakest real mark seen so far.
+  fill_ratio_min: 0.225
   # A real scanned sheet had one blank bubble printed unusually boldly
   # (thicker ring+letter than its neighbors, not a real second mark --
   # confirmed against the source scan) that landed only 0.146 below the
