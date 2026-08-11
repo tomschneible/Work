@@ -32,6 +32,22 @@ class QuestionResult:
     # "not read off this page at all, inferred from context" -- the latter
     # deserves more scrutiny before trusting it.
     pattern_inferred: bool = False
+    # True when every choice in this question has essentially no genuinely
+    # dark ink at all (see _dark_fraction / _UNREADABLE_MAX) -- a scan/print
+    # quality problem (a faded block of the page, not what a blank bubble
+    # normally looks like on the rest of *this* sheet), rather than a
+    # confident read of "nothing is marked here". Always implies answer ==
+    # "" -- kept distinct from an ordinary blank so callers can flag it for
+    # a human rather than treat it as equivalent to "student left it blank".
+    unreadable: bool = False
+
+
+def _value_channel(image: np.ndarray) -> np.ndarray:
+    """max(B, G, R) per pixel (equivalent to HSV "Value") -- see binarize
+    for why this, rather than grayscale luminance, is what separates a
+    printed "dropout" accent color from a genuine dark, neutral mark."""
+    value = image if image.ndim == 2 else np.max(image, axis=2)
+    return value.astype(np.uint8)
 
 
 def binarize(image: np.ndarray) -> np.ndarray:
@@ -48,13 +64,97 @@ def binarize(image: np.ndarray) -> np.ndarray:
     it its color, while a genuine dark, neutral mark stays low in all
     channels. For plain black-outline sheets this is equivalent to grayscale.
     """
-    value = image if image.ndim == 2 else np.max(image, axis=2)
-    value = value.astype(np.uint8)
+    value = _value_channel(image)
     blurred = cv2.GaussianBlur(value, (3, 3), 0)
     # Otsu picks a global split between the (light) paper/print and (dark)
     # marks; robust across scan brightness without needing a fixed threshold.
     _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     return binary
+
+
+_DARK_PIXEL_VALUE = 60  # out of 255; much stricter than Otsu's scan-relative split -- see _dark_fraction
+
+
+def _dark_fraction(value: np.ndarray, x: int, y: int, radius: int, thresh: int = _DARK_PIXEL_VALUE) -> float:
+    """Fraction of a bubble's sampled area that's *genuinely* dark (near-
+    black), not just "darker than Otsu's split for this scan". A checkmark
+    or pen stroke is real dark ink concentrated in a small area (this stays
+    meaningfully >0 even though score_bubbles's area-based fill ratio
+    barely registers it); a faded/faint region of the page or a smudged
+    eraser mark is gray, not black, however much *area* it covers (this
+    stays low even when area-based fill ratio reads it as substantial).
+    Area and darkness are complementary signals -- neither alone tells the
+    whole story, which is why this exists alongside score_bubbles rather
+    than replacing it."""
+    h, w = value.shape
+    r = max(1, int(radius * 0.85))
+    x0, x1 = max(0, x - r), min(w, x + r + 1)
+    y0, y1 = max(0, y - r), min(h, y + r + 1)
+    if x0 >= x1 or y0 >= y1:
+        return 0.0
+    patch = value[y0:y1, x0:x1]
+    mask = np.zeros_like(patch, dtype=np.uint8)
+    cv2.circle(mask, (x - x0, y - y0), r, 255, -1)
+    sampled = patch[mask > 0]
+    if sampled.size == 0:
+        return 0.0
+    return float(np.mean(sampled < thresh))
+
+
+# Absolute floor for _dark_fraction, independent of any per-sheet
+# calibration: a question where *every* choice falls below this has
+# essentially no dark ink anywhere in the row -- not even the printed
+# ring/letter, which normally still contributes some (see the real
+# example in _find_mark_floor's comment, where a faded block of a page
+# read 0.0-0.16 there against a normal ~0.2-0.36 baseline for genuinely
+# blank questions elsewhere on the *same* sheet). This is deliberately
+# much stricter than that per-sheet baseline -- it's meant to catch only
+# the extreme "the print itself didn't survive the scan" case, not
+# ordinary blanks, so it needs no sheet-specific calibration to be safe.
+_UNREADABLE_MAX = 0.05
+
+# How much larger than its neighbors a gap in a sheet's own dark_fraction
+# distribution must be before it's trusted as a real cluster boundary
+# rather than noise -- see _find_mark_floor. Calibrated against six real
+# sheets: four had no real problem here and their largest gap was pure
+# noise (0.024-0.043); the two with a real faded-print/smudged-eraser
+# problem had a much more decisive gap (0.107-0.15). This sits well
+# between them, so sheets without the problem are simply left alone
+# rather than risking a threshold derived from noise.
+_MARK_FLOOR_MIN_GAP = 0.08
+
+
+def _find_mark_floor(dark_fractions: List[float]) -> "float | None":
+    """Find a floor, specific to *this sheet*, below which a currently-
+    single-answered question's winning choice shouldn't be trusted as a
+    genuine mark -- by locating the widest gap in the sheet's own
+    dark_fraction distribution (for every question fill_ratio's ordinary
+    checks already decided has one answer), restricted to a plausible
+    range so the search can't land inside the cluster of genuine marks
+    themselves or the cluster of near-zero blanks.
+
+    This is deliberately sheet-relative rather than a fixed constant: a
+    real scan had one sheet's confirmed-genuine (if faint) mark measure
+    darker than *another* sheet's confirmed false positive, so no single
+    number works for every sheet -- but each sheet's own genuine marks
+    were reliably far darker than that same sheet's faint-print/smudge
+    artifacts, which is what a per-sheet gap search finds safely. Returns
+    None (meaning: don't second-guess anything) when there isn't a
+    decisive-enough gap to trust -- see _MARK_FLOOR_MIN_GAP.
+    """
+    ordered = sorted(dark_fractions)
+    best_gap = 0.0
+    best_threshold = None
+    for lower, upper in zip(ordered, ordered[1:]):
+        if not (0.1 <= lower <= 0.6 or 0.1 <= upper <= 0.6):
+            continue
+        gap = upper - lower
+        if gap > best_gap:
+            best_gap = gap
+            best_threshold = (lower + upper) / 2
+    if best_gap < _MARK_FLOOR_MIN_GAP:
+        return None
+    return best_threshold
 
 
 def _bubble_fill_ratio(binary: np.ndarray, x: int, y: int, radius: int) -> float:
@@ -328,6 +428,65 @@ def decide_answer(
     return "MULTIPLE", candidates, low_confidence
 
 
+def _apply_readability_checks(
+    results: List[QuestionResult],
+    bubbles_by_qkey: Dict[Tuple[str, int], List[Tuple[str, int, int]]],
+    value: np.ndarray,
+    radius: int,
+) -> List[QuestionResult]:
+    """Whole-sheet final pass: catch answers that ink-based scoring got
+    wrong not because of *how much* area was dark (score_bubbles) or how
+    it compared to that letter's usual appearance (the residual checks),
+    but because the ink itself isn't genuinely dark -- a faded/faint block
+    of the page, or a smudged eraser mark, real cases found on a real
+    scan. See _dark_fraction, _UNREADABLE_MAX, and _find_mark_floor.
+
+    Two independent checks, in order:
+    1. Absolute: a question where every choice has essentially no dark
+       ink anywhere gets flagged `unreadable` and forced blank, regardless
+       of what it currently reads -- this needs no per-sheet calibration
+       to be safe (see _UNREADABLE_MAX).
+    2. Sheet-relative: among whatever's left, a question (single-answer or
+       MULTIPLE alike) whose best candidate falls below *this sheet's* own
+       floor separating its genuine marks from weaker artifacts gets
+       downgraded to an ordinary blank (not `unreadable` -- the row does
+       have some real ink, just not enough to trust as a deliberate mark).
+       Skipped entirely if the sheet doesn't show a decisive enough gap to
+       derive a safe floor from (see _find_mark_floor) -- most sheets
+       don't have this problem, and are left untouched.
+    """
+    dark_fractions_by_result: List[Dict[str, float]] = []
+    for r in results:
+        bubbles = bubbles_by_qkey[(r.section, r.question)]
+        dark_fractions_by_result.append({choice: _dark_fraction(value, x, y, radius) for choice, x, y in bubbles})
+
+    updated = list(results)
+    for i, r in enumerate(results):
+        fractions = dark_fractions_by_result[i]
+        if fractions and max(fractions.values()) < _UNREADABLE_MAX:
+            updated[i] = dataclasses.replace(r, answer="", candidates=[], low_confidence=False, unreadable=True)
+
+    winner_fractions = [
+        dark_fractions_by_result[i][r.answer]
+        for i, r in enumerate(updated)
+        if r.answer not in ("", "MULTIPLE") and not r.pattern_inferred
+    ]
+    floor = _find_mark_floor(winner_fractions) if len(winner_fractions) >= 20 else None
+    if floor is not None:
+        for i, r in enumerate(updated):
+            if r.answer == "" or r.pattern_inferred or r.unreadable:
+                continue
+            # A MULTIPLE result has no single "winning" choice; if even its
+            # best candidate doesn't clear the floor, none of them do --
+            # the same faint/smudged-mark problem, just with fill_ratio's
+            # own relative-margin check also caught in it.
+            fractions = dark_fractions_by_result[i]
+            best = fractions[r.answer] if r.answer != "MULTIPLE" else max(fractions.values())
+            if best < floor:
+                updated[i] = dataclasses.replace(r, answer="", candidates=[], low_confidence=False)
+    return updated
+
+
 def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[QuestionResult], List[str]]:
     """Score every bubble on a sheet.
 
@@ -338,10 +497,12 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
     (see grid_detect module docstring) worth surfacing to the caller.
     """
     binary = binarize(image)
+    value = _value_channel(image)
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     all_bubbles = template.bubbles()
     results = []
     fallback_sections = []
+    bubbles_by_qkey: Dict[Tuple[str, int], List[Tuple[str, int, int]]] = {}
     # Iterate in template-declared section order (not dict/alphabetical order)
     # so output columns follow the sheet's actual layout.
     for section in template.sections:
@@ -357,6 +518,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
             else:
                 bubbles = [(b.choice, b.x, b.y) for b in all_bubbles[(section.name, question)]]
             section_bubbles[question] = bubbles
+            bubbles_by_qkey[(section.name, question)] = bubbles
             for choice, x, y in bubbles:
                 bubbles_by_choice.setdefault(choice, []).append((x, y))
         # Built once per section and reused for every question in it (see
@@ -404,4 +566,6 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
         # blank/MULTIPLE that sits in the middle of a long run of identical
         # answer positions on both sides (see _infer_from_answer_pattern).
         results.extend(_infer_from_answer_pattern(section_results, template))
+
+    results = _apply_readability_checks(results, bubbles_by_qkey, value, template.bubble_radius)
     return results, fallback_sections

@@ -5,9 +5,12 @@ from answer_extractor.detect import (
     QuestionResult,
     _baseline_adjust,
     _crop_patch,
+    _dark_fraction,
+    _find_mark_floor,
     _infer_from_answer_pattern,
     _partial_mark_choice,
     _residual_ratio,
+    _value_channel,
     build_choice_templates,
     decide_answer,
     evaluate_sheet,
@@ -359,6 +362,92 @@ def test_evaluate_sheet_never_overrides_an_already_confident_answer():
     assert not by_q[3].low_confidence
 
 
+# -- _dark_fraction / _find_mark_floor: real-scan "unreadable region" fix ----
+#
+# User-reported: a sheet with a block of ~18 questions the print itself
+# printed too faint to trust (confirmed against the source scan: barely
+# legible even zoomed in) read as scattered wrong single answers and
+# MULTIPLEs instead of blank, and separately, a few individual smudged-
+# eraser marks elsewhere on the same sheet read a wrong single letter.
+# Neither is an area problem (score_bubbles) or an unusual-vs-normal-for-
+# this-letter problem (the residual checks) -- both are genuinely gray,
+# not black, ink, which those checks don't measure at all.
+
+
+def test_dark_fraction_counts_only_genuinely_dark_pixels():
+    value = np.full((41, 41), 255, dtype=np.uint8)
+    value[15:26, 15:26] = 0  # solid 11x11 dark square, centered in the sample circle
+    # _dark_fraction samples a circle of radius int(18*0.85)=15 (area ~707px);
+    # the 121px dark square sits entirely inside it -> ~121/707 =~ 0.171.
+    assert _dark_fraction(value, 20, 20, radius=18) == pytest.approx(0.171, abs=0.01)
+
+
+def test_dark_fraction_ignores_gray_that_is_not_dark_enough():
+    value = np.full((41, 41), 255, dtype=np.uint8)
+    value[15:26, 15:26] = 110  # matches a real faded-print/smudge measurement, not real ink
+    assert _dark_fraction(value, 20, 20, radius=18) == 0.0
+
+
+def test_find_mark_floor_locates_the_gap_between_two_clusters():
+    # A cluster of weak artifacts (0.05-0.15) and a cluster of genuine
+    # marks (0.5-0.6), each internally noisy but clearly separated.
+    weak = [0.05, 0.08, 0.1, 0.12, 0.15, 0.07, 0.09, 0.11, 0.13, 0.06]
+    strong = [0.5, 0.55, 0.6, 0.52, 0.58, 0.51, 0.56, 0.59, 0.53, 0.57]
+    floor = _find_mark_floor(weak + strong)
+    assert floor is not None
+    assert 0.15 < floor < 0.5
+
+
+def test_find_mark_floor_none_when_the_sheet_has_no_such_problem():
+    # No real gap -- a normal, continuously-varying spread of genuine
+    # marks, same as most sheets tested against this. Must not invent a
+    # threshold from noise.
+    values = [0.3 + 0.02 * i for i in range(15)]
+    assert _find_mark_floor(values) is None
+
+
+def _fade_bubble(image: np.ndarray, x: int, y: int, radius: int, light_value: int = 170) -> None:
+    """Simulate a faded/washed-out print: cap how dark *any* ink already in
+    this bubble's neighborhood (ring, printed letter, whatever) is allowed
+    to get, rather than drawing a new mark on top of it. This is what real
+    scan/print degradation actually looks like -- a whole region reads gray
+    however solidly it was originally printed -- unlike fill_bubble, which
+    only controls a fresh mark and leaves the surrounding ring/letter at
+    full black."""
+    r = radius + 4
+    y0, y1 = max(0, y - r), y + r + 1
+    x0, x1 = max(0, x - r), x + r + 1
+    patch = image[y0:y1, x0:x1]
+    dark = patch.min(axis=2) < light_value
+    patch[dark] = (light_value, light_value, light_value)
+
+
+def test_evaluate_sheet_flags_a_faded_block_as_unreadable_and_blank():
+    template = _pattern_template()  # 20 questions, enough for _find_mark_floor's data requirement
+    # Every question gets a normal, solidly-marked answer *except* a block
+    # near the end, which simulates a faded/faint block of the page: all
+    # its ink (ring, letter, and a low-coverage mark) is capped to a light
+    # gray, the same shape as the real case (a whole stretch reading noise
+    # instead of blank).
+    answers = {q: [_idx0(q)] for q in range(1, 15)}
+    image = render_sheet(template, answers, letters=True)
+    for q in range(15, 21):
+        for bubble in template.bubbles()[("Answers", q)]:
+            _fade_bubble(image, bubble.x, bubble.y, template.bubble_radius)
+        marked = next(b for b in template.bubbles()[("Answers", q)] if b.choice == _idx0(q))
+        fill_bubble(image, marked.x, marked.y, template.bubble_radius, coverage=0.3, darkness=180)
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r for r in results}
+    for q in range(15, 21):
+        assert by_q[q].answer == ""
+    # At least the faintest of them should be flagged as a distinct
+    # "unreadable" problem rather than an ordinary confident blank.
+    assert any(by_q[q].unreadable for q in range(15, 21))
+    for q in range(1, 15):
+        assert by_q[q].answer == _idx0(q)  # untouched -- these are genuine, unambiguous marks
+
+
 # -- evaluate_sheet: rendered-image tests ------------------------------------
 
 
@@ -381,7 +470,14 @@ def test_evaluate_sheet_tolerates_partial_sloppy_marks():
     template = make_template()
     answers = {1: ["G"]}
     # 55% coverage and lighter gray pencil-like mark instead of solid fill.
-    image = render_sheet(template, answers, coverage=0.55, darkness=110)
+    # darkness=50 (not e.g. 110): a real pencil mark, however light overall,
+    # has genuine near-black texture somewhere in it (confirmed against a
+    # real faint checkmark: minimum pixel value 0) -- unlike this synthetic
+    # helper's perfectly uniform fill, which needs to actually dip below
+    # _DARK_PIXEL_VALUE to be realistic, or it reads as indistinguishable
+    # from a faded/unreadable region of the page (see _apply_readability_checks).
+    image = render_sheet(template, answers, coverage=0.55, darkness=50)
 
     results = {r.question: r for r in evaluate_sheet(image, template)[0]}
     assert results[1].answer == "G"
+    assert not results[1].unreadable

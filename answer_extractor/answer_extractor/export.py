@@ -23,6 +23,7 @@ from .pipeline import SheetResult
 BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
 MULTIPLE_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
 PATTERN_INFERRED_FILL = PatternFill(start_color="D1E7FF", end_color="D1E7FF", fill_type="solid")
+UNREADABLE_FILL = PatternFill(start_color="E2E3E5", end_color="E2E3E5", fill_type="solid")
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
 _INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
@@ -78,6 +79,14 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
             if q.answer == "MULTIPLE":
                 cell.fill = MULTIPLE_FILL
                 cell.comment = Comment(", ".join(q.candidates), "answer_extractor")
+            elif q.unreadable:
+                cell.fill = UNREADABLE_FILL
+                cell.comment = Comment(
+                    "Every choice here has essentially no dark ink at all -- a scan/print quality "
+                    "problem (e.g. a faded block of the page), not a confident read of \"nothing is "
+                    "marked here\". Worth checking against the original sheet.",
+                    "answer_extractor",
+                )
             elif q.answer == "":
                 cell.fill = BLANK_FILL
             elif q.pattern_inferred:
