@@ -22,6 +22,16 @@ class QuestionResult:
     candidates: List[str]  # every choice detected as marked (0, 1, or 2+)
     fill_ratios: Dict[str, float]  # choice -> fill ratio, for auditing
     low_confidence: bool  # marked bubble(s) only marginally above threshold
+    # True when `answer` wasn't detected from this bubble's own ink at all,
+    # but inferred from a long, unbroken run of identically-positioned
+    # answers immediately surrounding it (see _infer_from_answer_pattern) --
+    # e.g. a student guessing/rushing through a stretch of questions by
+    # marking the same choice position over and over. Always implies
+    # low_confidence; kept as a separate flag so callers (export.py) can
+    # tell "read directly off the page, just not decisively" apart from
+    # "not read off this page at all, inferred from context" -- the latter
+    # deserves more scrutiny before trusting it.
+    pattern_inferred: bool = False
 
 
 def binarize(image: np.ndarray) -> np.ndarray:
@@ -236,6 +246,80 @@ def _combined_partial_mark_choice(fill_ratios: Dict[str, float], residuals: Dict
     return None
 
 
+# A guessing/rushing student marking the same *position* over and over --
+# real behavior, common when time runs out -- leaves a distinctive
+# signature: many consecutive questions (spanning both odd/even choice
+# sets, e.g. always the 1st of A/B/C/D and the 1st of F/G/H/J alike) all
+# landing on the same choice *index*. A run this long happening by chance
+# on a genuinely mixed set of answers is vanishingly unlikely
+# ((1/4)^_PATTERN_MIN_TOTAL_RUN, ignoring that it's also required on both
+# sides at once), which is what makes it safe to use as a tie-breaker for
+# a bubble whose own ink still doesn't clear even the combined check --
+# unlike every check above, this one isn't reading the bubble's own ink at
+# all, so it demands a much longer, unbroken run as its margin of safety
+# instead of a pixel gap.
+#
+# The total (both sides combined) is what's thresholded, not each side
+# individually: requiring, say, 6 on *each* side misses a real guessed
+# question sitting one question after the run started, or one question
+# before a section's last question -- there's only ever going to be a
+# short run on the near side of a section boundary, no matter how real
+# the pattern is. Both sides must still have at least one matching
+# neighbor immediately adjacent, so a run is never inferred from only one
+# direction.
+_PATTERN_MIN_TOTAL_RUN = 8
+
+
+def _infer_from_answer_pattern(
+    section_results: List[QuestionResult], template: Template
+) -> List[QuestionResult]:
+    """Fill in blank/MULTIPLE questions that sit in the middle of a long,
+    unbroken run of same-choice-index answers on both sides, e.g. index 0
+    meaning "A" on an odd question and "F" on an even one. Only questions
+    already blank or MULTIPLE after every ink-based check above are
+    touched; a question with any single directly-detected answer, however
+    low-confidence, is left exactly as-is -- this never overrides real
+    pixel evidence, only fills a genuine gap using its context."""
+    choice_indices: List["int | None"] = []
+    for r in section_results:
+        if r.answer in ("", "MULTIPLE"):
+            choice_indices.append(None)
+            continue
+        choices = template.choices_for(r.question)
+        choice_indices.append(choices.index(r.answer) if r.answer in choices else None)
+
+    n = len(section_results)
+    updated = list(section_results)
+    for i, r in enumerate(section_results):
+        if r.answer not in ("", "MULTIPLE"):
+            continue
+        left = choice_indices[i - 1] if i - 1 >= 0 else None
+        right = choice_indices[i + 1] if i + 1 < n else None
+        if left is None or right is None or left != right:
+            continue
+        target = left
+
+        left_run = 0
+        j = i - 1
+        while j >= 0 and choice_indices[j] == target:
+            left_run += 1
+            j -= 1
+        right_run = 0
+        j = i + 1
+        while j < n and choice_indices[j] == target:
+            right_run += 1
+            j += 1
+        if left_run + right_run < _PATTERN_MIN_TOTAL_RUN:
+            continue
+
+        choices = template.choices_for(r.question)
+        inferred = choices[target]
+        updated[i] = dataclasses.replace(
+            r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
+        )
+    return updated
+
+
 def _baseline_adjust(fill_ratios: Dict[str, float]) -> Dict[str, float]:
     """Subtract each question's own minimum fill ratio from every choice in
     it before deciding an answer.
@@ -333,6 +417,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
         # questions the ordinary fill-ratio signal couldn't already decide.
         choice_templates = build_choice_templates(binary, bubbles_by_choice, template.bubble_radius)
 
+        section_results: List[QuestionResult] = []
         for question in range(1, section.num_questions + 1):
             bubbles = section_bubbles[question]
             fill_ratios = score_bubbles(binary, bubbles, template.bubble_radius)
@@ -367,7 +452,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 if partial_mark is not None and partial_mark != answer:
                     answer, candidates, low_confidence = partial_mark, [partial_mark], True
 
-            results.append(
+            section_results.append(
                 QuestionResult(
                     section=section.name,
                     question=question,
@@ -377,4 +462,9 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     low_confidence=low_confidence,
                 )
             )
+
+        # Last resort, after every ink-based check above: a question still
+        # blank/MULTIPLE that sits in the middle of a long run of identical
+        # answer positions on both sides (see _infer_from_answer_pattern).
+        results.extend(_infer_from_answer_pattern(section_results, template))
     return results, fallback_sections

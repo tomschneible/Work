@@ -2,9 +2,11 @@ import numpy as np
 import pytest
 
 from answer_extractor.detect import (
+    QuestionResult,
     _baseline_adjust,
     _combined_partial_mark_choice,
     _crop_patch,
+    _infer_from_answer_pattern,
     _partial_mark_choice,
     _raw_top_gap,
     _residual_ratio,
@@ -222,6 +224,122 @@ def test_combined_partial_mark_choice_can_pick_a_choice_fill_ratio_did_not_favor
     fill_ratios = {"F": 0.597, "G": 0.625, "H": 0.569, "J": 0.451}  # raw top: G
     residuals = {"F": 0.074, "G": 0.038, "H": 0.033, "J": 0.04}  # residual top: F
     assert _combined_partial_mark_choice(fill_ratios, residuals) == "F"
+
+
+# -- _infer_from_answer_pattern: pure logic tests -----------------------------
+#
+# User follow-up: even the combined ink-based check above still left a
+# handful of questions blank on the checkmarked sheet. Every one of them
+# sat in the middle of an otherwise unbroken run of 20-30+ consecutive
+# questions where the student marked the same choice *position* (e.g.
+# always the 1st of A/B/C/D, always the 1st of F/G/H/J) -- real behavior
+# for a student guessing/rushing through the end of a section. This is a
+# last-resort, context-only inference: it never looks at the blank
+# bubble's own ink, only at what's confidently known about its neighbors.
+
+
+def _qr(question: int, answer: str, low_confidence: bool = False) -> QuestionResult:
+    candidates = [] if answer in ("", "MULTIPLE") else [answer]
+    return QuestionResult(
+        section="Answers",
+        question=question,
+        answer=answer,
+        candidates=candidates,
+        fill_ratios={},
+        low_confidence=low_confidence,
+    )
+
+
+def _pattern_template() -> Template:
+    return Template.from_dict(
+        {
+            "page": {"width": 900, "height": 700},
+            "sections": [
+                {
+                    "name": "Answers",
+                    "columns": [{"first_question": 1, "last_question": 20, "x_start": 150, "y_start": 100, "row_height": 30}],
+                }
+            ],
+            "bubble_spacing_x": 60,
+            "bubble_radius": 18,
+            "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+            "thresholds": {"fill_ratio_min": 0.35, "relative_margin": 0.15},
+        }
+    )
+
+
+def _idx0(question: int) -> str:
+    """The choice at index 0 for `question`'s own odd/even choice set --
+    "F" for odd, "A" for even, per _pattern_template -- so test sequences
+    are correct by construction instead of hand-alternated and error-prone."""
+    return "F" if question % 2 else "A"
+
+
+def test_infer_from_answer_pattern_fills_a_gap_in_a_long_bracketing_run():
+    template = _pattern_template()
+    # Q1-4 and Q6-9 all at index 0 of their own choice set, Q5 blank in the
+    # middle -- 4 on each side, comfortably over the total.
+    results = [_qr(q, _idx0(q)) for q in (1, 2, 3, 4)] + [_qr(5, "")] + [_qr(q, _idx0(q)) for q in (6, 7, 8, 9)]
+    updated = _infer_from_answer_pattern(results, template)
+    q5 = next(r for r in updated if r.question == 5)
+    assert q5.answer == _idx0(5)
+    assert q5.pattern_inferred
+    assert q5.low_confidence
+
+
+def test_infer_from_answer_pattern_leaves_a_short_run_blank():
+    template = _pattern_template()
+    # Only 1 on each side of the gap -- nowhere near _PATTERN_MIN_TOTAL_RUN.
+    results = [_qr(1, _idx0(1)), _qr(2, ""), _qr(3, _idx0(3))]
+    updated = _infer_from_answer_pattern(results, template)
+    q2 = next(r for r in updated if r.question == 2)
+    assert q2.answer == ""
+    assert not q2.pattern_inferred
+
+
+def test_infer_from_answer_pattern_requires_agreement_on_both_sides():
+    template = _pattern_template()
+    # Long runs on both sides, but they don't agree with each other --
+    # index 0 on the left, index 1 on the right. Not a real pattern.
+    idx1 = {1: "G", 0: "B"}  # index 1 of odd/even choices, keyed by parity
+    results = [_qr(q, _idx0(q)) for q in (1, 2, 3, 4)] + [_qr(5, "")] + [_qr(q, idx1[q % 2]) for q in (6, 7, 8, 9)]
+    updated = _infer_from_answer_pattern(results, template)
+    q5 = next(r for r in updated if r.question == 5)
+    assert q5.answer == ""
+
+
+def test_infer_from_answer_pattern_never_touches_a_directly_detected_answer():
+    # Even a low-confidence *directly detected* answer must never be
+    # second-guessed by this context-only inference -- real pixel evidence
+    # always wins, however weak.
+    template = _pattern_template()
+    results = (
+        [_qr(q, _idx0(q)) for q in (1, 2, 3, 4)]
+        + [_qr(5, "H", low_confidence=True)]  # a real (if shaky) detected answer
+        + [_qr(q, _idx0(q)) for q in (6, 7, 8, 9)]
+    )
+    updated = _infer_from_answer_pattern(results, template)
+    q5 = next(r for r in updated if r.question == 5)
+    assert q5.answer == "H"
+    assert not q5.pattern_inferred
+
+
+def test_infer_from_answer_pattern_counts_the_total_across_both_sides():
+    # Mirrors a real case: a run that starts right after a genuine earlier
+    # answer, leaving only a short run on one side of the gap -- too short
+    # alone, but the combined total across both sides is what's actually
+    # thresholded (see _PATTERN_MIN_TOTAL_RUN's comment for why).
+    template = _pattern_template()
+    results = (
+        [_qr(1, "H")]  # a genuine unrelated earlier answer, not part of the pattern
+        + [_qr(q, _idx0(q)) for q in (2, 3)]
+        + [_qr(4, "")]
+        + [_qr(q, _idx0(q)) for q in (5, 6, 7, 8, 9, 10)]
+    )
+    updated = _infer_from_answer_pattern(results, template)
+    q4 = next(r for r in updated if r.question == 4)
+    assert q4.answer == _idx0(4)
+    assert q4.pattern_inferred
 
 
 # -- _raw_top_gap: pure logic tests -------------------------------------------

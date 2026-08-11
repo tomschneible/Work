@@ -22,6 +22,7 @@ from .pipeline import SheetResult
 
 BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
 MULTIPLE_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
+PATTERN_INFERRED_FILL = PatternFill(start_color="D1E7FF", end_color="D1E7FF", fill_type="solid")
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
 _INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
@@ -79,6 +80,14 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
                 cell.comment = Comment(", ".join(q.candidates), "answer_extractor")
             elif q.answer == "":
                 cell.fill = BLANK_FILL
+            elif q.pattern_inferred:
+                cell.fill = PATTERN_INFERRED_FILL
+                cell.comment = Comment(
+                    "Not read directly off this bubble -- inferred from a long, unbroken run of "
+                    "identically-positioned answers surrounding it (e.g. a guessed/rushed stretch). "
+                    "Worth a manual check.",
+                    "answer_extractor",
+                )
             if q.low_confidence:
                 cell.font = LOW_CONFIDENCE_FONT
 
