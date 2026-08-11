@@ -204,6 +204,38 @@ def _partial_mark_choice(
     return None
 
 
+# A second, additive fallback for the blank/MULTIPLE path: neither
+# fill_ratio's own raw top-2 gap nor the residual signal's gap always
+# clears its own bar individually on a real partial mark, but a real mark
+# tends to nudge *both* signals in the same direction even when neither
+# alone is convincing, while a truly blank question doesn't. Summing them
+# recovers several such cases without weakening either individual bar.
+# Calibrated the same way: the same two confirmed-genuinely-blank
+# questions peaked at a combined 0.043; real (if faint) marks on another
+# sheet that neither individual check caught ranged 0.058-0.158. This sits
+# above that ceiling with a real margin, not just barely.
+_COMBINED_MIN_GAP = 0.055
+_COMBINED_MIN_RESIDUAL_GAP = 0.01  # residual must show *some* real preference, not be a coin flip riding fill_ratio's gap alone
+
+
+def _combined_partial_mark_choice(fill_ratios: Dict[str, float], residuals: Dict[str, float]) -> "str | None":
+    """Like `_partial_mark_choice`, but combines fill_ratio's own raw
+    top-2 gap with the residual gap rather than judging the residual
+    signal in isolation -- see `_COMBINED_MIN_GAP`. Returns the residual
+    signal's top choice (not necessarily fill_ratio's raw top choice --
+    the two can disagree even when combined they indicate a real mark;
+    residual is the more specific signal for *which* choice it's on)."""
+    fill_gap = _raw_top_gap(fill_ratios)
+    if fill_gap is None or len(residuals) < 2:
+        return None
+    ranked = sorted(residuals.items(), key=lambda kv: kv[1], reverse=True)
+    (top_choice, top_value), (_, second_value) = ranked[0], ranked[1]
+    residual_gap = top_value - second_value
+    if residual_gap >= _COMBINED_MIN_RESIDUAL_GAP and fill_gap + residual_gap >= _COMBINED_MIN_GAP:
+        return top_choice
+    return None
+
+
 def _baseline_adjust(fill_ratios: Dict[str, float]) -> Dict[str, float]:
     """Subtract each question's own minimum fill ratio from every choice in
     it before deciding an answer.
@@ -327,7 +359,9 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     if choice in choice_templates
                 }
                 if answer in ("", "MULTIPLE"):
-                    partial_mark = _partial_mark_choice(residuals)
+                    partial_mark = _partial_mark_choice(residuals) or _combined_partial_mark_choice(
+                        fill_ratios, residuals
+                    )
                 else:
                     partial_mark = _partial_mark_choice(residuals, _TIEBREAK_MIN_TOP, _TIEBREAK_MIN_GAP)
                 if partial_mark is not None and partial_mark != answer:

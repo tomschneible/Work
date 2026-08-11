@@ -3,6 +3,7 @@ import pytest
 
 from answer_extractor.detect import (
     _baseline_adjust,
+    _combined_partial_mark_choice,
     _crop_patch,
     _partial_mark_choice,
     _raw_top_gap,
@@ -181,6 +182,46 @@ def test_partial_mark_choice_looser_thresholds_catch_a_smaller_gap():
     residuals = {"F": 0.088, "G": 0.059, "H": 0.038, "J": 0.049}
     assert _partial_mark_choice(residuals) is None  # too weak for the strict thresholds
     assert _partial_mark_choice(residuals, _TIEBREAK_MIN_TOP, _TIEBREAK_MIN_GAP) == "F"
+
+
+# -- _combined_partial_mark_choice: pure logic tests --------------------------
+#
+# A user-reported second round: several questions on the same checkmarked
+# sheet stayed blank even after the strict residual-only check above,
+# because neither fill_ratio's own raw gap nor the residual gap alone
+# cleared its bar -- but a real (if faint) mark nudges *both* signals in
+# the same direction even when neither individually is convincing, while a
+# truly blank question doesn't. This combines them as a second, additive
+# check (never a replacement for the strict one, which stays as-is).
+
+
+def test_combined_partial_mark_choice_catches_a_mark_neither_signal_alone_would():
+    # Real scan case: fill_ratio's raw gap (0.059, English Q23-shaped) and
+    # the residual gap (0.036) are each too weak alone -- 0.059 < 0.10
+    # isn't decisive for fill_ratio, 0.036 < 0.045 misses the strict
+    # residual bar -- but together (0.095) clear _COMBINED_MIN_GAP.
+    fill_ratios = {"A": 0.708, "B": 0.648, "C": 0.581, "D": 0.64}
+    residuals = {"A": 0.09, "B": 0.053, "C": 0.054, "D": 0.043}
+    assert _partial_mark_choice(residuals) is None  # confirms neither alone would catch it
+    assert _combined_partial_mark_choice(fill_ratios, residuals) == "A"
+
+
+def test_combined_partial_mark_choice_none_for_a_confirmed_blank_question():
+    # Regression case: the same two questions independently confirmed
+    # genuinely blank (see _PARTIAL_MARK_MIN_GAP's comment) must also stay
+    # blank under the combined check, not just the strict one.
+    fill_ratios = {"A": 0.455, "B": 0.51, "C": 0.474, "D": 0.502}
+    residuals = {"A": 0.145, "B": 0.066, "C": 0.13, "D": 0.18}
+    assert _combined_partial_mark_choice(fill_ratios, residuals) is None
+
+
+def test_combined_partial_mark_choice_can_pick_a_choice_fill_ratio_did_not_favor():
+    # Residual is the more specific signal for *which* choice a partial
+    # mark is on -- the combined check trusts its top choice even when it
+    # differs from fill_ratio's own (noisier) raw top choice.
+    fill_ratios = {"F": 0.597, "G": 0.625, "H": 0.569, "J": 0.451}  # raw top: G
+    residuals = {"F": 0.074, "G": 0.038, "H": 0.033, "J": 0.04}  # residual top: F
+    assert _combined_partial_mark_choice(fill_ratios, residuals) == "F"
 
 
 # -- _raw_top_gap: pure logic tests -------------------------------------------
