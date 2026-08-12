@@ -405,6 +405,55 @@ def test_infer_from_answer_pattern_a_genuine_mismatch_still_blocks_inference():
     assert not q12.pattern_inferred
 
 
+def test_infer_from_answer_pattern_fills_a_sections_last_question_given_a_long_one_sided_run():
+    # Real case (Goldman): a section's very last question has no
+    # right-side neighbor to ever confirm against -- only the left side,
+    # held to _BOUNDARY_PATTERN_MIN_RUN (double the two-sided minimum) as
+    # its margin of safety. Q1-17 idx0 (17, comfortably over 16), Q18
+    # (the last question) blank.
+    template = _pattern_template()
+    results = [_qr(q, _idx0(q)) for q in range(1, 18)] + [_qr(18, "")]
+    updated = _infer_from_answer_pattern(results, template)
+    q18 = next(r for r in updated if r.question == 18)
+    assert q18.answer == _idx0(18)
+    assert q18.pattern_inferred
+    assert q18.low_confidence
+
+
+def test_infer_from_answer_pattern_requires_double_the_run_at_the_last_question():
+    # The exact same run length that's plenty for an ordinary mid-section
+    # gap (>= _PATTERN_MIN_TOTAL_RUN = 8) must NOT be enough at a
+    # section's last question, which has no right side to confirm
+    # against at all -- this is the specific higher bar
+    # _BOUNDARY_PATTERN_MIN_RUN exists for. 9 questions of idx0 run (over
+    # 8, comfortably under 16) followed by the blank last question.
+    template = _pattern_template()
+    results = [_qr(q, _idx0(q)) for q in range(1, 10)] + [_qr(10, "")]
+    updated = _infer_from_answer_pattern(results, template)
+    q10 = next(r for r in updated if r.question == 10)
+    assert q10.answer == ""
+    assert not q10.pattern_inferred
+
+
+def test_infer_from_answer_pattern_never_infers_a_last_question_with_no_real_run_before_it():
+    # Real case (Vinca, Rizza): a student who genuinely ran out of time
+    # and left the true end of a section blank is common -- and in every
+    # real example of it, the questions immediately preceding the blank
+    # tail were an ordinary mix of answers, not a matching-index run at
+    # all. This mirrors that shape: each question cycles through a
+    # different choice index than the one before it (0,1,2,3,0,1,2,...),
+    # so no two adjacent answers ever share a choice index and there's no
+    # run to even measure, regardless of how low the threshold might be.
+    template = _pattern_template()
+    results = [
+        _qr(q, template.choices_for(q)[(q - 1) % 4]) for q in range(1, 18)
+    ] + [_qr(18, "")]
+    updated = _infer_from_answer_pattern(results, template)
+    q18 = next(r for r in updated if r.question == 18)
+    assert q18.answer == ""
+    assert not q18.pattern_inferred
+
+
 # -- _reconsider_low_confidence_pattern: pure logic tests ---------------------
 #
 # Real case (Goldman): a sheet printed one choice letter structurally

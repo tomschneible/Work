@@ -313,8 +313,26 @@ def _partial_mark_choice(
 # short run on the near side of a section boundary, no matter how real
 # the pattern is. Both sides must still have at least one matching
 # neighbor immediately adjacent, so a run is never inferred from only one
-# direction.
+# direction -- except right at a section's own last question, which
+# structurally has no "other side" to ever check (see
+# _BOUNDARY_PATTERN_MIN_RUN below).
 _PATTERN_MIN_TOTAL_RUN = 8
+
+# A blank/MULTIPLE run touching a section's very last question has no
+# right-side neighbor to confirm against at all -- not "a short run", none
+# -- so inferring it can only ever look at the left side alone. That loses
+# the two-sided cross-check's real value: distinguishing an actual
+# continuing pattern from a student who was guessing right up until they
+# genuinely ran out of time and stopped for real, which happens
+# disproportionately at exactly this boundary. Checked against six real
+# sheets before picking this: three had a genuine "stopped for real" blank
+# tail at a section's end, and in every one of them the questions
+# immediately preceding the tail were themselves a normal mix of answers,
+# not a matching-index run at all -- so this rule structurally never even
+# considers firing on any of them, at any of several thresholds tried.
+# Doubling the two-sided minimum here is a deliberate margin on top of
+# that, not a number the real data actually required.
+_BOUNDARY_PATTERN_MIN_RUN = _PATTERN_MIN_TOTAL_RUN * 2
 
 
 def _nearest_non_blank(
@@ -391,7 +409,15 @@ def _infer_from_answer_pattern(
     how long that same-index run actually is the same way (skipping
     blanks, stopping only at a genuine mismatch or the section's edge).
     A single isolated blank with no other blanks nearby behaves exactly as
-    before -- this only changes what happens when there's more than one."""
+    before -- this only changes what happens when there's more than one.
+
+    A run touching the section's very last question is a special case: it
+    structurally has no right-side neighbor to ever confirm against, only
+    a left side, so it's held to a much higher bar
+    (_BOUNDARY_PATTERN_MIN_RUN) instead of the two-sided total -- see that
+    constant's comment for why, and for real evidence this doesn't fire on
+    the much more common case of a student genuinely running out of time
+    and leaving the true end of a section blank."""
     choice_indices: List["int | None"] = []
     for r in section_results:
         if r.answer in ("", "MULTIPLE"):
@@ -416,19 +442,30 @@ def _infer_from_answer_pattern(
 
         left = _nearest_non_blank(choice_indices, run_start - 1, -1)
         right = _nearest_non_blank(choice_indices, run_end + 1, 1)
+
+        target = None
+        total_run = 0
         if left is not None and right is not None and left == right:
             target = left
-            left_run = _count_matching_run(choice_indices, run_start - 1, -1, target)
-            right_run = _count_matching_run(choice_indices, run_end + 1, 1, target)
+            total_run = _count_matching_run(
+                choice_indices, run_start - 1, -1, target
+            ) + _count_matching_run(choice_indices, run_end + 1, 1, target)
+            threshold = _PATTERN_MIN_TOTAL_RUN
+        elif run_end == n - 1 and left is not None:
+            # Touches the section's last question, with no right-side
+            # neighbor to check at all -- see _BOUNDARY_PATTERN_MIN_RUN.
+            target = left
+            total_run = _count_matching_run(choice_indices, run_start - 1, -1, target)
+            threshold = _BOUNDARY_PATTERN_MIN_RUN
 
-            if left_run + right_run >= _PATTERN_MIN_TOTAL_RUN:
-                for k in range(run_start, run_end + 1):
-                    r = section_results[k]
-                    choices = template.choices_for(r.question)
-                    inferred = choices[target]
-                    updated[k] = dataclasses.replace(
-                        r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
-                    )
+        if target is not None and total_run >= threshold:
+            for k in range(run_start, run_end + 1):
+                r = section_results[k]
+                choices = template.choices_for(r.question)
+                inferred = choices[target]
+                updated[k] = dataclasses.replace(
+                    r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
+                )
 
         i = run_end + 1
 
