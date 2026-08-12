@@ -363,6 +363,47 @@ def test_infer_from_answer_pattern_leaves_a_multiple_run_between_mismatched_side
         assert not r.pattern_inferred
 
 
+def test_infer_from_answer_pattern_bridges_scattered_non_adjacent_blanks():
+    # Real case (Goldman): a single long guessing run (20+ questions) with
+    # several blanks scattered through it, none adjacent to each other.
+    # Each individual blank IS bracketed by the same choice index on both
+    # sides once you skip past the *other* blanks -- but an earlier version
+    # of this only counted up to the very next blank, which undercounted
+    # the real evidence and left every one of them below the threshold.
+    # Q3, Q6, and Q9 are blank here, each isolated from the others by real
+    # answers, all part of one long idx0 run from Q1 to Q12.
+    template = _pattern_template()
+    blanks = {3, 6, 9}
+    results = [_qr(q, "" if q in blanks else _idx0(q)) for q in range(1, 13)]
+    updated = _infer_from_answer_pattern(results, template)
+    for q in blanks:
+        r = next(r for r in updated if r.question == q)
+        assert r.answer == _idx0(q)
+        assert r.pattern_inferred
+
+
+def test_infer_from_answer_pattern_a_genuine_mismatch_still_blocks_inference():
+    # "Skip past other blanks" must only ever skip *blanks* -- a genuine,
+    # different real answer immediately next to the gap still blocks
+    # inference outright, no matter how long a matching run sits further
+    # away on the other side. Q11 is a real, different answer (index 1)
+    # sitting right next to the blank at Q12; Q13 onward goes back to a
+    # long idx0 run, but Q12's nearest real neighbors (Q11 and Q13) simply
+    # disagree, which must never be bridged over.
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}  # index 1 of odd/even choices, keyed by parity
+    results = (
+        [_qr(q, _idx0(q)) for q in range(1, 11)]  # Q1-10: long idx0 run
+        + [_qr(11, idx1[11 % 2])]  # genuine mismatch immediately before the gap
+        + [_qr(12, "")]
+        + [_qr(q, _idx0(q)) for q in range(13, 21)]  # long idx0 run resumes after
+    )
+    updated = _infer_from_answer_pattern(results, template)
+    q12 = next(r for r in updated if r.question == 12)
+    assert q12.answer == ""
+    assert not q12.pattern_inferred
+
+
 def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():
     # A 21x21 all-white image with a 5x5 dark square baked into every "A"
     # occurrence except one, which additionally has a second dark square

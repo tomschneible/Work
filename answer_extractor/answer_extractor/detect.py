@@ -317,6 +317,42 @@ def _partial_mark_choice(
 _PATTERN_MIN_TOTAL_RUN = 8
 
 
+def _nearest_non_blank(choice_indices: List["int | None"], start: int, step: int) -> "int | None":
+    """Walk from `start` in direction `step` (+1 or -1) until the first
+    non-blank/MULTIPLE entry (skipping over any number of blank/MULTIPLE
+    entries along the way), and return its choice index -- or None if the
+    list runs out first."""
+    n = len(choice_indices)
+    j = start
+    while 0 <= j < n:
+        if choice_indices[j] is not None:
+            return choice_indices[j]
+        j += step
+    return None
+
+
+def _count_matching_run(choice_indices: List["int | None"], start: int, step: int, target: int) -> int:
+    """Walk from `start` in direction `step`, counting consecutive
+    *non-blank* entries equal to `target` -- blank/MULTIPLE entries along
+    the way are skipped over, not counted and not treated as a break, so a
+    scattered blank in the middle of an otherwise-unbroken run doesn't cut
+    the count short. Stops at the first non-blank entry that isn't
+    `target`, or the end of the list."""
+    n = len(choice_indices)
+    count = 0
+    j = start
+    while 0 <= j < n:
+        v = choice_indices[j]
+        if v is None:
+            j += step
+            continue
+        if v != target:
+            break
+        count += 1
+        j += step
+    return count
+
+
 def _infer_from_answer_pattern(
     section_results: List[QuestionResult], template: Template
 ) -> List[QuestionResult]:
@@ -328,16 +364,23 @@ def _infer_from_answer_pattern(
     low-confidence, is left exactly as-is -- this never overrides real
     pixel evidence, only fills a genuine gap using its context.
 
-    Operates on the whole contiguous stretch of blank/MULTIPLE questions
-    at once, not just a single one at a time -- a real scan had two
-    guessed questions blank back-to-back in the middle of an otherwise
-    unbroken run, and checking only a blank's *immediate* neighbor (as an
-    earlier version of this did) means each one's immediate neighbor on
-    one side is the *other* blank, not a real answer, so neither ever gets
-    matched even though the surrounding run obviously continues straight
-    through both. Looking at what's just outside the *whole* run instead
-    (however many blanks long) fixes that without changing anything about
-    a single isolated blank, which is just the n=1 case of the same logic."""
+    Operates on the whole contiguous stretch of blank/MULTIPLE questions at
+    once, not just a single one at a time -- a real scan had two guessed
+    questions blank back-to-back in the middle of an otherwise unbroken
+    run. It also looks past *other*, non-adjacent blanks/MULTIPLEs on
+    either side rather than treating them as a hard stop: a real sheet had
+    a single guessing run spanning 20+ questions with several scattered
+    blanks in it (not all next to each other), and each individual blank
+    was clearly part of the same run -- bracketed by the same choice index
+    on both sides once you skip past the *other* blanks -- but capping the
+    run count at the very next blank badly undercounted the real evidence
+    behind each one. Concretely: for each contiguous blank/MULTIPLE run,
+    find the nearest *non-blank* neighbor past each end (skipping over any
+    other blanks along the way), and if those two neighbors agree, count
+    how long that same-index run actually is the same way (skipping
+    blanks, stopping only at a genuine mismatch or the section's edge).
+    A single isolated blank with no other blanks nearby behaves exactly as
+    before -- this only changes what happens when there's more than one."""
     choice_indices: List["int | None"] = []
     for r in section_results:
         if r.answer in ("", "MULTIPLE"):
@@ -360,21 +403,12 @@ def _infer_from_answer_pattern(
         while run_end + 1 < n and section_results[run_end + 1].answer in ("", "MULTIPLE"):
             run_end += 1
 
-        left = choice_indices[run_start - 1] if run_start - 1 >= 0 else None
-        right = choice_indices[run_end + 1] if run_end + 1 < n else None
+        left = _nearest_non_blank(choice_indices, run_start - 1, -1)
+        right = _nearest_non_blank(choice_indices, run_end + 1, 1)
         if left is not None and right is not None and left == right:
             target = left
-
-            left_run = 0
-            j = run_start - 1
-            while j >= 0 and choice_indices[j] == target:
-                left_run += 1
-                j -= 1
-            right_run = 0
-            j = run_end + 1
-            while j < n and choice_indices[j] == target:
-                right_run += 1
-                j += 1
+            left_run = _count_matching_run(choice_indices, run_start - 1, -1, target)
+            right_run = _count_matching_run(choice_indices, run_end + 1, 1, target)
 
             if left_run + right_run >= _PATTERN_MIN_TOTAL_RUN:
                 for k in range(run_start, run_end + 1):
