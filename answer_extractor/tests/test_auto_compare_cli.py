@@ -3,6 +3,9 @@ import openpyxl
 from openpyxl import load_workbook
 
 from answer_extractor.auto_compare_cli import main
+from answer_extractor.detect import QuestionResult
+from answer_extractor.export import write_xlsx
+from answer_extractor.pipeline import SheetResult
 from answer_extractor.template import Template
 from tests.synth import render_sheet
 
@@ -164,3 +167,86 @@ def test_reference_without_a_matching_bubble_sheet_skips_comparison_but_still_wr
     wb = load_workbook(output_path)
     assert "Comparison" not in wb.sheetnames
     assert {"sheet1", "sheet2"} <= set(wb.sheetnames)
+
+
+def _write_existing_output(path):
+    """An already-exported results file, as if from an earlier run of the
+    plain scan droplet -- what "compare only" mode is meant to take
+    without re-scanning anything."""
+    questions = [
+        QuestionResult("English", 1, "F", ["F"], {}, low_confidence=False),
+        QuestionResult("English", 2, "A", ["A"], {}, low_confidence=False),  # will mismatch, unflagged
+        QuestionResult("English", 3, "", [], {}, low_confidence=False),
+    ]
+    result = SheetResult(label="prior_scan", source="test", used_contour_alignment=False, questions=questions)
+    write_xlsx([result], path)
+
+
+def test_existing_output_plus_reference_compares_without_rescanning(tmp_path):
+    existing_path = tmp_path / "prior_scan_answers.xlsx"
+    _write_existing_output(existing_path)
+
+    reference_path = tmp_path / "reference.xlsx"
+    write_reference(
+        reference_path,
+        [
+            (1, "F", "F", "✔"),
+            (2, "A", "B", "✘"),  # our stored answer was A, reference says B -> silent miss
+            (3, "C", None, "ø"),
+        ],
+    )
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(existing_path), str(reference_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert "Comparison" in wb.sheetnames
+    assert "prior_scan" in wb.sheetnames  # the original tab is carried over untouched
+
+    comparison_rows = list(wb["Comparison"].iter_rows(min_row=2, values_only=True))
+    by_question = {row[1]: row for row in comparison_rows}
+    assert by_question[1][4] == "✔"
+    assert by_question[2][4] == "✘"
+    assert not by_question[2][5]  # silent miss -- no flag
+
+
+def test_existing_output_plus_bubble_sheet_is_ambiguous(tmp_path):
+    existing_path = tmp_path / "prior_scan_answers.xlsx"
+    _write_existing_output(existing_path)
+
+    template_path = make_template_yaml(tmp_path)
+    template = Template.from_yaml(template_path)
+    image_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(image_path), render_sheet(template, {1: ["F"]}))
+
+    reference_path = tmp_path / "reference.xlsx"
+    write_reference(reference_path, [(1, "F", "F", "✔")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(
+        [
+            "--input",
+            str(existing_path),
+            str(image_path),
+            str(reference_path),
+            "--template",
+            str(template_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 1
+    assert not output_path.exists()
+
+
+def test_existing_output_without_a_reference_is_an_error(tmp_path):
+    existing_path = tmp_path / "prior_scan_answers.xlsx"
+    _write_existing_output(existing_path)
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(existing_path), "--output", str(output_path)])
+
+    assert exit_code == 1
+    assert not output_path.exists()
