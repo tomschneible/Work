@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -18,6 +18,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .detect import QuestionResult
 from .pipeline import SheetResult
 
 BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
@@ -27,6 +28,22 @@ UNREADABLE_FILL = PatternFill(start_color="E2E3E5", end_color="E2E3E5", fill_typ
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
 _INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
+
+
+def flag_for(q: QuestionResult) -> Optional[str]:
+    """Which review flag a question gets, if any -- the single source of
+    truth for both this module's cell-styling precedence (below) and
+    scoresheet_check.ours_from_results, which needs the same classification
+    without going through a written-out spreadsheet's cell colors."""
+    if q.answer == "MULTIPLE":
+        return "MULTIPLE"
+    if q.unreadable:
+        return "unreadable"
+    if q.answer == "":
+        return "blank"
+    if q.pattern_inferred:
+        return "pattern_inferred"
+    return None
 
 
 def _section_order(results: List[SheetResult]) -> List[str]:
@@ -76,10 +93,11 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
             if q is None:
                 continue
             cell = ws.cell(row=row_index, column=col_offset)
-            if q.answer == "MULTIPLE":
+            flag = flag_for(q)
+            if flag == "MULTIPLE":
                 cell.fill = MULTIPLE_FILL
                 cell.comment = Comment(", ".join(q.candidates), "answer_extractor")
-            elif q.unreadable:
+            elif flag == "unreadable":
                 cell.fill = UNREADABLE_FILL
                 cell.comment = Comment(
                     "Every choice here has essentially no dark ink at all -- a scan/print quality "
@@ -87,9 +105,9 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
                     "marked here\". Worth checking against the original sheet.",
                     "answer_extractor",
                 )
-            elif q.answer == "":
+            elif flag == "blank":
                 cell.fill = BLANK_FILL
-            elif q.pattern_inferred:
+            elif flag == "pattern_inferred":
                 cell.fill = PATTERN_INFERRED_FILL
                 cell.comment = Comment(
                     "Not read directly off this bubble -- inferred from a long, unbroken run of "

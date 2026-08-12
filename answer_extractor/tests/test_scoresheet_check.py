@@ -8,6 +8,7 @@ from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
 from answer_extractor.scoresheet_check import (
     compare,
+    ours_from_results,
     parse_program_output,
     parse_reference_scoresheet,
 )
@@ -129,3 +130,38 @@ def test_compare_categorizes_by_severity(tmp_path):
     # Reference says "H" was marked, but we flagged this one unreadable --
     # still wrong, but not a *silent* miss since it was already surfaced.
     assert by_key[("mathematics", 2)].severity == "flagged"
+
+
+def test_ours_from_results_matches_parse_program_output(tmp_path):
+    """The in-memory path (used by auto_compare_cli, which has the
+    QuestionResult objects on hand from the same run) must classify flags
+    identically to the round-trip-through-a-written-file path (used by
+    compare_cli on two pre-existing spreadsheets) -- both ultimately go
+    through export.flag_for, but this pins that they actually agree."""
+    questions = [
+        QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False),
+        QuestionResult("English", 2, "B", ["B"], {}, low_confidence=False),
+        QuestionResult("English", 3, "", [], {}, low_confidence=False),
+        QuestionResult("Mathematics", 1, "F", ["F"], {}, low_confidence=False),
+        QuestionResult("Mathematics", 2, "", [], {}, low_confidence=False, unreadable=True),
+    ]
+    path = tmp_path / "ours.xlsx"
+    write_xlsx(
+        [SheetResult(label="sheet1", source="test", used_contour_alignment=False, questions=questions)],
+        path,
+    )
+
+    from_memory = ours_from_results(questions)
+    from_file = parse_program_output(path)
+
+    assert from_memory == from_file
+
+
+def test_ours_from_results_classifies_multiple_and_pattern_inferred():
+    questions = [
+        QuestionResult("English", 1, "MULTIPLE", ["A", "B"], {}, low_confidence=True),
+        QuestionResult("English", 2, "C", ["C"], {}, low_confidence=True, pattern_inferred=True),
+    ]
+    result = ours_from_results(questions)
+    assert result[("english", 1)].flag == "MULTIPLE"
+    assert result[("english", 2)].flag == "pattern_inferred"

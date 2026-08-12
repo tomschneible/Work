@@ -37,8 +37,10 @@ from typing import Dict, List, Optional, Tuple
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from openpyxl.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
-from .export import BLANK_FILL, MULTIPLE_FILL, PATTERN_INFERRED_FILL, UNREADABLE_FILL
+from .detect import QuestionResult
+from .export import BLANK_FILL, MULTIPLE_FILL, PATTERN_INFERRED_FILL, UNREADABLE_FILL, flag_for
 
 QuestionKey = Tuple[str, int]
 
@@ -184,6 +186,21 @@ def parse_program_output(
     return result
 
 
+def ours_from_results(questions: List[QuestionResult]) -> Dict[QuestionKey, OurAnswer]:
+    """Build the same {(normalized_section, question): OurAnswer} shape as
+    parse_program_output, but directly from this run's own QuestionResult
+    objects rather than round-tripping through a written-out .xlsx's cell
+    colors -- for callers (e.g. auto_compare_cli) that have both the scan
+    and the reference available in the same process and don't need to
+    write, close, and reopen a file just to compare them. Uses
+    export.flag_for so the flag classification can't drift from what
+    export.py would actually put in the cell."""
+    return {
+        (_normalize_section(q.section), q.question): OurAnswer(q.answer, flag_for(q), q.low_confidence)
+        for q in questions
+    }
+
+
 @dataclasses.dataclass(frozen=True)
 class ComparisonRow:
     section: str
@@ -250,10 +267,11 @@ _SEVERITY_FILL = {
 _MATCH_SYMBOL = {"match": "✔", "silent_miss": "✘", "flagged": "✘", "unmatched": "?"}
 
 
-def write_comparison_report(rows: List[ComparisonRow], output_path: str | Path) -> None:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Comparison"
+def add_comparison_sheet(wb: Workbook, rows: List[ComparisonRow], title: str = "Comparison") -> Worksheet:
+    """Add a color-coded comparison tab to an existing workbook (used both
+    standalone by write_comparison_report and alongside a sheet's own
+    answer tabs by auto_compare_cli) and return it."""
+    ws = wb.create_sheet(title=title)
     header = [
         "Section",
         "Question",
@@ -288,7 +306,13 @@ def write_comparison_report(rows: List[ComparisonRow], output_path: str | Path) 
     ws.column_dimensions["D"].width = 18
     ws.column_dimensions["F"].width = 18
     ws.freeze_panes = "A2"
+    return ws
 
+
+def write_comparison_report(rows: List[ComparisonRow], output_path: str | Path) -> None:
+    wb = Workbook()
+    del wb["Sheet"]  # remove the default blank sheet; add_comparison_sheet creates its own
+    add_comparison_sheet(wb, rows)
     wb.save(str(output_path))
 
 

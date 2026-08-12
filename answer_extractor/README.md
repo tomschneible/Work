@@ -211,6 +211,60 @@ export ANSWER_EXTRACTOR_TEMPLATE=~/Work/answer_extractor/templates/default_templ
 ~/Work/answer_extractor/scripts/mac_droplet.sh "$@"
 ```
 
+## macOS drag-and-drop app (with a reference check)
+
+A second droplet for when you already have an independently-scored
+reference spreadsheet for a student (e.g. exported from a test-prep
+vendor's own scoring system) and want to check this tool's read against
+it in the same step you scan. Drop the scanned bubble sheet *and* the
+reference spreadsheet onto it together; the output gets everything the
+plain droplet above produces, plus a color-coded "Comparison" tab.
+
+The reference spreadsheet must have a tab named `ScoreSheet` (the vendor
+export this was built against uses that name) containing repeated
+`Question | Correct Answer | Your Answer | (mark) | Category` column
+blocks, one section title (`English`/`Math`/`Reading`/`Science`) above
+each group of blocks -- see `answer_extractor/scoresheet_check.py`'s
+module docstring for the exact shape expected. If your vendor's tab is
+named something else, add `--reference-tab "Whatever It's Called"` to the
+script invocation in the Automator step below.
+
+This droplet is for the common case of **one scanned sheet plus one
+reference at a time** -- drop more than one of either and it either skips
+the comparison (writing the scan(s) anyway, with a clear note as to why)
+or fails outright with a GUI alert explaining the ambiguity, rather than
+guessing which files go together.
+
+**Setup** is the same one-time Python environment as the plain droplet
+above (skip it if you already did that), plus:
+
+```bash
+chmod +x ~/Work/answer_extractor/scripts/mac_droplet_compare.sh
+```
+
+**Build the droplet app** (same Automator steps as before, with a
+different script and name):
+
+1. Open **Automator** → **New Document** → **Application** → Choose.
+2. Drag in **"Run Shell Script"**, set **Shell** to `/bin/bash` and **Pass
+   input** to **"as arguments"**.
+3. Script text (adjust the path if you cloned elsewhere):
+
+   ```bash
+   ~/Work/answer_extractor/scripts/mac_droplet_compare.sh "$@"
+   ```
+4. **File → Save**, name it `Answer Extractor - Compare`, save as an
+   **Application**.
+
+**To use it:** drag the scanned bubble sheet and the reference
+spreadsheet onto the app's icon together (order doesn't matter -- the
+output is always named after whichever dropped file isn't the reference).
+It writes and opens the spreadsheet the same way the plain droplet does,
+and the success notification includes a one-line summary (e.g. "171
+questions compared: 171 match, 0 flagged mismatch, 0 silent miss") so you
+know at a glance whether anything needs a second look before you even
+open the file.
+
 ## How it works
 
 1. **Load** (`answer_extractor/loading.py`) — reads images directly, or
