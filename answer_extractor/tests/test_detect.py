@@ -9,6 +9,7 @@ from answer_extractor.detect import (
     _find_mark_floor,
     _infer_from_answer_pattern,
     _partial_mark_choice,
+    _reconsider_low_confidence_pattern,
     _residual_ratio,
     _value_channel,
     build_choice_templates,
@@ -402,6 +403,108 @@ def test_infer_from_answer_pattern_a_genuine_mismatch_still_blocks_inference():
     q12 = next(r for r in updated if r.question == 12)
     assert q12.answer == ""
     assert not q12.pattern_inferred
+
+
+# -- _reconsider_low_confidence_pattern: pure logic tests ---------------------
+#
+# Real case (Goldman): a sheet printed one choice letter structurally
+# bolder than the others across an entire section, occasionally letting it
+# narrowly outscore a genuine but lighter mark elsewhere in the same
+# question -- fill_ratio's own low_confidence flag already says "this read
+# is shaky"; a long, otherwise-unbroken guessing-pattern run bracketing it
+# is strong enough independent evidence to override it.
+
+
+def test_reconsider_low_confidence_pattern_overrides_a_disagreeing_low_confidence_answer():
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}  # index 1 of odd/even choices, keyed by parity
+    # Q1-6 and Q8-13 idx0, Q7 low-confidence idx1 (disagrees) in the middle --
+    # 6 on each side, comfortably over the total.
+    results = (
+        [_qr(q, _idx0(q)) for q in range(1, 7)]
+        + [_qr(7, idx1[7 % 2], low_confidence=True)]
+        + [_qr(q, _idx0(q)) for q in range(8, 14)]
+    )
+    updated = _reconsider_low_confidence_pattern(results, template)
+    q7 = next(r for r in updated if r.question == 7)
+    assert q7.answer == _idx0(7)
+    assert q7.pattern_inferred
+    assert q7.low_confidence
+
+
+def test_reconsider_low_confidence_pattern_never_touches_a_confident_answer():
+    # Identical shape to the case above, except Q7's disagreeing answer is
+    # NOT low_confidence -- a confidently-read answer is never
+    # second-guessed here, however surprising it looks next to the pattern.
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}
+    results = (
+        [_qr(q, _idx0(q)) for q in range(1, 7)]
+        + [_qr(7, idx1[7 % 2], low_confidence=False)]
+        + [_qr(q, _idx0(q)) for q in range(8, 14)]
+    )
+    updated = _reconsider_low_confidence_pattern(results, template)
+    q7 = next(r for r in updated if r.question == 7)
+    assert q7.answer == idx1[7 % 2]
+    assert not q7.pattern_inferred
+
+
+def test_reconsider_low_confidence_pattern_leaves_agreement_alone():
+    # Q7 is low_confidence, but it already agrees with the surrounding
+    # pattern -- nothing to override, and it shouldn't get flagged
+    # pattern_inferred just because it happened to be reconsidered.
+    template = _pattern_template()
+    results = (
+        [_qr(q, _idx0(q)) for q in range(1, 7)]
+        + [_qr(7, _idx0(7), low_confidence=True)]
+        + [_qr(q, _idx0(q)) for q in range(8, 14)]
+    )
+    updated = _reconsider_low_confidence_pattern(results, template)
+    q7 = next(r for r in updated if r.question == 7)
+    assert q7.answer == _idx0(7)
+    assert not q7.pattern_inferred
+
+
+def test_reconsider_low_confidence_pattern_requires_the_full_run_threshold():
+    # Same shape, but only 2 on each side -- nowhere near
+    # _PATTERN_MIN_TOTAL_RUN, so the disagreeing low-confidence answer is
+    # left exactly as read.
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}
+    results = (
+        [_qr(q, _idx0(q)) for q in (1, 2)]
+        + [_qr(3, idx1[3 % 2], low_confidence=True)]
+        + [_qr(q, _idx0(q)) for q in (4, 5)]
+    )
+    updated = _reconsider_low_confidence_pattern(results, template)
+    q3 = next(r for r in updated if r.question == 3)
+    assert q3.answer == idx1[3 % 2]
+    assert not q3.pattern_inferred
+
+
+def test_reconsider_low_confidence_pattern_does_not_use_its_own_answer_as_evidence():
+    # A low-confidence answer must not count as supporting evidence for
+    # *itself* -- its own slot is treated as blank when finding its
+    # neighbors and run length, otherwise a bubble already suspected of
+    # being wrong could validate its own reading. Q7's immediate right
+    # neighbor is Q8, which is *also* low-confidence and disagrees with
+    # the long idx0 run -- if Q7 (idx1, matching Q8) were allowed to count
+    # towards its own evidence, this could look self-consistent; it must
+    # not be inferred regardless, since Q8 disagrees with the actual run.
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}
+    results = (
+        [_qr(q, _idx0(q)) for q in range(1, 7)]
+        + [_qr(7, idx1[7 % 2], low_confidence=True)]
+        + [_qr(8, idx1[8 % 2], low_confidence=True)]
+        + [_qr(q, _idx0(q)) for q in range(9, 15)]
+    )
+    updated = _reconsider_low_confidence_pattern(results, template)
+    q7 = next(r for r in updated if r.question == 7)
+    # Q7's real (skip-self) neighbors are Q6 (idx0) and Q8 (idx1) -- they
+    # disagree, so Q7 is left untouched.
+    assert q7.answer == idx1[7 % 2]
+    assert not q7.pattern_inferred
 
 
 def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():

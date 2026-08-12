@@ -110,9 +110,11 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
             elif flag == "pattern_inferred":
                 cell.fill = PATTERN_INFERRED_FILL
                 cell.comment = Comment(
-                    "Not read directly off this bubble -- inferred from a long, unbroken run of "
-                    "identically-positioned answers surrounding it (e.g. a guessed/rushed stretch). "
-                    "Worth a manual check.",
+                    "Determined from a long, unbroken run of identically-positioned answers "
+                    "surrounding it (e.g. a guessed/rushed stretch), not a confident read of this "
+                    "bubble's own ink -- either because nothing was read here at all, or because "
+                    "what was read looked shaky enough that this context outweighed it. Worth a "
+                    "manual check.",
                     "answer_extractor",
                 )
             if q.low_confidence:

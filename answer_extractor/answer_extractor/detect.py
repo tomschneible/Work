@@ -317,31 +317,42 @@ def _partial_mark_choice(
 _PATTERN_MIN_TOTAL_RUN = 8
 
 
-def _nearest_non_blank(choice_indices: List["int | None"], start: int, step: int) -> "int | None":
+def _nearest_non_blank(
+    choice_indices: List["int | None"], start: int, step: int, skip_index: "int | None" = None
+) -> "int | None":
     """Walk from `start` in direction `step` (+1 or -1) until the first
     non-blank/MULTIPLE entry (skipping over any number of blank/MULTIPLE
     entries along the way), and return its choice index -- or None if the
-    list runs out first."""
+    list runs out first. `skip_index`, if given, is also treated as if
+    blank regardless of its actual value -- used to ask "what would this
+    one question's own neighbors be, ignoring its own (possibly
+    unreliable) answer?" without having to build a whole new list."""
     n = len(choice_indices)
     j = start
     while 0 <= j < n:
-        if choice_indices[j] is not None:
+        if j != skip_index and choice_indices[j] is not None:
             return choice_indices[j]
         j += step
     return None
 
 
-def _count_matching_run(choice_indices: List["int | None"], start: int, step: int, target: int) -> int:
+def _count_matching_run(
+    choice_indices: List["int | None"], start: int, step: int, target: int, skip_index: "int | None" = None
+) -> int:
     """Walk from `start` in direction `step`, counting consecutive
     *non-blank* entries equal to `target` -- blank/MULTIPLE entries along
     the way are skipped over, not counted and not treated as a break, so a
     scattered blank in the middle of an otherwise-unbroken run doesn't cut
     the count short. Stops at the first non-blank entry that isn't
-    `target`, or the end of the list."""
+    `target`, or the end of the list. `skip_index`, if given, is treated
+    as blank too -- see _nearest_non_blank."""
     n = len(choice_indices)
     count = 0
     j = start
     while 0 <= j < n:
+        if j == skip_index:
+            j += step
+            continue
         v = choice_indices[j]
         if v is None:
             j += step
@@ -420,6 +431,78 @@ def _infer_from_answer_pattern(
                     )
 
         i = run_end + 1
+
+    return updated
+
+
+def _reconsider_low_confidence_pattern(
+    section_results: List[QuestionResult], template: Template
+) -> List[QuestionResult]:
+    """Second-guess a `low_confidence` *single-answer* question (unlike
+    _infer_from_answer_pattern, which only ever touches blank/MULTIPLE)
+    when the same run-of-matching-choice-index context that function
+    trusts elsewhere disagrees with it -- e.g. a bubble sheet that prints
+    one choice letter structurally bolder than the others across an
+    entire section, occasionally letting that letter narrowly outscore a
+    genuine but lighter mark on a different choice.
+
+    This is deliberately much more conservative than it might look:
+    - Only ever reconsiders a question fill_ratio *itself already
+      flagged* as low_confidence -- a confidently-read answer, however
+      surprising, is never second-guessed here.
+    - The evidence is the same guessing-pattern signal already trusted
+      for blanks/MULTIPLE (_PATTERN_MIN_TOTAL_RUN, i.e. a run long enough
+      that landing on it by chance is vanishingly unlikely), not the
+      residual/reference-template signal -- a more permissive version of
+      *that* check was tried and reverted after it revived a confirmed
+      false positive on a real sheet (see _PARTIAL_MARK_MIN_GAP's
+      comment). This is a different, independently-justified signal, and
+      was checked against that same sheet's low-confidence answers before
+      shipping: it proposes no changes there at all.
+    - Every other low-confidence answer nearby (not just confident ones)
+      still counts as normal context when checking *this* question, but
+      the question actually being reconsidered is treated as if it were
+      blank for finding its own neighbors and run length -- otherwise a
+      bubble that's already suspected of being wrong would count as its
+      own supporting evidence.
+
+    Only ever overrides the answer itself (still marking it
+    `pattern_inferred` for visibility) -- if the pattern happens to agree
+    with what's already there, nothing changes."""
+    choice_indices: List["int | None"] = []
+    for r in section_results:
+        if r.answer in ("", "MULTIPLE"):
+            choice_indices.append(None)
+            continue
+        choices = template.choices_for(r.question)
+        choice_indices.append(choices.index(r.answer) if r.answer in choices else None)
+
+    n = len(section_results)
+    updated = list(section_results)
+
+    for i, r in enumerate(section_results):
+        if r.answer in ("", "MULTIPLE") or not r.low_confidence:
+            continue
+
+        left = _nearest_non_blank(choice_indices, i - 1, -1, skip_index=i)
+        right = _nearest_non_blank(choice_indices, i + 1, 1, skip_index=i)
+        if left is None or right is None or left != right:
+            continue
+        target = left
+
+        left_run = _count_matching_run(choice_indices, i - 1, -1, target, skip_index=i)
+        right_run = _count_matching_run(choice_indices, i + 1, 1, target, skip_index=i)
+        if left_run + right_run < _PATTERN_MIN_TOTAL_RUN:
+            continue
+
+        choices = template.choices_for(r.question)
+        predicted = choices[target]
+        if predicted == r.answer:
+            continue  # pattern agrees with the ink read -- nothing to change
+
+        updated[i] = dataclasses.replace(
+            r, answer=predicted, candidates=[predicted], low_confidence=True, pattern_inferred=True
+        )
 
     return updated
 
@@ -619,9 +702,13 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 )
             )
 
-        # Last resort, after every ink-based check above: a question still
-        # blank/MULTIPLE that sits in the middle of a long run of identical
-        # answer positions on both sides (see _infer_from_answer_pattern).
+        # Last resort, after every ink-based check above. Order matters:
+        # reconsidering a low-confidence single answer first (rare, and
+        # deliberately conservative -- see _reconsider_low_confidence_pattern)
+        # means a corrected answer is then available as real context for
+        # filling a still-blank/MULTIPLE neighbor right next to it, not just
+        # the reverse.
+        section_results = _reconsider_low_confidence_pattern(section_results, template)
         results.extend(_infer_from_answer_pattern(section_results, template))
 
     results = _apply_readability_checks(results, bubbles_by_qkey, value, template.bubble_radius)
