@@ -49,10 +49,10 @@ done
 FIRST_NAME="$(basename "$NAME_SOURCE")"
 FIRST_STEM="${FIRST_NAME%.*}"
 if [ "$#" -eq 1 ]; then
-  BASE_NAME="${FIRST_STEM}_answers"
+  BASE_NAME="${FIRST_STEM}_comparison"
 else
   OTHERS=$(( $# - 1 ))
-  BASE_NAME="${FIRST_STEM}_and_${OTHERS}_others_answers"
+  BASE_NAME="${FIRST_STEM}_and_${OTHERS}_others_comparison"
 fi
 
 OUTPUT="$HOME/Desktop/${BASE_NAME}.xlsx"
