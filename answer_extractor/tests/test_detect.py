@@ -306,6 +306,63 @@ def test_infer_from_answer_pattern_counts_the_total_across_both_sides():
     assert q4.pattern_inferred
 
 
+def test_infer_from_answer_pattern_fills_two_consecutive_blanks_in_a_long_run():
+    # Real case (Goldman): two blanks sitting back-to-back in the middle of
+    # a 20+ question guessing run. An earlier version of this only ever
+    # checked a blank's *immediate* neighbor -- for two adjacent blanks,
+    # each one's immediate neighbor on one side is the *other* blank, not
+    # a real answer, so neither ever got matched even though the run
+    # obviously continues straight through both. Q5 and Q6 blank here,
+    # comfortably bracketed by a long run on both sides.
+    template = _pattern_template()
+    results = (
+        [_qr(q, _idx0(q)) for q in (1, 2, 3, 4)]
+        + [_qr(5, ""), _qr(6, "")]
+        + [_qr(q, _idx0(q)) for q in (7, 8, 9, 10)]
+    )
+    updated = _infer_from_answer_pattern(results, template)
+    q5 = next(r for r in updated if r.question == 5)
+    q6 = next(r for r in updated if r.question == 6)
+    assert q5.answer == _idx0(5)
+    assert q5.pattern_inferred
+    assert q5.low_confidence
+    assert q6.answer == _idx0(6)
+    assert q6.pattern_inferred
+
+
+def test_infer_from_answer_pattern_leaves_a_short_consecutive_blank_run_blank():
+    # Same shape as the short-single-blank case, but with two consecutive
+    # blanks -- still nowhere near _PATTERN_MIN_TOTAL_RUN, so neither
+    # should be inferred just because the multi-blank path now exists.
+    template = _pattern_template()
+    results = [_qr(1, _idx0(1)), _qr(2, ""), _qr(3, ""), _qr(4, _idx0(4))]
+    updated = _infer_from_answer_pattern(results, template)
+    q2 = next(r for r in updated if r.question == 2)
+    q3 = next(r for r in updated if r.question == 3)
+    assert q2.answer == ""
+    assert not q2.pattern_inferred
+    assert q3.answer == ""
+    assert not q3.pattern_inferred
+
+
+def test_infer_from_answer_pattern_leaves_a_multiple_run_between_mismatched_sides_blank():
+    # Three consecutive MULTIPLE results bracketed by long runs that don't
+    # agree with each other -- not a real pattern, both sides of the whole
+    # run must still agree, same as the single-gap case.
+    template = _pattern_template()
+    idx1 = {1: "G", 0: "B"}  # index 1 of odd/even choices, keyed by parity
+    results = (
+        [_qr(q, _idx0(q)) for q in (1, 2, 3, 4)]
+        + [_qr(5, "MULTIPLE"), _qr(6, "MULTIPLE"), _qr(7, "MULTIPLE")]
+        + [_qr(q, idx1[q % 2]) for q in (8, 9, 10, 11)]
+    )
+    updated = _infer_from_answer_pattern(results, template)
+    for q in (5, 6, 7):
+        r = next(r for r in updated if r.question == q)
+        assert r.answer == "MULTIPLE"
+        assert not r.pattern_inferred
+
+
 def test_build_choice_templates_and_residual_ratio_isolate_extra_ink():
     # A 21x21 all-white image with a 5x5 dark square baked into every "A"
     # occurrence except one, which additionally has a second dark square

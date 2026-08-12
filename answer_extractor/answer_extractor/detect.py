@@ -326,7 +326,18 @@ def _infer_from_answer_pattern(
     already blank or MULTIPLE after every ink-based check above are
     touched; a question with any single directly-detected answer, however
     low-confidence, is left exactly as-is -- this never overrides real
-    pixel evidence, only fills a genuine gap using its context."""
+    pixel evidence, only fills a genuine gap using its context.
+
+    Operates on the whole contiguous stretch of blank/MULTIPLE questions
+    at once, not just a single one at a time -- a real scan had two
+    guessed questions blank back-to-back in the middle of an otherwise
+    unbroken run, and checking only a blank's *immediate* neighbor (as an
+    earlier version of this did) means each one's immediate neighbor on
+    one side is the *other* blank, not a real answer, so neither ever gets
+    matched even though the surrounding run obviously continues straight
+    through both. Looking at what's just outside the *whole* run instead
+    (however many blanks long) fixes that without changing anything about
+    a single isolated blank, which is just the n=1 case of the same logic."""
     choice_indices: List["int | None"] = []
     for r in section_results:
         if r.answer in ("", "MULTIPLE"):
@@ -337,33 +348,45 @@ def _infer_from_answer_pattern(
 
     n = len(section_results)
     updated = list(section_results)
-    for i, r in enumerate(section_results):
-        if r.answer not in ("", "MULTIPLE"):
-            continue
-        left = choice_indices[i - 1] if i - 1 >= 0 else None
-        right = choice_indices[i + 1] if i + 1 < n else None
-        if left is None or right is None or left != right:
-            continue
-        target = left
 
-        left_run = 0
-        j = i - 1
-        while j >= 0 and choice_indices[j] == target:
-            left_run += 1
-            j -= 1
-        right_run = 0
-        j = i + 1
-        while j < n and choice_indices[j] == target:
-            right_run += 1
-            j += 1
-        if left_run + right_run < _PATTERN_MIN_TOTAL_RUN:
+    i = 0
+    while i < n:
+        if section_results[i].answer not in ("", "MULTIPLE"):
+            i += 1
             continue
 
-        choices = template.choices_for(r.question)
-        inferred = choices[target]
-        updated[i] = dataclasses.replace(
-            r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
-        )
+        run_start = i
+        run_end = i
+        while run_end + 1 < n and section_results[run_end + 1].answer in ("", "MULTIPLE"):
+            run_end += 1
+
+        left = choice_indices[run_start - 1] if run_start - 1 >= 0 else None
+        right = choice_indices[run_end + 1] if run_end + 1 < n else None
+        if left is not None and right is not None and left == right:
+            target = left
+
+            left_run = 0
+            j = run_start - 1
+            while j >= 0 and choice_indices[j] == target:
+                left_run += 1
+                j -= 1
+            right_run = 0
+            j = run_end + 1
+            while j < n and choice_indices[j] == target:
+                right_run += 1
+                j += 1
+
+            if left_run + right_run >= _PATTERN_MIN_TOTAL_RUN:
+                for k in range(run_start, run_end + 1):
+                    r = section_results[k]
+                    choices = template.choices_for(r.question)
+                    inferred = choices[target]
+                    updated[k] = dataclasses.replace(
+                        r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
+                    )
+
+        i = run_end + 1
+
     return updated
 
 
