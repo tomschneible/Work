@@ -131,7 +131,9 @@ def _find_mark_floor(dark_fractions: List[float]) -> "float | None":
     dark_fraction distribution (for every question fill_ratio's ordinary
     checks already decided has one answer), restricted to a plausible
     range so the search can't land inside the cluster of genuine marks
-    themselves or the cluster of near-zero blanks.
+    themselves or the cluster of near-zero blanks, AND requiring the
+    resulting "genuine" side to be at least as large as the "suspect"
+    side (see below).
 
     This is deliberately sheet-relative rather than a fixed constant: a
     real scan had one sheet's confirmed-genuine (if faint) mark measure
@@ -141,12 +143,36 @@ def _find_mark_floor(dark_fractions: List[float]) -> "float | None":
     artifacts, which is what a per-sheet gap search finds safely. Returns
     None (meaning: don't second-guess anything) when there isn't a
     decisive-enough gap to trust -- see _MARK_FLOOR_MIN_GAP.
+
+    The majority-side requirement guards a real failure found against a
+    real scan whose ink was heavily and uniformly toned/smudged across
+    the *entire* sheet (not a faded minority block): the widest raw gap
+    in its dark_fraction distribution fell between its single highest
+    value and its second-highest, isolating exactly one "genuine"
+    question against 204 "suspect" ones -- comfortably over
+    _MARK_FLOOR_MIN_GAP purely because that lone top value happened to
+    sit apart from a long, continuous tail, not because it marked any
+    real two-cluster split. Every one of those 204 was actually a
+    correct, confidently-read answer (confirmed against the source
+    scan), silently wiped to blank. This function's premise -- a
+    genuinely faded/smudged region is the *exception* on a sheet, not
+    the norm -- rules that candidate out: the side of the gap holding
+    the sheet's normal, trustworthy reads should never be the smaller
+    one. Confirmed this still finds the intended floor on both the
+    original 50/50 calibration split and a real 14-genuine/6-faded block
+    (see tests).
     """
     ordered = sorted(dark_fractions)
+    n = len(ordered)
     best_gap = 0.0
     best_threshold = None
-    for lower, upper in zip(ordered, ordered[1:]):
+    for i in range(n - 1):
+        lower, upper = ordered[i], ordered[i + 1]
         if not (0.1 <= lower <= 0.6 or 0.1 <= upper <= 0.6):
+            continue
+        below_count = i + 1
+        above_count = n - below_count
+        if above_count < below_count:
             continue
         gap = upper - lower
         if gap > best_gap:

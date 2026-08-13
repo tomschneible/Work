@@ -656,6 +656,24 @@ def test_find_mark_floor_none_when_the_sheet_has_no_such_problem():
     assert _find_mark_floor(values) is None
 
 
+def test_find_mark_floor_ignores_a_gap_that_would_isolate_only_a_tiny_minority():
+    # Regression coverage for a real scan whose ink was heavily and
+    # uniformly toned across the *entire* sheet (not a faded minority
+    # block): a long, continuous spread of 204 genuinely correct answers
+    # (confirmed against the source scan) plus one that happened to read
+    # darker than the rest. The widest raw gap in that distribution fell
+    # between the single highest value and its neighbor -- comfortably
+    # over _MARK_FLOOR_MIN_GAP purely because the top value sits apart
+    # from a long tail, not because of any real two-cluster split. Trusting
+    # it wiped all 204 correct answers to blank. A genuinely faded/smudged
+    # region is supposed to be the *exception* on a sheet, not the norm, so
+    # a candidate gap whose "genuine" side would be the smaller side must
+    # never be trusted.
+    continuous_tail = [0.04 + 0.002 * i for i in range(204)]  # spread 0.04-0.446, no real gap
+    lone_outlier = [0.6]
+    assert _find_mark_floor(continuous_tail + lone_outlier) is None
+
+
 def _fade_bubble(image: np.ndarray, x: int, y: int, radius: int, light_value: int = 170) -> None:
     """Simulate a faded/washed-out print: cap how dark *any* ink already in
     this bubble's neighborhood (ring, printed letter, whatever) is allowed
