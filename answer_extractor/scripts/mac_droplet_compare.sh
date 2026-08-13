@@ -7,20 +7,25 @@
 #
 # Takes the dropped file/folder paths as arguments and runs them through
 # answer_extractor.auto_compare_cli: scanned bubble sheets and score-report
-# PDFs are extracted as usual, and whichever dropped spreadsheet has a
-# "ScoreSheet" tab (an independently-scored reference, e.g. from a
-# test-prep vendor) is compared against the scanned answers, adding a
-# color-coded "Comparison" tab to the same output workbook. Writes the
-# spreadsheet to the Desktop, named after whatever scan was dropped (same
-# convention as mac_droplet.sh), and opens it, with GUI error/success
-# feedback since an Automator app has no visible terminal to print to.
+# PDFs are extracted as usual (each bubble sheet's format auto-detected
+# individually -- set ANSWER_EXTRACTOR_TEMPLATE to force one fixed template
+# instead), and whichever dropped spreadsheet has a "ScoreSheet" tab (an
+# independently-scored reference, e.g. from a test-prep vendor) is compared
+# against the scanned answers, adding a color-coded "Comparison" tab to the
+# same output workbook. Writes the spreadsheet to the Desktop, named after
+# whatever scan was dropped (same convention as mac_droplet.sh), and opens
+# it, with GUI error/success feedback since an Automator app has no visible
+# terminal to print to.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"  # `python -m answer_extractor.auto_compare_cli` needs the repo root on sys.path
 VENV_PYTHON="$REPO_ROOT/.venv/bin/python"
-TEMPLATE="${ANSWER_EXTRACTOR_TEMPLATE:-$REPO_ROOT/templates/act_answer_sheet.yaml}"
+TEMPLATE_ARGS=()
+if [ -n "${ANSWER_EXTRACTOR_TEMPLATE:-}" ]; then
+  TEMPLATE_ARGS=(--template "$ANSWER_EXTRACTOR_TEMPLATE")
+fi
 
 notify() {
   osascript -e "display notification \"$1\" with title \"Answer Extractor\"" >/dev/null 2>&1 || true
@@ -71,7 +76,10 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 set +e
-RUN_OUTPUT="$("$VENV_PYTHON" -m answer_extractor.auto_compare_cli --input "$@" --template "$TEMPLATE" --output "$OUTPUT" 2>&1)"
+# The ${arr[@]+"${arr[@]}"} form (not plain "${arr[@]}") is required for an
+# empty array under `set -u` on macOS's stock bash 3.2, which otherwise
+# raises "unbound variable" expanding an empty array.
+RUN_OUTPUT="$("$VENV_PYTHON" -m answer_extractor.auto_compare_cli --input "$@" ${TEMPLATE_ARGS[@]+"${TEMPLATE_ARGS[@]}"} --output "$OUTPUT" 2>&1)"
 STATUS=$?
 set -e
 

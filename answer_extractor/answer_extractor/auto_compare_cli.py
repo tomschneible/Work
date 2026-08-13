@@ -38,9 +38,9 @@ import openpyxl
 from openpyxl import Workbook
 
 from .answer_keys import annotate_rows, load_answer_keys
-from .auto_cli import classify_inputs
+from .auto_cli import classify_inputs, scan_bubble_sheets, template_breakdown
 from .export import add_bubble_sheet_answers_sheet
-from .pipeline import SheetResult, process_paths
+from .pipeline import SheetResult
 from .score_report_export import add_score_report_answers_sheet
 from .scoresheet_check import (
     add_comparison_sheet,
@@ -50,7 +50,6 @@ from .scoresheet_check import (
     parse_reference_scoresheet,
     summarize,
 )
-from .template import Template
 
 _XLSX_SUFFIXES = {".xlsx", ".xlsm"}
 
@@ -102,10 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--template",
-        default="templates/act_answer_sheet.yaml",
+        default=None,
         help=(
-            "Template YAML used for any bubble-sheet inputs found "
-            "(default: templates/act_answer_sheet.yaml; unused if no bubble sheets are present)"
+            "Template YAML to use for every bubble-sheet input found, skipping auto-detection "
+            "(by default, each sheet's template is auto-detected individually -- see "
+            "answer_extractor.template_detect; unused if no bubble sheets are present)"
         ),
     )
     parser.add_argument("--output", required=True, help="Path to write the combined .xlsx to")
@@ -197,12 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     bubble_results: List[SheetResult] = []
 
     if bubble_paths:
-        template = Template.from_yaml(args.template)
-        template.validate()
-        bubble_results = process_paths(bubble_paths, template)
+        bubble_results = scan_bubble_sheets(bubble_paths, args.template)
         if bubble_results:
             add_bubble_sheet_answers_sheet(wb, bubble_results)
-            summary_parts.append(f"{len(bubble_results)} bubble sheet(s)")
+            summary_parts.append(f"{len(bubble_results)} bubble sheet(s){template_breakdown(bubble_results)}")
 
     if score_rows:
         try:

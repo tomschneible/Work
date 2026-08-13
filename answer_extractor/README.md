@@ -201,10 +201,13 @@ same way Finder/Chrome handle duplicate downloads. Errors (e.g. missing
 setup, a page the pipeline couldn't read) show as a macOS alert dialog
 instead of silently failing, since a droplet app has no visible terminal.
 
-By default any bubble-sheet inputs are scored against
-`templates/act_answer_sheet.yaml` (score-report PDFs don't need a template
-at all). To point bubble-sheet scoring at a different template, add an env
-var line before the script call in the same Automator action:
+By default, each bubble-sheet input has its template (which sheet format it
+is) auto-detected individually -- see "Auto-detecting the template" below --
+so you can drop different sheet formats in the same batch and each one is
+scored correctly (score-report PDFs don't need a template at all). To force
+one fixed template for every bubble sheet instead -- e.g. to sidestep a
+sheet whose format doesn't auto-detect cleanly, or for a quick one-off test
+-- add an env var line before the script call in the same Automator action:
 
 ```bash
 export ANSWER_EXTRACTOR_TEMPLATE=~/Work/answer_extractor/templates/default_template.yaml
@@ -290,7 +293,9 @@ look before you even open the file.
    numbered question blocks — most sheets have just one), each with one or
    more question columns (start position + row spacing), plus bubble
    spacing/radius and the two choice sets. Bubble pixel coordinates are
-   derived from this, not hardcoded.
+   derived from this, not hardcoded. When the template isn't fixed in
+   advance (the droplet, `auto_cli`, `auto_compare_cli`), it's auto-detected
+   per sheet instead — see "Auto-detecting the template" below.
 4. **Locate bubbles** (`answer_extractor/grid_detect.py`) — a template's
    coordinates are calibrated against one reference render, and real-world
    inputs drift from that by more than you'd expect: even a "born-digital"
@@ -348,7 +353,41 @@ answer sheet (English/Math/Reading/Science, 4 sections). To build your own:
 `Template.validate()` (run automatically by the CLI) will catch structural
 mistakes: overlapping/duplicate question numbers, gaps in question
 numbering, duplicate section names, or bubble coordinates that fall outside
-the page.
+the page. Once your new template is added under `templates/` (and isn't
+named `default_template.yaml`, which is never a real, calibrated format),
+it's automatically picked up by auto-detection too -- see below.
+
+## Auto-detecting the template
+
+`answer_extractor.cli` still takes `--template` as a required, fixed
+argument -- for the droplet and `auto_cli`/`auto_compare_cli`, though,
+you don't have to know in advance which sheet format was dropped, or keep
+a batch to one format: each sheet's template is detected individually
+(`answer_extractor/template_detect.py`), so a batch can freely mix e.g.
+`act_answer_sheet.yaml` and `legacy_act_answer_sheet.yaml` sheets and each
+one is still scored correctly.
+
+Detection works by structure, not by reading any printed text on the
+sheet (a test code, a form name, ...) -- that path was tried for a related
+feature and found unreliable across real sheets (some printed/OCR-able,
+one handwritten, one entirely absent). Instead, every template under
+`templates/` (except the generic `default_template.yaml` starting point)
+is tried against the sheet using the same glyph-contour detection that
+locates bubbles in the first place (see "Locate bubbles" above): if a
+template's expected row/column layout is actually found, printed, at the
+position that template predicts, for *every* section, it's a match. A
+wrong template's sections essentially never all agree by coincidence, so
+this is a reliable, ink-independent fingerprint of which physical sheet
+it is.
+
+If a sheet matches no template, or matches more than one, it's **not**
+guessed at -- it's left out of the output and reported as a warning
+instead (in the CLI's stderr output, and in the droplet's failure alert if
+every input in the batch is ambiguous), the same "flag it for a human
+rather than risk a confident wrong answer" rule this project applies to
+individual bubbles. Pass `--template` (or set `ANSWER_EXTRACTOR_TEMPLATE`
+for the droplet) to force one fixed template instead when a sheet's format
+doesn't auto-detect cleanly.
 
 ## Tuning detection sensitivity
 
