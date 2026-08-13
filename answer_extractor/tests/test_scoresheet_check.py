@@ -16,9 +16,13 @@ from answer_extractor.scoresheet_check import (
 
 def _write_reference_scoresheet(path: Path) -> None:
     """A miniature version of the real vendor layout: two sections
-    (English, Math), each split across two side-by-side column-groups, one
-    title row governing both groups to its right -- same shape as the real
-    file, just far fewer questions."""
+    (English, Math), each with its own single "Correct Answer"/"Your
+    Answer" column-group -- same title-then-header shape as the real file,
+    just one block per section instead of the several side-by-side blocks
+    a section with more questions needs (see
+    test_parse_reference_scoresheet_assigns_every_block_under_one_title_to_the_same_section
+    for that case, confirmed against a real reference file whose English
+    and Math sections are each split across two blocks)."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "ScoreSheet"
@@ -79,6 +83,53 @@ def test_parse_reference_scoresheet_missing_tab_raises(tmp_path):
 
     with pytest.raises(ValueError, match="No 'Nope'"):
         parse_reference_scoresheet(path, sheet_name="Nope")
+
+
+def _write_multi_block_reference_scoresheet(path: Path) -> None:
+    """A section with more questions than fit in one block gets split
+    across two side-by-side "Correct Answer"/"Your Answer" column-groups,
+    both governed by the single title cell to their left -- confirmed
+    against a real reference file (English 1-75 and Math 1-60, each split
+    into two ~half-sized blocks this way) that this tool's own comparison
+    read a perfect 215/215 against once the legacy 6-column bubble-sheet
+    template existed to scan the matching answer sheet with. Mirrors that
+    shape at a miniature scale: one "English" title governing two blocks,
+    the second continuing the question numbering where the first left off."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ScoreSheet"
+
+    ws["A1"] = "English"
+    ws["B2"], ws["C2"] = "Correct Answer", "Your Answer"  # first block
+    ws["F2"], ws["G2"] = "Correct Answer", "Your Answer"  # second block, same title
+
+    first_block = [(1, "A", "A"), (2, "B", "C")]
+    for i, (q, correct, yours) in enumerate(first_block, start=3):
+        ws.cell(row=i, column=1, value=q)
+        ws.cell(row=i, column=2, value=correct)
+        ws.cell(row=i, column=3, value=yours)
+
+    second_block = [(3, "F", "F"), (4, "G", "G")]
+    for i, (q, correct, yours) in enumerate(second_block, start=3):
+        ws.cell(row=i, column=5, value=q)
+        ws.cell(row=i, column=6, value=correct)
+        ws.cell(row=i, column=7, value=yours)
+
+    wb.save(str(path))
+
+
+def test_parse_reference_scoresheet_assigns_every_block_under_one_title_to_the_same_section(tmp_path):
+    path = tmp_path / "reference.xlsx"
+    _write_multi_block_reference_scoresheet(path)
+
+    result = parse_reference_scoresheet(path)
+
+    assert result == {
+        ("english", 1): "A",
+        ("english", 2): "C",
+        ("english", 3): "F",
+        ("english", 4): "G",
+    }
 
 
 def _write_our_output(path: Path) -> None:
