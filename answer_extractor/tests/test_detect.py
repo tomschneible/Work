@@ -446,7 +446,7 @@ def test_infer_from_answer_pattern_never_infers_a_last_question_with_no_real_run
     # run to even measure, regardless of how low the threshold might be.
     template = _pattern_template()
     results = [
-        _qr(q, template.choices_for(q)[(q - 1) % 4]) for q in range(1, 18)
+        _qr(q, template.choices_for("Answers", q)[(q - 1) % 4]) for q in range(1, 18)
     ] + [_qr(18, "")]
     updated = _infer_from_answer_pattern(results, template)
     q18 = next(r for r in updated if r.question == 18)

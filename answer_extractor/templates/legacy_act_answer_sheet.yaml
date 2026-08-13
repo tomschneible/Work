@@ -1,0 +1,84 @@
+# Calibrated against a "legacy" ACT answer sheet ("PAGE 2" / bubble grid
+# page), an older test format than templates/act_answer_sheet.yaml's:
+# English 75Q/Math 60Q/Reading 40Q/Science 40Q (215 total), each laid out
+# in SIX columns per section rather than five -- and critically, the Math
+# section offers **5** answer choices per question (A-E / F-G-H-J-K), not
+# 4, unlike every other section on the same physical sheet. See
+# template.py's module docstring for the per-section `choices` override
+# this relies on.
+#
+# Coordinates were measured directly from the blank template PDF rendered
+# at 200 DPI (1700x2200 px) by detecting each bubble glyph's bounding box
+# and clustering by row/column, not eyeballed -- see the real filled
+# sheets this was validated against (Buschmann, Silverman) for what "a
+# real scan of this form" actually looks like.
+#
+# Column x-positions are identical across all four sections (same six
+# physical columns down the page); only the row count, first/last
+# question, and (for Math) choice count differ per section.
+#
+# IMPORTANT: like act_answer_sheet.yaml, ODD-numbered questions use
+# A/B/C/D(/E) and EVEN-numbered questions use F/G/H/J(/K) -- the standard
+# ACT convention. Swap the `choices` blocks below if your actual answer
+# key convention differs.
+
+page:
+  width: 1700
+  height: 2200
+
+sections:
+  - name: English
+    columns:
+      - {first_question: 1, last_question: 13, x_start: 290, y_start: 548, row_height: 23}
+      - {first_question: 14, last_question: 26, x_start: 504.5, y_start: 548, row_height: 23}
+      - {first_question: 27, last_question: 39, x_start: 719.5, y_start: 548, row_height: 23}
+      - {first_question: 40, last_question: 52, x_start: 934, y_start: 548, row_height: 23}
+      - {first_question: 53, last_question: 65, x_start: 1148.5, y_start: 548, row_height: 23}
+      - {first_question: 66, last_question: 75, x_start: 1363, y_start: 548, row_height: 23}
+  - name: Mathematics
+    # This section alone offers 5 choices per question (A-E odd / F-K
+    # even), not the sheet-wide default of 4 -- see the module-level
+    # comment above.
+    choices:
+      odd: [A, B, C, D, E]
+      even: [F, G, H, J, K]
+    columns:
+      - {first_question: 1, last_question: 10, x_start: 290, y_start: 916, row_height: 23}
+      - {first_question: 11, last_question: 20, x_start: 504.5, y_start: 916, row_height: 23}
+      - {first_question: 21, last_question: 30, x_start: 719.5, y_start: 916, row_height: 23}
+      - {first_question: 31, last_question: 40, x_start: 934, y_start: 916, row_height: 23}
+      - {first_question: 41, last_question: 50, x_start: 1148.5, y_start: 916, row_height: 23}
+      - {first_question: 51, last_question: 60, x_start: 1363, y_start: 916, row_height: 23}
+  - name: Reading
+    columns:
+      - {first_question: 1, last_question: 7, x_start: 290, y_start: 1215, row_height: 23}
+      - {first_question: 8, last_question: 14, x_start: 504.5, y_start: 1215, row_height: 23}
+      - {first_question: 15, last_question: 21, x_start: 719.5, y_start: 1215, row_height: 23}
+      - {first_question: 22, last_question: 28, x_start: 934, y_start: 1215, row_height: 23}
+      - {first_question: 29, last_question: 35, x_start: 1148.5, y_start: 1215, row_height: 23}
+      - {first_question: 36, last_question: 40, x_start: 1363, y_start: 1215, row_height: 23}
+  - name: Science
+    columns:
+      - {first_question: 1, last_question: 7, x_start: 290, y_start: 1445, row_height: 23}
+      - {first_question: 8, last_question: 14, x_start: 504.5, y_start: 1445, row_height: 23}
+      - {first_question: 15, last_question: 21, x_start: 719.5, y_start: 1445, row_height: 23}
+      - {first_question: 22, last_question: 28, x_start: 934, y_start: 1445, row_height: 23}
+      - {first_question: 29, last_question: 35, x_start: 1148.5, y_start: 1445, row_height: 23}
+      - {first_question: 36, last_question: 40, x_start: 1363, y_start: 1445, row_height: 23}
+
+bubble_spacing_x: 30.67
+bubble_radius: 11
+
+choices:
+  odd: [A, B, C, D]
+  even: [F, G, H, J]
+
+thresholds:
+  # Starting from the same values act_answer_sheet.yaml settled on --
+  # this sheet's real fill_ratio/relative_margin behavior hasn't been
+  # separately stress-tested yet the way that template's were (see its
+  # own comments for that history), so these are a reasonable starting
+  # point pending validation against more real scans of this form, not a
+  # from-scratch calibration for this template specifically.
+  fill_ratio_min: 0.225
+  relative_margin: 0.13

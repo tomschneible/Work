@@ -11,6 +11,13 @@ A template is a YAML file (see templates/*.yaml) with:
     width, height          - pixel size the sheet is warped to before sampling
   sections:                 - one or more independently-numbered question blocks
     - name: <str>            - shown in spreadsheet column headers, e.g. "English"
+      choices:                - OPTIONAL per-section override of the top-level
+                                 `choices` block below (same even/odd shape) --
+                                 e.g. a legacy ACT sheet's Math section uses 5
+                                 choices (A-E/F-K) while every other section on
+                                 the same physical sheet uses 4 (A-D/F-J). Falls
+                                 back to the template-level choices when omitted,
+                                 so single-choice-set sheets don't need this at all.
       columns:                - one or more question column-groups within this section
         - first_question, last_question   - question numbers, local to this section
           x_start              - x pixel coordinate of the first (leftmost) bubble
@@ -35,7 +42,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -66,6 +73,11 @@ class ColumnSpec:
 class Section:
     name: str
     columns: List[ColumnSpec]
+    # Per-section override of the template's even/odd choice letters, or
+    # None to fall back to the template-level default -- see the module
+    # docstring's `choices` entry under `sections`.
+    even_choices: Optional[List[str]] = None
+    odd_choices: Optional[List[str]] = None
 
     @property
     def num_questions(self) -> int:
@@ -89,8 +101,17 @@ class Template:
     odd_choices: List[str]
     thresholds: Thresholds
 
-    def choices_for(self, question: int) -> List[str]:
-        return self.even_choices if question % 2 == 0 else self.odd_choices
+    def _section(self, section_name: str) -> Section:
+        for section in self.sections:
+            if section.name == section_name:
+                return section
+        raise KeyError(f"No such section: {section_name!r}")
+
+    def choices_for(self, section_name: str, question: int) -> List[str]:
+        section = self._section(section_name)
+        even = section.even_choices if section.even_choices is not None else self.even_choices
+        odd = section.odd_choices if section.odd_choices is not None else self.odd_choices
+        return even if question % 2 == 0 else odd
 
     def bubbles(self) -> Dict[QuestionKey, List[Bubble]]:
         """Return {(section_name, question_number): [Bubble, ...]}."""
@@ -100,7 +121,7 @@ class Template:
                 for question in range(col.first_question, col.last_question + 1):
                     row_index = question - col.first_question
                     y = col.y_start + row_index * col.row_height
-                    choices = self.choices_for(question)
+                    choices = self.choices_for(section.name, question)
                     bubbles = [
                         Bubble(
                             section=section.name,
@@ -153,7 +174,10 @@ class Template:
             )
             for c in data["columns"]
         ]
-        return Section(name=data["name"], columns=columns)
+        choices = data.get("choices")
+        even_choices = list(choices["even"]) if choices and "even" in choices else None
+        odd_choices = list(choices["odd"]) if choices and "odd" in choices else None
+        return Section(name=data["name"], columns=columns, even_choices=even_choices, odd_choices=odd_choices)
 
     def validate(self) -> None:
         """Sanity-check the template and raise ValueError on obvious problems."""

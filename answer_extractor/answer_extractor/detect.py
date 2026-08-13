@@ -423,7 +423,7 @@ def _infer_from_answer_pattern(
         if r.answer in ("", "MULTIPLE"):
             choice_indices.append(None)
             continue
-        choices = template.choices_for(r.question)
+        choices = template.choices_for(r.section, r.question)
         choice_indices.append(choices.index(r.answer) if r.answer in choices else None)
 
     n = len(section_results)
@@ -461,7 +461,7 @@ def _infer_from_answer_pattern(
         if target is not None and total_run >= threshold:
             for k in range(run_start, run_end + 1):
                 r = section_results[k]
-                choices = template.choices_for(r.question)
+                choices = template.choices_for(r.section, r.question)
                 inferred = choices[target]
                 updated[k] = dataclasses.replace(
                     r, answer=inferred, candidates=[inferred], low_confidence=True, pattern_inferred=True
@@ -511,7 +511,7 @@ def _reconsider_low_confidence_pattern(
         if r.answer in ("", "MULTIPLE"):
             choice_indices.append(None)
             continue
-        choices = template.choices_for(r.question)
+        choices = template.choices_for(r.section, r.question)
         choice_indices.append(choices.index(r.answer) if r.answer in choices else None)
 
     n = len(section_results)
@@ -532,7 +532,7 @@ def _reconsider_low_confidence_pattern(
         if left_run + right_run < _PATTERN_MIN_TOTAL_RUN:
             continue
 
-        choices = template.choices_for(r.question)
+        choices = template.choices_for(r.section, r.question)
         predicted = choices[target]
         if predicted == r.answer:
             continue  # pattern agrees with the ink read -- nothing to change

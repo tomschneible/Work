@@ -25,8 +25,8 @@ def make_template(**overrides) -> Template:
 
 def test_choices_for_parity():
     template = make_template()
-    assert template.choices_for(1) == ["F", "G", "H", "J"]
-    assert template.choices_for(2) == ["A", "B", "C", "D"]
+    assert template.choices_for("Answers", 1) == ["F", "G", "H", "J"]
+    assert template.choices_for("Answers", 2) == ["A", "B", "C", "D"]
 
 
 def test_bubbles_geometry():
@@ -152,6 +152,46 @@ def test_multi_section_questions_restart_numbering():
     assert bubbles[("English", 1)][0].y != bubbles[("Math", 1)][0].y
 
 
+def test_section_choices_override_takes_precedence_over_template_default():
+    data = {
+        "page": {"width": 800, "height": 600},
+        "sections": [
+            {
+                "name": "English",
+                "columns": [
+                    {"first_question": 1, "last_question": 2, "x_start": 100, "y_start": 100, "row_height": 50},
+                ],
+            },
+            {
+                "name": "Mathematics",
+                "choices": {"odd": ["A", "B", "C", "D", "E"], "even": ["F", "G", "H", "J", "K"]},
+                "columns": [
+                    {"first_question": 1, "last_question": 2, "x_start": 100, "y_start": 300, "row_height": 50},
+                ],
+            },
+        ],
+        "bubble_spacing_x": 40,
+        "bubble_radius": 10,
+        "choices": {"odd": ["A", "B", "C", "D"], "even": ["F", "G", "H", "J"]},
+    }
+    template = Template.from_dict(data)
+    template.validate()
+
+    # Section without an override falls back to the template-level choices.
+    assert template.choices_for("English", 1) == ["A", "B", "C", "D"]
+    assert template.choices_for("English", 2) == ["F", "G", "H", "J"]
+
+    # Section with an override uses its own 5-choice set instead.
+    assert template.choices_for("Mathematics", 1) == ["A", "B", "C", "D", "E"]
+    assert template.choices_for("Mathematics", 2) == ["F", "G", "H", "J", "K"]
+
+    # The override also drives bubble geometry -- 5 bubbles, not 4.
+    bubbles = template.bubbles()
+    assert len(bubbles[("Mathematics", 1)]) == 5
+    assert [b.choice for b in bubbles[("Mathematics", 1)]] == ["A", "B", "C", "D", "E"]
+    assert len(bubbles[("English", 1)]) == 4
+
+
 def test_default_template_file_loads_and_validates():
     template = Template.from_yaml("templates/default_template.yaml")
     template.validate()
@@ -168,5 +208,25 @@ def test_act_answer_sheet_template_loads_and_validates():
     assert by_name["Reading"].num_questions == 36
     assert by_name["Science"].num_questions == 40
     # Real sheet convention: odd -> A/B/C/D, even -> F/G/H/J.
-    assert template.choices_for(1) == ["A", "B", "C", "D"]
-    assert template.choices_for(2) == ["F", "G", "H", "J"]
+    assert template.choices_for("English", 1) == ["A", "B", "C", "D"]
+    assert template.choices_for("English", 2) == ["F", "G", "H", "J"]
+
+
+def test_legacy_act_answer_sheet_template_loads_and_validates():
+    template = Template.from_yaml("templates/legacy_act_answer_sheet.yaml")
+    template.validate()
+    names = [s.name for s in template.sections]
+    assert names == ["English", "Mathematics", "Reading", "Science"]
+    by_name = {s.name: s for s in template.sections}
+    assert by_name["English"].num_questions == 75
+    assert by_name["Mathematics"].num_questions == 60
+    assert by_name["Reading"].num_questions == 40
+    assert by_name["Science"].num_questions == 40
+    # Every section but Mathematics uses the sheet-wide 4-choice convention.
+    assert template.choices_for("English", 1) == ["A", "B", "C", "D"]
+    assert template.choices_for("English", 2) == ["F", "G", "H", "J"]
+    assert template.choices_for("Reading", 1) == ["A", "B", "C", "D"]
+    assert template.choices_for("Science", 2) == ["F", "G", "H", "J"]
+    # Mathematics alone overrides to 5 choices per question.
+    assert template.choices_for("Mathematics", 1) == ["A", "B", "C", "D", "E"]
+    assert template.choices_for("Mathematics", 2) == ["F", "G", "H", "J", "K"]

@@ -57,10 +57,9 @@ _MAX_SIZE_RATIO = 3.2
 _MIN_HEIGHT_RATIO = 1.5
 _MAX_HEIGHT_RATIO = 2.6
 
-# Row clustering tolerance and column-group gap threshold, in units of
-# bubble_radius / bubble_spacing so they scale with the template.
+# Row clustering tolerance, in units of bubble_radius so it scales with
+# the template.
 _ROW_Y_TOLERANCE_RATIO = 0.75
-_COLUMN_GAP_RATIO = 3.5
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,13 +152,52 @@ def _split_columns(row_boxes: List[_Box], gap_threshold: float) -> List[List[_Bo
     return groups
 
 
+def _max_choices_in_section(template: Template, section: Section) -> int:
+    """The most choices any question in this section has. Almost always
+    the same for every question in a section (e.g. a legacy ACT sheet's
+    Math section uses 5 choices throughout, every other section on the
+    same sheet uses 4) -- computed as a max across both parities rather
+    than assumed constant so callers sizing a threshold/ROI around it
+    can't come up short even if a section ever did mix choice counts."""
+    return max(
+        len(template.choices_for(section.name, 1)),
+        len(template.choices_for(section.name, 2)),
+    )
+
+
+def _column_gap_threshold(template: Template, section: Section) -> float:
+    """How far apart (in x) two adjacent detected glyphs must be before
+    they're treated as belonging to different question-columns rather
+    than different choices of the same question -- derived from this
+    section's own actual column positions and choice count, not a fixed
+    multiple of bubble_spacing_x: a legacy ACT sheet's 5-choice Math
+    section packs one more bubble into the same physical column-to-column
+    spacing as every 4-choice section on the same page, shrinking the
+    real gap between columns enough that a threshold calibrated for 4
+    choices would merge two of its columns into one (confirmed against
+    the real sheet's own measurements: a fixed 3.5x ratio's threshold
+    exceeded that section's actual inter-column gap). Splits the
+    difference between the largest genuine *within*-column gap (one
+    bubble_spacing_x) and the smallest actual gap between this section's
+    own columns, so it adapts to however many choices this section
+    really has instead of assuming 4."""
+    n_choices = _max_choices_in_section(template, section)
+    column_width = (n_choices - 1) * template.bubble_spacing_x
+    x_starts = sorted({c.x_start for c in section.columns})
+    if len(x_starts) < 2:
+        return column_width  # only one column -- nothing adjacent to confuse it with
+    inter_column_gaps = [x_starts[i + 1] - x_starts[i] - column_width for i in range(len(x_starts) - 1)]
+    return (template.bubble_spacing_x + min(inter_column_gaps)) / 2
+
+
 def _section_roi(section: Section, template: Template) -> Tuple[int, int, int, int]:
     row_height = section.columns[0].row_height
     x_starts = [c.x_start for c in section.columns]
     y_starts = [c.y_start for c in section.columns]
     max_rows = max(c.last_question - c.first_question + 1 for c in section.columns)
+    column_width = (_max_choices_in_section(template, section) - 1) * template.bubble_spacing_x
     x0 = min(x_starts) - template.bubble_spacing_x
-    x1 = max(x_starts) + 3.5 * template.bubble_spacing_x + template.bubble_radius * 2
+    x1 = max(x_starts) + column_width + 0.5 * template.bubble_spacing_x + template.bubble_radius * 2
     y0 = min(y_starts) - 2 * row_height
     y1 = max(y_starts) + max_rows * row_height + 2 * row_height
     return int(x0), int(y0), int(x1), int(y1)
@@ -278,7 +316,7 @@ def locate_section_bubbles(
     if len(rows) != expected_rows:
         return None
 
-    gap_threshold = template.bubble_spacing_x * _COLUMN_GAP_RATIO
+    gap_threshold = _column_gap_threshold(template, section)
 
     # nominal[question] = [(choice, x, y), ...]; detected[question] mirrors
     # it but with None standing in for a choice that couldn't be matched.
@@ -293,16 +331,26 @@ def locate_section_bubbles(
         # Match detected column-groups to expected columns, preserving
         # left-to-right order -- see _match_to_slots for why this can't be
         # a simple greedy nearest-match (a group missing from the middle
-        # would otherwise shift every later column's match by one).
+        # would otherwise shift every later column's match by one). Each
+        # column's nominal center is the mean of *that column's own*
+        # choice count, not a fixed half-of-4 offset -- a 5-choice column
+        # (e.g. a legacy sheet's Math section) centers one choice further
+        # right than a 4-choice one starting at the same x.
         groups_sorted = sorted(groups, key=lambda g: sum(b.cx for b in g) / len(g))
-        column_nominal_cxs = [col.x_start + 1.5 * template.bubble_spacing_x for col in active_columns]
+        column_nominal_cxs = [
+            col.x_start
+            + (len(template.choices_for(section.name, col.first_question + row_index)) - 1)
+            / 2
+            * template.bubble_spacing_x
+            for col in active_columns
+        ]
         matched_groups = _match_to_slots(
             groups_sorted, lambda g: sum(b.cx for b in g) / len(g), column_nominal_cxs
         )
 
         for col, group in zip(active_columns, matched_groups):
             question = col.first_question + row_index
-            choices = template.choices_for(question)
+            choices = template.choices_for(section.name, question)
             nominal_slots = [(choice, col.x_start + i * template.bubble_spacing_x) for i, choice in enumerate(choices)]
             nominal[question] = [(choice, x, col.y_start + row_index * col.row_height) for choice, x in nominal_slots]
 
