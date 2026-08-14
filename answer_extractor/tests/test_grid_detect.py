@@ -10,7 +10,13 @@ import cv2
 import numpy as np
 
 from answer_extractor.detect import evaluate_sheet
-from answer_extractor.grid_detect import _Box, _drop_sparse_rows, _match_to_slots, locate_section_bubbles
+from answer_extractor.grid_detect import (
+    _Box,
+    _drop_size_outlier_boxes,
+    _drop_sparse_rows,
+    _match_to_slots,
+    locate_section_bubbles,
+)
 from answer_extractor.template import Template
 from tests.synth import render_sheet
 
@@ -68,6 +74,49 @@ def test_match_to_slots_far_item_with_no_nearby_alternative_leaves_slot_empty():
     nominal = [1270.5, 1301.17, 1331.83, 1362.5]
     result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.3)
     assert result == [None, None, 1335.5, 1366.5]
+
+
+# -- _drop_size_outlier_boxes: pure logic tests -------------------------------
+#
+# Regression coverage for a real bug found against a real scanned sheet
+# whose print was bold enough that a question-number label's glyph (e.g.
+# "40") crossed _find_glyph_boxes's size filter and landed in the same
+# row/column-group as its 4 real bubble choices. _match_to_slots's
+# position-based matching (max_distance) normally rejects such a label as
+# too far from a real slot, but here the label happened to sit *closer* to
+# the nominal first-slot position than the real bubble did -- stealing
+# that slot's match and silently dropping the real, rightmost (marked)
+# bubble from the row entirely. Area -- a signal position-based matching
+# never looks at -- separates them reliably: real bubble glyphs measured
+# 15-38% larger by area than the stray label across every real case found.
+
+
+def _box(cx: float, w: int, h: int) -> _Box:
+    return _Box(x=round(cx - w / 2), y=0, w=w, h=h)
+
+
+def test_drop_size_outlier_boxes_drops_a_decisively_smaller_extra_box():
+    # Real shape from the sheet that motivated this: a "40" label (w=24,
+    # h=17) mixed in with 4 real bubbles (w=26-29, h=19-21).
+    label = _box(925, 24, 17)
+    real = [_box(955, 28, 20), _box(986, 27, 20), _box(1017, 27, 20), _box(1050, 29, 21)]
+    result = _drop_size_outlier_boxes([label] + real, target_count=4)
+    assert result == real
+
+
+def test_drop_size_outlier_boxes_leaves_boxes_alone_without_a_decisive_gap():
+    # Real counterexample found: a genuine 5-glyph row with no label
+    # present at all -- every box within ~4% of every other by area, far
+    # under _SIZE_OUTLIER_MIN_AREA_RATIO. Must not guess which one to drop.
+    boxes = [_box(678, 31, 20), _box(705, 27, 19), _box(736, 27, 20), _box(767, 27, 20), _box(797, 26, 20)]
+    result = _drop_size_outlier_boxes(boxes, target_count=4)
+    assert result == boxes
+
+
+def test_drop_size_outlier_boxes_is_a_noop_when_count_already_matches():
+    boxes = [_box(700, 27, 19), _box(730, 27, 19)]
+    assert _drop_size_outlier_boxes(boxes, target_count=2) == boxes
+    assert _drop_size_outlier_boxes(boxes, target_count=3) == boxes
 
 
 # -- _drop_sparse_rows: pure logic tests --------------------------------------

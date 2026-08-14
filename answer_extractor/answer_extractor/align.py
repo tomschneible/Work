@@ -5,8 +5,9 @@ Approach follows the standard OMR trick: find the largest 4-sided contour in
 the image (the sheet's outer edge against its background), order its
 corners, and warp that quadrilateral onto the template's reference page
 size. If no clean 4-sided contour is found (e.g. the scan is already
-cropped tight to the sheet), the image is resized to the reference page
-size directly and a warning is surfaced to the caller.
+cropped tight to the sheet), the image is scaled to fit the reference page
+size *preserving its own aspect ratio* (see _resize_preserving_aspect) and
+a warning is surfaced to the caller.
 """
 from __future__ import annotations
 
@@ -61,10 +62,46 @@ def _find_sheet_corners(image: np.ndarray) -> np.ndarray | None:
     return None
 
 
+def _resize_preserving_aspect(image: np.ndarray, page_width: int, page_height: int) -> np.ndarray:
+    """Scale `image` by the *same* factor on both axes to fit within
+    (page_width, page_height), then letterbox with white padding to reach
+    that size exactly, keeping the content centered.
+
+    Not simply cv2.resize(image, (page_width, page_height)): that stretches
+    each axis independently to fill the target, which is only harmless
+    when the source's own aspect ratio already matches the template's
+    (true for a real scan/print of the same physical page size the
+    template was calibrated against, e.g. US Letter -- 1700x2200 at 200
+    DPI has the same 0.773 ratio as the paper itself). A source whose
+    aspect ratio drifts from that -- confirmed on a real scan: 0.753
+    instead of 0.773, a ~2.5% mismatch small enough to not be obviously
+    wrong by eye -- gets stretched unevenly, and unlike a uniform
+    shift/scale (which the per-section median-shift correction in
+    grid_detect already absorbs fine), that unevenness grows with
+    distance from the origin: content near the left edge lands close to
+    where the template expects it, content two-thirds of the way across
+    lands 20+px off -- enough to push individual bubbles outside
+    grid_detect's own per-bubble matching tolerance and silently misread
+    them. A uniform scale-then-pad has no such position-dependent
+    component: whatever residual offset the padding introduces is a
+    constant, which the existing shift-correction was already built to
+    handle.
+    """
+    h, w = image.shape[:2]
+    scale = min(page_width / w, page_height / h)
+    new_w, new_h = max(1, round(w * scale)), max(1, round(h * scale))
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    canvas = np.full((page_height, page_width, 3), 255, dtype=np.uint8)
+    x0 = (page_width - new_w) // 2
+    y0 = (page_height - new_h) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
+
+
 def align_to_template(image: np.ndarray, page_width: int, page_height: int) -> AlignmentResult:
     corners = _find_sheet_corners(image)
     if corners is None:
-        resized = cv2.resize(image, (page_width, page_height), interpolation=cv2.INTER_AREA)
+        resized = _resize_preserving_aspect(image, page_width, page_height)
         return AlignmentResult(image=resized, used_contour=False)
 
     rect = _order_corners(corners)

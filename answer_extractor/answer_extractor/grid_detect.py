@@ -190,6 +190,60 @@ def _column_gap_threshold(template: Template, section: Section) -> float:
     return (template.bubble_spacing_x + min(inter_column_gaps)) / 2
 
 
+# How much larger, by area, the smallest *kept* box must be than the
+# largest *dropped* box before _drop_size_outlier_boxes trusts an
+# area-based drop. Calibrated against every real stray-label row found
+# across eleven real sheets (six different physical forms): the label was
+# reliably 15-38% smaller in area than the real bubbles kept alongside it
+# in every one of them but one, a genuine 5-glyph row with no label
+# present at all -- every box within 4% of every other by area, correctly
+# left alone rather than guessed at. 1.10 sits comfortably between the two.
+_SIZE_OUTLIER_MIN_AREA_RATIO = 1.10
+
+
+def _drop_size_outlier_boxes(boxes: List[_Box], target_count: int) -> List[_Box]:
+    """If `boxes` has more than `target_count` items, drop the smallest
+    ones (by area) down to `target_count` -- but only when they're a
+    *decisively* smaller cluster than the rest, not just marginally
+    smaller by chance (see _SIZE_OUTLIER_MIN_AREA_RATIO).
+
+    Exists because a stray question-number label occasionally passes
+    _find_glyph_boxes's per-page size filter (deliberately loose, since it
+    has to work across an unknown scan/print without per-sheet tuning) and
+    lands in the same row/column-group as the real bubbles next to it.
+    Normally the downstream position-based matching (_match_to_slots's
+    max_distance cap) correctly rejects that label as too far from a real
+    bubble slot -- confirmed working on every sheet tested, including
+    several with far *more* stray-label rows than the one that motivated
+    this function. But on one real scan, the label happened to sit closer
+    to a nominal slot than the real bubble did, so position-based matching
+    picked it as the *cheaper* match -- quietly stealing that slot and
+    dropping the real, rightmost bubble in the row (the actual marked one,
+    in the case that surfaced this) from being sampled at all.
+
+    Area is a signal position-based matching doesn't use at all: a printed
+    question-number glyph is reliably smaller than the printed ring+letter
+    bubbles next to it, even though both pass the same per-page min/max
+    size filter -- and unlike position, nothing about where the label
+    happens to land changes that. Only acting on a decisive gap, rather
+    than always dropping the single smallest box regardless of margin,
+    matters just as much: a row that's short a genuine bubble for some
+    other reason shouldn't have a real bubble discarded on a coin-flip
+    area difference -- see this function's one real counterexample.
+    """
+    n_extra = len(boxes) - target_count
+    if n_extra <= 0:
+        return boxes
+    ordered = sorted(boxes, key=lambda b: b.w * b.h)
+    dropped, kept = ordered[:n_extra], ordered[n_extra:]
+    largest_dropped_area = dropped[-1].w * dropped[-1].h
+    smallest_kept_area = kept[0].w * kept[0].h
+    if largest_dropped_area <= 0 or smallest_kept_area / largest_dropped_area < _SIZE_OUTLIER_MIN_AREA_RATIO:
+        return boxes
+    dropped_ids = {id(b) for b in dropped}
+    return [b for b in boxes if id(b) not in dropped_ids]
+
+
 def _section_roi(section: Section, template: Template) -> Tuple[int, int, int, int]:
     row_height = section.columns[0].row_height
     x_starts = [c.x_start for c in section.columns]
@@ -354,6 +408,8 @@ def locate_section_bubbles(
             nominal_slots = [(choice, col.x_start + i * template.bubble_spacing_x) for i, choice in enumerate(choices)]
             nominal[question] = [(choice, x, col.y_start + row_index * col.row_height) for choice, x in nominal_slots]
 
+            if group:
+                group = _drop_size_outlier_boxes(group, len(choices))
             boxes_sorted = sorted(group, key=lambda b: b.cx) if group else []
             nominal_xs = [x for _, x in nominal_slots]
             # Cap how far a box can be from a slot and still count as that

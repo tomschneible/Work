@@ -319,6 +319,32 @@ def _partial_mark_choice(
     return None
 
 
+def _partial_mark_agrees_with_fill_ratio(partial_mark: str, fill_ratios: Dict[str, float]) -> bool:
+    """Whether `partial_mark` (a _partial_mark_choice pick) also leads
+    fill_ratio's own ranking for this question, after the same per-
+    question baseline subtraction decide_answer itself uses -- checked
+    before evaluate_sheet trusts the residual signal enough to override a
+    blank/MULTIPLE fill-ratio answer.
+
+    Residual and fill_ratio are independent signals (one pixel-level,
+    against this specific letter's own usual appearance across the
+    section; one area-level, against this question's other choices), and
+    on a real scan whose printed letters varied unusually in ink density
+    from row to row, the residual signal alone picked a choice fill_ratio
+    didn't even rank first among this question's *own* choices -- a real
+    sign something about that specific bubble's appearance is atypical
+    for reasons other than a mark, not corroborating evidence of one.
+    Requiring agreement doesn't touch the case both signals get right
+    together (the common case, including every real partial mark this
+    override was built to catch) or wrong together (irrecoverable either
+    way); it only suppresses the case where they actively disagree, which
+    is exactly when neither is trustworthy alone."""
+    adjusted = _baseline_adjust(fill_ratios)
+    if not adjusted:
+        return False
+    return partial_mark == max(adjusted, key=adjusted.get)
+
+
 # A guessing/rushing student marking the same *position* over and over --
 # real behavior, common when time runs out -- leaves a distinctive
 # signature: many consecutive questions (spanning both odd/even choice
@@ -751,7 +777,14 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     if choice in choice_templates
                 }
                 partial_mark = _partial_mark_choice(residuals)
-                if partial_mark is not None and partial_mark != answer:
+                # See _partial_mark_agrees_with_fill_ratio for why this
+                # cross-check matters, not just whether fill_ratio already
+                # agreed with `answer` (it didn't -- that's why we're here).
+                if (
+                    partial_mark is not None
+                    and partial_mark != answer
+                    and _partial_mark_agrees_with_fill_ratio(partial_mark, fill_ratios)
+                ):
                     answer, candidates, low_confidence = partial_mark, [partial_mark], True
 
             section_results.append(

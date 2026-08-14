@@ -8,6 +8,7 @@ from answer_extractor.detect import (
     _dark_fraction,
     _find_mark_floor,
     _infer_from_answer_pattern,
+    _partial_mark_agrees_with_fill_ratio,
     _partial_mark_choice,
     _reconsider_low_confidence_pattern,
     _residual_ratio,
@@ -173,6 +174,23 @@ def test_partial_mark_choice_none_when_top_two_are_not_isolated():
     # not enough of a gap to trust as a real, isolated mark.
     residuals = {"A": 0.145, "B": 0.066, "C": 0.13, "D": 0.18}
     assert _partial_mark_choice(residuals) is None
+
+
+def test_partial_mark_agrees_with_fill_ratio_when_it_leads_the_ranking():
+    fill_ratios = {"A": 0.8, "B": 0.6, "C": 0.6, "D": 0.65}  # baseline 0.6 -> A leads at 0.2
+    assert _partial_mark_agrees_with_fill_ratio("A", fill_ratios)
+
+
+def test_partial_mark_disagrees_with_fill_ratio_when_a_different_choice_leads():
+    # Regression case: a real scan's residual signal alone picked "A" for
+    # Science Q19, but A was genuinely unmarked (bold print, confirmed
+    # against the source scan) and fill_ratio's own (sub-threshold)
+    # ranking -- what's left once _partial_mark_choice already required
+    # score_bubbles to have given up -- put a *different* choice (D) on
+    # top. Trusting the residual pick anyway silently overrode a genuine
+    # (if faint) mark elsewhere in the row with the wrong letter.
+    fill_ratios = {"A": 0.628, "B": 0.589, "C": 0.589, "D": 0.652}  # baseline B/C -> D leads, not A
+    assert not _partial_mark_agrees_with_fill_ratio("A", fill_ratios)
 
 
 def test_partial_mark_choice_none_for_a_bolder_printed_letter_across_a_blank_stretch():
