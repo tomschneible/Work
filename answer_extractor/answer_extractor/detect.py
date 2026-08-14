@@ -101,6 +101,93 @@ def _dark_fraction(value: np.ndarray, x: int, y: int, radius: int, thresh: int =
     return float(np.mean(sampled < thresh))
 
 
+_SOLIDITY_ERODE_PX = 3  # structuring-element radius; see _solidity
+
+
+def _solidity(binary: np.ndarray, x: int, y: int, radius: int, erode_px: int = _SOLIDITY_ERODE_PX) -> float:
+    """Fraction of a bubble's binarized (dark) area that survives erosion
+    by `erode_px` pixels -- separates a genuine, complete fill from
+    everything else that can make score_bubbles's plain area-based
+    fill_ratio look substantial without one: a printed ring outline, a
+    bold choice letter, or a scribble/X-out/partial-erasure mark are all
+    made of strokes only a few px wide, so eroding by a few px collapses
+    nearly all of that area; a solid fill is uniformly thick throughout
+    and mostly survives the same erosion.
+
+    Found chasing a real scan (see _SOLID_FILL_MIN and its use in
+    evaluate_sheet) whose printed bubble style -- a heavy ring and bold
+    letter even when completely unmarked -- pushed every choice's raw
+    fill_ratio high enough that a genuine, unambiguous, fully solid mark
+    sometimes couldn't be told apart from that baseline by area alone. A
+    plain "largest connected component" version of this same idea was
+    tried first and discarded: the printed ring is one continuous loop
+    that typically touches whatever ink is inside it (the letter, a
+    scribble, a real mark alike), merging everything into a single
+    component regardless of its actual shape and defeating the whole
+    point. Erosion has no such blind spot -- it only cares about stroke
+    thickness, not connectivity."""
+    h, w = binary.shape
+    r = max(1, int(radius * 0.85))
+    x0, x1 = max(0, x - r), min(w, x + r + 1)
+    y0, y1 = max(0, y - r), min(h, y + r + 1)
+    if x0 >= x1 or y0 >= y1:
+        return 0.0
+    patch = binary[y0:y1, x0:x1]
+    mask = np.zeros_like(patch, dtype=np.uint8)
+    cv2.circle(mask, (x - x0, y - y0), r, 255, -1)
+    masked = cv2.bitwise_and(patch, mask)
+    total = cv2.countNonZero(masked)
+    if total == 0:
+        return 0.0
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * erode_px + 1, 2 * erode_px + 1))
+    eroded = cv2.erode(masked, kernel)
+    return float(cv2.countNonZero(eroded) / total)
+
+
+# Calibrated against twelve real scanned sheets (six different physical
+# forms). The highest solidity found among every question this project has
+# actually confirmed (by eye, against the source scan) should stay
+# blank/unmarked -- a genuinely ambiguous partial mark, scribble, or
+# cross-out, never a clean fill -- was 0.291 (a partial mark whose ink,
+# while fragmented, happened to survive erosion better than most: see this
+# constant's real counterexample in tests). The lowest solidity found
+# among confirmed genuine, fully solid marks on the one real sheet whose
+# baseline ink was high enough to need this override at all was 0.277 --
+# below that same ambiguous-mark ceiling, meaning this signal can't
+# safely tell every genuine mark on that sheet apart from every genuinely
+# ambiguous mark elsewhere; some of that sheet's fainter (but real) marks
+# are left flagged rather than guessed at, same as any other signal in
+# this module when the evidence runs out. 0.32 sits with real margin
+# above the confirmed ambiguous-mark ceiling.
+_SOLID_FILL_MIN = 0.32
+
+
+def _solid_fill_choice(
+    fill_ratios: Dict[str, float],
+    binary: np.ndarray,
+    bubbles: List[Tuple[str, int, int]],
+    radius: int,
+    min_solidity: float = _SOLID_FILL_MIN,
+) -> "str | None":
+    """If fill_ratio's own (baseline-adjusted) leading choice is a
+    genuinely solid fill -- not just the highest of a compressed, noisy
+    field -- return it; otherwise None. Only meant to be consulted when
+    score_bubbles's ordinary signal came back blank (see evaluate_sheet):
+    unlike _partial_mark_choice, this never needs to *rank* choices
+    against each other (fill_ratio's own adjusted ranking already did
+    that) -- it only asks whether the leader's own ink shape is
+    trustworthy enough to promote past the absolute floor that decided
+    blank in the first place."""
+    adjusted = _baseline_adjust(fill_ratios)
+    if not adjusted:
+        return None
+    top_choice = max(adjusted, key=adjusted.get)
+    x, y = next((x, y) for choice, x, y in bubbles if choice == top_choice)
+    if _solidity(binary, x, y, radius) >= min_solidity:
+        return top_choice
+    return None
+
+
 # Absolute floor for _dark_fraction, independent of any per-sheet
 # calibration: a question where *every* choice falls below this has
 # essentially no dark ink anywhere in the row -- not even the printed
@@ -764,6 +851,18 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 template.thresholds.fill_ratio_min,
                 template.thresholds.relative_margin,
             )
+            # Captured before the partial-mark override below can touch
+            # `answer` -- True only when fill_ratio's own signal already
+            # settled on one choice directly, as opposed to via that
+            # override (which only ever fires when this was still "" or
+            # "MULTIPLE" here). Used below to keep the solidity-based
+            # low_confidence clearing from ever reaching an answer the
+            # partial-mark override supplied, which must always stay
+            # flagged regardless of how solid its ink looks -- that
+            # signal's own accuracy was calibrated on the assumption every
+            # one of its answers gets a human glance (see
+            # _PARTIAL_MARK_MIN_GAP's comment).
+            direct_single_answer = answer not in ("", "MULTIPLE")
 
             # Blank/MULTIPLE: see if a partial mark (e.g. a checkmark) explains
             # it. Deliberately *not* extended to fill_ratio's own
@@ -786,6 +885,34 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     and _partial_mark_agrees_with_fill_ratio(partial_mark, fill_ratios)
                 ):
                     answer, candidates, low_confidence = partial_mark, [partial_mark], True
+
+            # A still-blank question's own leading choice, promoted only if
+            # its ink is a genuinely solid fill (see _solid_fill_choice) --
+            # catches a sheet whose baseline print is heavy enough that a
+            # real, unambiguous mark's area-based fill_ratio doesn't clear
+            # fill_ratio_min at all. Distinct from the partial-mark override
+            # above (which resolves a blank via how this bubble's ink
+            # compares to that *letter's own* usual appearance): this one
+            # never needed a blank-or-MULTIPLE precondition tied to a
+            # ranking signal -- fill_ratio's own adjusted ranking is what's
+            # being trusted here, just past a floor that was too strict for
+            # this sheet. Kept low_confidence despite resolving the answer,
+            # like the partial-mark override, since it's still worth a
+            # human glance.
+            if answer == "":
+                solid_choice = _solid_fill_choice(fill_ratios, binary, bubbles, template.bubble_radius)
+                if solid_choice is not None:
+                    answer, candidates, low_confidence = solid_choice, [solid_choice], True
+            elif direct_single_answer and low_confidence:
+                # Same signal, the other direction: a single answer
+                # fill_ratio already found confidently-ranked, just flagged
+                # low_confidence because its baseline-adjusted margin over
+                # this sheet's inflated floor was thin. A genuinely solid
+                # fill clears that worry independently of fill_ratio's own
+                # numbers.
+                x, y = next((bx, by) for choice, bx, by in bubbles if choice == answer)
+                if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
+                    low_confidence = False
 
             section_results.append(
                 QuestionResult(

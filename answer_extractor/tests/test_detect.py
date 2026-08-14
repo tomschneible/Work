@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -12,10 +13,14 @@ from answer_extractor.detect import (
     _partial_mark_choice,
     _reconsider_low_confidence_pattern,
     _residual_ratio,
+    _solid_fill_choice,
+    _solidity,
     _value_channel,
+    binarize,
     build_choice_templates,
     decide_answer,
     evaluate_sheet,
+    score_bubbles,
 )
 from answer_extractor.template import Template
 from tests.synth import fill_bubble, make_blank_sheet, render_sheet
@@ -654,6 +659,179 @@ def test_dark_fraction_ignores_gray_that_is_not_dark_enough():
     value = np.full((41, 41), 255, dtype=np.uint8)
     value[15:26, 15:26] = 110  # matches a real faded-print/smudge measurement, not real ink
     assert _dark_fraction(value, 20, 20, radius=18) == 0.0
+
+
+# -- _solidity / _solid_fill_choice: real-scan "heavy baseline print" fix --
+#
+# User-reported: a sheet whose printed bubbles are a thick ring + bold
+# letter even completely unmarked pushed every choice's raw fill_ratio
+# high enough (0.6-0.85 for a genuinely *unmarked* choice) that
+# score_bubbles's area-based signal, even after per-question baseline
+# subtraction, couldn't always tell a real, fully solid mark apart from
+# that shared baseline -- several confirmed-genuine marks read as blank
+# outright, and roughly 40% of the sheet's otherwise-correct answers were
+# flagged low_confidence. _dark_fraction and the residual/partial-mark
+# signal were tried first and rejected: both are *also* area/darkness
+# based and compressed the same way on this sheet. What's different about
+# a genuine mark isn't how much area or darkness it has -- printed ring
+# ink and letter glyphs already have plenty of both -- it's that a real
+# mark is *solid*, uniformly thick throughout, where a ring, a letter
+# stroke, or a scribble/X-out/partial-erasure mark are all just a few px
+# wide. Erosion is what actually separates those.
+
+
+def _binary_disk(size: int, cx: int, cy: int, r: int) -> np.ndarray:
+    patch = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(patch, (cx, cy), r, 255, -1)
+    return patch
+
+
+def _binary_ring(size: int, cx: int, cy: int, r: int, thickness: int) -> np.ndarray:
+    patch = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(patch, (cx, cy), r, 255, thickness)
+    return patch
+
+
+def test_solidity_is_high_for_a_genuinely_solid_fill():
+    # At real bubble-sample-radius scale (here 15px), eroding by
+    # _SOLIDITY_ERODE_PX still leaves the bulk of a genuinely solid disk
+    # intact -- nowhere near the ~0.0 a ring or scribble of the same
+    # overall area collapses to (see the two tests below).
+    binary = _binary_disk(41, 20, 20, 15)
+    assert _solidity(binary, 20, 20, radius=18) > 0.5
+
+
+def test_solidity_is_low_for_a_thin_printed_ring():
+    # Same overall dark *area* as a real bubble's printed outline, but as
+    # a thin annulus -- erosion should collapse nearly all of it.
+    binary = _binary_ring(41, 20, 20, 15, thickness=3)
+    assert _solidity(binary, 20, 20, radius=18) < 0.15
+
+
+def test_solidity_is_low_for_a_scattered_scribble():
+    # Several small, separated blobs (a real X-out/scribble's shape) --
+    # none individually thick enough to survive erosion, unlike one
+    # continuous solid fill of the same total area.
+    binary = np.zeros((41, 41), dtype=np.uint8)
+    for cx, cy in [(14, 14), (26, 14), (14, 26), (26, 26), (20, 20)]:
+        cv2.circle(binary, (cx, cy), 3, 255, -1)
+    assert _solidity(binary, 20, 20, radius=18) < 0.15
+
+
+def test_solidity_returns_zero_for_an_empty_bubble():
+    binary = np.zeros((41, 41), dtype=np.uint8)
+    assert _solidity(binary, 20, 20, radius=18) == 0.0
+
+
+def test_solid_fill_choice_returns_the_solid_leader():
+    binary = np.zeros((80, 80), dtype=np.uint8)
+    # F: a thin ring only (unmarked baseline). G: a genuine solid fill.
+    cv2.circle(binary, (20, 20), 15, 255, 3)
+    cv2.circle(binary, (60, 20), 15, 255, -1)
+    bubbles = [("F", 20, 20), ("G", 60, 20)]
+    fill_ratios = {"F": 0.20, "G": 0.35}  # G leads fill_ratio's own adjusted ranking
+    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) == "G"
+
+
+def test_solid_fill_choice_none_when_the_leader_is_not_solid():
+    # fill_ratio's own leader is a thin ring, not a real mark -- must not
+    # be promoted just because it's the highest of a weak field.
+    binary = np.zeros((80, 80), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 15, 255, 3)
+    cv2.circle(binary, (60, 20), 12, 255, 2)
+    bubbles = [("F", 20, 20), ("G", 60, 20)]
+    fill_ratios = {"F": 0.20, "G": 0.15}
+    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) is None
+
+
+def _thick_ring_template() -> Template:
+    data = {
+        "page": {"width": 900, "height": 700},
+        "sections": [
+            {
+                "name": "Answers",
+                "columns": [
+                    {"first_question": 1, "last_question": 3, "x_start": 150, "y_start": 100, "row_height": 100},
+                ],
+            }
+        ],
+        "bubble_spacing_x": 70,
+        "bubble_radius": 20,
+        "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+        "thresholds": {"fill_ratio_min": 0.225, "relative_margin": 0.13},
+    }
+    return Template.from_dict(data)
+
+
+def _draw_heavy_baseline(image: np.ndarray, template: Template) -> None:
+    """Redraw every bubble's printed ring much thicker than
+    make_blank_sheet's default -- simulating the real sheet whose bold
+    print style is what motivated this whole signal -- so that even a
+    completely unmarked choice's fill_ratio lands well above what this
+    template's thresholds normally treat as baseline noise."""
+    for bubbles in template.bubbles().values():
+        for b in bubbles:
+            cv2.circle(image, (b.x, b.y), template.bubble_radius, (0, 0, 0), 20)
+
+
+def test_evaluate_sheet_rescues_a_solid_mark_a_heavy_baseline_print_hides_from_fill_ratio():
+    template = _thick_ring_template()
+    image = make_blank_sheet(template, letters=True)
+    _draw_heavy_baseline(image, template)
+    marked = next(b for b in template.bubbles()[("Answers", 1)] if b.choice == "G")
+    fill_bubble(image, marked.x, marked.y, template.bubble_radius, coverage=1.0, darkness=10)
+
+    binary = binarize(image)
+    bubbles = [(b.choice, b.x, b.y) for b in template.bubbles()[("Answers", 1)]]
+    fr = score_bubbles(binary, bubbles, template.bubble_radius)
+    fr_answer, _, _ = decide_answer(fr, template.thresholds.fill_ratio_min, template.thresholds.relative_margin)
+    assert fr_answer == "", "fixture should reproduce the real bug: fill_ratio alone reads this row blank"
+
+    results, _ = evaluate_sheet(image, template)
+    q1 = next(r for r in results if r.question == 1)
+    assert q1.answer == "G"
+    assert q1.low_confidence  # always flagged, like the partial-mark override
+
+
+def test_evaluate_sheet_does_not_promote_a_checkmark_even_with_a_heavy_baseline():
+    # Same heavy-baseline print, but the "mark" is a thin checkmark (two
+    # short, non-crossing 1px strokes -- real checkmark-style marking is
+    # explicitly called out as an "incorrect mark" on a real ACT sheet's
+    # own instructions, but real students do it anyway) rather than a
+    # genuine solid fill -- must stay blank, not get promoted just because
+    # it's the row's highest fill_ratio.
+    template = _thick_ring_template()
+    image = make_blank_sheet(template, letters=True)
+    _draw_heavy_baseline(image, template)
+    marked = next(b for b in template.bubbles()[("Answers", 1)] if b.choice == "G")
+    x, y = marked.x, marked.y
+    cv2.line(image, (x - 8, y), (x - 2, y + 7), (10, 10, 10), 1)
+    cv2.line(image, (x - 2, y + 7), (x + 9, y - 8), (10, 10, 10), 1)
+
+    results, _ = evaluate_sheet(image, template)
+    q1 = next(r for r in results if r.question == 1)
+    assert q1.answer == ""
+
+
+def test_evaluate_sheet_solidity_never_clears_low_confidence_on_a_partial_mark_derived_answer():
+    # Regression coverage for a real bug in an early version of this fix:
+    # the low_confidence-clearing branch (meant only for an answer
+    # fill_ratio settled on *directly*) also fired on an answer that came
+    # from the partial-mark override instead, clearing low_confidence
+    # there too -- that override's own accuracy assumes every answer it
+    # supplies keeps getting a human glance (see _PARTIAL_MARK_MIN_GAP's
+    # comment), regardless of how solid the promoted bubble's ink happens
+    # to look. Reuses the exact fixture that first caught this.
+    template = make_template()
+    answers = {1: ["F"], 2: ["B"], 4: ["A"], 5: ["J"], 6: ["D"]}
+    image = render_sheet(template, answers, letters=True)
+    bubble = next(b for b in template.bubbles()[("Answers", 3)] if b.choice == "F")
+    fill_bubble(image, bubble.x, bubble.y, template.bubble_radius, coverage=0.4, darkness=30)
+
+    results, _ = evaluate_sheet(image, template)
+    q3 = next(r for r in results if r.question == 3)
+    assert q3.answer == "F"
+    assert q3.low_confidence  # always flagged when it came from the secondary signal
 
 
 def test_find_mark_floor_locates_the_gap_between_two_clusters():
