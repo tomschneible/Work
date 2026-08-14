@@ -33,6 +33,14 @@ question-number label (e.g. "34") whose glyph happened to be sized like a
 real bubble slipped into a row's group as a 5th item for 4 slots. See
 _match_to_slots for how that's handled without displacing the real
 (possibly genuinely marked) bubbles next to it.
+
+And on a third real scan: a whole column sitting together, as a rigid
+unit, further from its nominal position than _match_to_slots' own
+per-box distance cap allows -- every bubble still correctly spaced
+relative to its neighbors, just uniformly offset. See
+_uniform_shift_match for how a shift like that is told apart from a
+merely coincidental count match (a missing bubble swapped for a
+same-sized stray label).
 """
 from __future__ import annotations
 
@@ -344,6 +352,50 @@ def _match_to_slots(
     return result
 
 
+def _uniform_shift_match(
+    boxes_sorted: List[_Box], nominal_xs: Sequence[float], radius: float
+) -> Optional[List[_Box]]:
+    """When `boxes_sorted` (left-to-right) has exactly as many items as
+    `nominal_xs` has slots, and every box is offset from its
+    corresponding (same-index) nominal slot by nearly the same amount,
+    treat this as one rigid unit that has drifted together and pair them
+    positionally -- even where that offset is larger than
+    _match_to_slots' own max_distance cap tolerates. Returns None (defer
+    to the capped DP instead) when the counts differ, or when the
+    per-box offsets aren't tightly clustered -- e.g. one box sitting ~30px
+    off while the rest sit near 0 means the count matched by coincidence
+    (a genuinely missing bubble alongside an unrelated stray box), not a
+    shared shift, and trusting position blindly there is exactly the
+    mistake the cap exists to prevent (confirmed against a real sheet:
+    doing so quietly relabeled a section's true first choice as a stray
+    label sitting a full bubble-spacing to its left).
+
+    Position agreement alone isn't quite enough, either: confirmed
+    against a second real sheet where a merged two-digit question-number
+    label happened to sit almost exactly one bubble-spacing left of the
+    row's true first bubble -- close enough to its "slot" that the whole
+    row's offsets clustered just as tightly as a genuine shared shift,
+    while the row's real last bubble (solidly filled, its ink bleeding
+    past the printed oval) was the one that failed _find_glyph_boxes's
+    size filter and went undetected, leaving the count coincidentally
+    right for entirely the wrong reason. A real shifted row's boxes are
+    all bubbles and stay close in size to each other; probing whether
+    *any single one* of them looks like a size outlier against the rest
+    (the same comparison _drop_size_outlier_boxes already makes for the
+    surplus case) catches this the same way.
+    """
+    if len(boxes_sorted) != len(nominal_xs) or not boxes_sorted:
+        return None
+    deltas = [b.cx - nx for b, nx in zip(boxes_sorted, nominal_xs)]
+    if max(deltas) - min(deltas) > radius:
+        return None
+    if len(boxes_sorted) >= 2 and len(_drop_size_outlier_boxes(boxes_sorted, len(boxes_sorted) - 1)) != len(
+        boxes_sorted
+    ):
+        return None
+    return boxes_sorted
+
+
 def locate_section_bubbles(
     gray: np.ndarray, template: Template, section: Section
 ) -> Optional[Dict[int, List[tuple]]]:
@@ -420,9 +472,32 @@ def locate_section_bubbles(
             # choice. Without this cap it would still get force-matched to
             # whichever slot is otherwise least bad, silently displacing
             # the real (possibly genuinely marked) bubble there.
-            matched_boxes = _match_to_slots(
-                boxes_sorted, lambda b: b.cx, nominal_xs, max_distance=template.bubble_spacing_x / 2
-            )
+            #
+            # Equal box/slot counts alone do NOT excuse a row from this
+            # cap -- confirmed against a real sheet where a row was short
+            # its true first bubble (never detected -- lost to a merged
+            # contour) but happened to pick up a stray label box far to
+            # its left instead, leaving the count coincidentally right
+            # while the *identity* of that first item was wrong. The cap
+            # correctly left that slot for the section's median-shift
+            # fallback rather than trusting the label. What the cap
+            # doesn't handle: a real, otherwise-unremarkable row (or on
+            # one scan, a whole column) can sit together, as a rigid
+            # unit, further from nominal than the cap allows -- every box
+            # still in its correct relative order and spacing, just
+            # shifted uniformly beyond it. _uniform_shift_match tells
+            # those two apart by how *consistent* the box-to-nominal
+            # offset is across the whole row: a genuine rigid shift moves
+            # every box by nearly the same amount, while a
+            # missing-bubble-plus-stray-label swap shows one wildly
+            # different offset next to several near-zero ones.
+            uniform = _uniform_shift_match(boxes_sorted, nominal_xs, template.bubble_radius)
+            if uniform is not None:
+                matched_boxes = uniform
+            else:
+                matched_boxes = _match_to_slots(
+                    boxes_sorted, lambda b: b.cx, nominal_xs, max_distance=template.bubble_spacing_x / 2
+                )
             detected[question] = [
                 (box.cx, box.cy) if box is not None else None for box in matched_boxes
             ]

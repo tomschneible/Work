@@ -15,6 +15,7 @@ from answer_extractor.grid_detect import (
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
     _match_to_slots,
+    _uniform_shift_match,
     locate_section_bubbles,
 )
 from answer_extractor.template import Template
@@ -117,6 +118,72 @@ def test_drop_size_outlier_boxes_is_a_noop_when_count_already_matches():
     boxes = [_box(700, 27, 19), _box(730, 27, 19)]
     assert _drop_size_outlier_boxes(boxes, target_count=2) == boxes
     assert _drop_size_outlier_boxes(boxes, target_count=3) == boxes
+
+
+# -- _uniform_shift_match: pure logic tests -----------------------------------
+#
+# Regression coverage for a fourth real bug, found on a real scanned sheet
+# whose whole column sat ~20px beyond _match_to_slots' own max_distance cap:
+# every real bubble was still exactly where its neighbors were relative to
+# each other (uniformly shifted, not individually jittered), but the cap
+# rejected each one as "too far from its slot" and the DP settled for a
+# partial, one-slot-over match instead -- silently reading the *next*
+# choice's ink for every slot in the row (confirmed against the real sheet:
+# read "H" where the true, solidly-filled mark was "G"). Equal box/slot
+# counts alone don't excuse a row from the cap, though -- confirmed against
+# a second real sheet where a merged two-digit question-number label
+# happened to sit almost exactly one bubble-spacing from the row's true
+# first slot (coincidentally as tight a cluster as a genuine shared shift)
+# while the row's real last bubble -- solidly filled, its ink bleeding past
+# the printed oval -- failed _find_glyph_boxes's size filter and went
+# undetected. That combination is caught by the same area comparison
+# _drop_size_outlier_boxes already makes for the surplus case: a genuine
+# shifted row's boxes are close in size to each other; a label mixed in is
+# reliably smaller.
+
+
+def test_uniform_shift_match_accepts_a_tightly_clustered_shift_beyond_the_cap():
+    # Real deltas from the sheet that motivated this: every box ~19-20px
+    # right of its nominal slot, well beyond match_to_slots' max_distance
+    # cap (half of bubble_spacing_x, here ~15.3), but within a couple of px
+    # of each other.
+    nominal = [290.0, 320.67, 351.34, 382.0]
+    boxes = [_box(310.0, 26, 19), _box(340.0, 28, 20), _box(371.5, 27, 20), _box(402.5, 27, 20)]
+    result = _uniform_shift_match(boxes, nominal, radius=11)
+    assert result == boxes
+
+
+def test_uniform_shift_match_rejects_a_missing_bubble_plus_stray_label():
+    # Real shape from the sheet that motivated the size-outlier guard: a
+    # merged "32" label (w=23, h=17) sitting ~30px left of nominal slot 0,
+    # with the row's real last bubble undetected -- leaving the count
+    # coincidentally right and the deltas coincidentally clustered (every
+    # box ~30-32px off nominal) even though slot 0's "box" isn't a bubble
+    # at all.
+    nominal = [719.5, 750.17, 780.84, 811.51]
+    boxes = [_box(689.5, 23, 17), _box(718.5, 27, 20), _box(749.0, 26, 20), _box(779.5, 27, 20)]
+    assert _uniform_shift_match(boxes, nominal, radius=11) is None
+
+
+def test_uniform_shift_match_rejects_when_only_one_box_is_actually_off():
+    # A stray item sits ~30px off while the other three are already near
+    # their own nominal slots (~1px) -- no shared shift at all, just a
+    # coincidental count match. The position spread alone (not the size
+    # check) is what catches this: nothing here needs to look label-sized
+    # for it to be obviously not a rigid shift.
+    nominal = [290.0, 320.67, 351.34, 382.0]
+    boxes = [_box(260.0, 26, 19), _box(321.0, 27, 20), _box(352.0, 27, 20), _box(383.0, 27, 20)]
+    assert _uniform_shift_match(boxes, nominal, radius=11) is None
+
+
+def test_uniform_shift_match_returns_none_on_count_mismatch():
+    nominal = [290.0, 320.67, 351.34, 382.0]
+    boxes = [_box(310.0, 26, 19), _box(340.0, 28, 20), _box(371.5, 27, 20)]
+    assert _uniform_shift_match(boxes, nominal, radius=11) is None
+
+
+def test_uniform_shift_match_returns_none_for_empty_boxes():
+    assert _uniform_shift_match([], [290.0, 320.67], radius=11) is None
 
 
 # -- _drop_sparse_rows: pure logic tests --------------------------------------
