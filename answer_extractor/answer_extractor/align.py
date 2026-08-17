@@ -35,6 +35,26 @@ def _order_corners(pts: np.ndarray) -> np.ndarray:
     return rect
 
 
+# How much of the whole image a candidate 4-sided contour must cover
+# before it's trusted as the sheet's own outer edge against its
+# background, rather than some other large rectangle printed *within* the
+# page. Calibrated against a real scan (see this function's module-level
+# bug report): a printed border box grouping several answer sections
+# together -- clearly the largest, cleanest 4-sided contour in the image,
+# comfortably over the old, much looser 0.2 floor -- covered only ~0.41 of
+# the full image (margin on every side for a header, marking-direction
+# box, and a logo box, all *outside* that border). Treating it as the
+# sheet's own edge warped/stretched just that inner box to fill the
+# entire template page, scattering every section's real coordinates
+# during the process. A real sheet-vs-background contour (the case this
+# function exists for) covers far more of the frame -- confirmed against
+# this project's own synthetic regression fixture for that case, ~0.64 --
+# since the sheet itself, not a decorative box somewhere inside it, is
+# what's actually being distinguished from its background. 0.5 sits with
+# real margin below that genuine case and above the false-positive one.
+_MIN_SHEET_AREA_FRACTION = 0.5
+
+
 def _find_sheet_corners(image: np.ndarray) -> np.ndarray | None:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -50,7 +70,7 @@ def _find_sheet_corners(image: np.ndarray) -> np.ndarray | None:
 
     for contour in contours[:10]:
         area = cv2.contourArea(contour)
-        if area < 0.2 * image_area:
+        if area < _MIN_SHEET_AREA_FRACTION * image_area:
             # Too small to plausibly be the whole sheet; contours are sorted
             # descending so nothing after this will be bigger.
             break

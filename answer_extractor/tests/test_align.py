@@ -48,6 +48,32 @@ def test_align_falls_back_to_resize_without_border():
     assert result.image.shape[:2] == (template.page_height, template.page_width)
 
 
+def test_align_ignores_a_printed_border_box_that_is_not_the_sheet_edge():
+    # Regression coverage for a real scan (full-bleed -- the page fills the
+    # whole image, no background around it, so there's no genuine sheet-
+    # vs-background edge to find at all) whose answer sections were
+    # grouped inside their own large printed border box, with real
+    # whitespace above/below/beside it for a header, a marking-directions
+    # box, and a logo box. That inner box was the largest, cleanest
+    # 4-sided contour in the image -- comfortably over the old area floor
+    # -- so it got warped to fill the *entire* template page, scattering
+    # every section's real coordinates well outside grid_detect's own
+    # matching tolerance and making template_detect fail to match
+    # anything at all. A full-bleed page has no real corners to find, so
+    # this must fall back to a plain resize, not the inner box.
+    template = make_template()
+    page = np.full((1000, 800, 3), 255, dtype=np.uint8)
+    # A border box grouping the answer sections, well short of the page's
+    # own edges on every side (leaves genuine margin for a header etc.,
+    # unlike the sheet's own true edge against a background).
+    cv2.rectangle(page, (100, 250), (700, 800), (0, 0, 0), 4)
+    cv2.putText(page, "Header", (100, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
+
+    result = align_to_template(page, template.page_width, template.page_height)
+    assert not result.used_contour
+    assert result.image.shape[:2] == (template.page_height, template.page_width)
+
+
 def test_resize_preserving_aspect_does_not_distort_a_mismatched_source():
     # Regression coverage for a real scan whose own aspect ratio (0.753)
     # differed enough from the template's (0.773, standard US Letter) that
