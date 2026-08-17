@@ -16,6 +16,7 @@ from answer_extractor.detect import (
     _residual_ratio,
     _solid_fill_choice,
     _solidity,
+    _solidity_standout_choice,
     _value_channel,
     binarize,
     build_choice_templates,
@@ -227,7 +228,7 @@ def test_partial_mark_choice_none_for_a_bolder_printed_letter_across_a_blank_str
 # bubble's own ink, only at what's confidently known about its neighbors.
 
 
-def _qr(question: int, answer: str, low_confidence: bool = False) -> QuestionResult:
+def _qr(question: int, answer: str, low_confidence: bool = False, solid_fill: bool = False) -> QuestionResult:
     candidates = [] if answer in ("", "MULTIPLE") else [answer]
     return QuestionResult(
         section="Answers",
@@ -236,6 +237,7 @@ def _qr(question: int, answer: str, low_confidence: bool = False) -> QuestionRes
         candidates=candidates,
         fill_ratios={},
         low_confidence=low_confidence,
+        solid_fill=solid_fill,
     )
 
 
@@ -745,6 +747,59 @@ def test_solid_fill_choice_none_when_the_leader_is_not_solid():
     assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) is None
 
 
+def test_solid_fill_choice_breaks_an_exact_tie_by_solidity():
+    # Regression coverage for a real sheet whose heavy, uniform baseline
+    # print made two adjacent bubbles measure *exactly* equal by area
+    # (down to many decimal places) while only one was actually
+    # erosion-solid -- picking fill_ratio's own dict-order winner (G, the
+    # first of the two tied choices) was arbitrary and wrong; the real
+    # mark was H.
+    binary = np.zeros((100, 40), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 15, 255, 3)  # G: thin ring only
+    cv2.circle(binary, (20, 60), 15, 255, -1)  # H: genuine solid fill
+    bubbles = [("G", 20, 20), ("H", 20, 60)]
+    fill_ratios = {"G": 0.30, "H": 0.30}  # exact tie
+    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) == "H"
+
+
+# -- _solidity_standout_choice: pure logic tests ------------------------------
+#
+# Regression coverage for a real sheet combining two problems: a heavy,
+# *uneven* baseline print (some choices printed with more ink than others,
+# even unmarked) and genuinely gray, not black, pencil. Together these
+# meant a genuinely marked choice sometimes ranked *last* of four by
+# fill_ratio's own area, so _solid_fill_choice (which only ever
+# reconsiders fill_ratio's own leader) never even looked at it -- despite
+# it being the only one of the four whose ink actually survived erosion.
+
+
+def test_solidity_standout_choice_finds_the_only_solid_choice():
+    binary = np.zeros((100, 40), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 15, 255, 3)  # F: thin ring
+    cv2.circle(binary, (20, 60), 15, 255, -1)  # G: genuine solid fill
+    bubbles = [("F", 20, 20), ("G", 20, 60)]
+    assert _solidity_standout_choice(binary, bubbles, radius=18) == "G"
+
+
+def test_solidity_standout_choice_none_when_nothing_is_solid():
+    binary = np.zeros((100, 40), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 15, 255, 3)
+    cv2.circle(binary, (20, 60), 15, 255, 2)
+    bubbles = [("F", 20, 20), ("G", 20, 60)]
+    assert _solidity_standout_choice(binary, bubbles, radius=18) is None
+
+
+def test_solidity_standout_choice_none_when_more_than_one_is_solid():
+    # Two genuinely, independently solid fills -- indistinguishable from a
+    # real double-mark at this signal's level; must not guess between
+    # them.
+    binary = np.zeros((100, 40), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 15, 255, -1)
+    cv2.circle(binary, (20, 60), 15, 255, -1)
+    bubbles = [("F", 20, 20), ("G", 20, 60)]
+    assert _solidity_standout_choice(binary, bubbles, radius=18) is None
+
+
 def _thick_ring_template() -> Template:
     data = {
         "page": {"width": 900, "height": 700},
@@ -933,6 +988,37 @@ def test_readability_floor_still_wipes_a_low_confidence_answer_below_it():
     updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
     q20 = next(r for r in updated if r.question == 20)
     assert q20.answer == ""
+
+
+def test_readability_floor_does_not_wipe_a_solid_fill_answer():
+    # Regression coverage for a real sheet combining heavy baseline
+    # printing (needing _solid_fill_choice's rescue at all) with
+    # genuinely gray, not black, ink throughout -- every one of that
+    # rescue's answers, always low_confidence by design, measured near
+    # this sheet's own floor. solid_fill=True must exempt it the same way
+    # an already-confident direct answer is exempted above, since that
+    # rescue's own erosion-verified solidity is independent evidence of a
+    # mark too.
+    results, bubbles_by_qkey, value, radius = _readability_check_fixture(target_low_confidence=True)
+    results[-1] = _qr(20, "F", low_confidence=True, solid_fill=True)
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    q20 = next(r for r in updated if r.question == 20)
+    assert q20.answer == "F"
+    assert not q20.unreadable
+
+
+def test_readability_absolute_floor_does_not_wipe_a_solid_fill_answer():
+    # Same exemption, the other mechanism: a solid_fill answer's own
+    # dark_fraction can read exactly 0 (genuinely gray ink, nothing
+    # genuinely near-black -- see _dark_fraction) despite being a real,
+    # erosion-verified mark by an entirely different signal.
+    radius = 15
+    value = np.full((60, 60), 255, dtype=np.uint8)  # nothing dark drawn at all
+    bubbles_by_qkey = {("Answers", 1): [("F", 30, 30)]}
+    results = [_qr(1, "F", low_confidence=True, solid_fill=True)]
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    assert updated[0].answer == "F"
+    assert not updated[0].unreadable
 
 
 def _fade_bubble(image: np.ndarray, x: int, y: int, radius: int, light_value: int = 170) -> None:

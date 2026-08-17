@@ -40,6 +40,17 @@ class QuestionResult:
     # "" -- kept distinct from an ordinary blank so callers can flag it for
     # a human rather than treat it as equivalent to "student left it blank".
     unreadable: bool = False
+    # True when `answer` came from _solid_fill_choice's blank->promoted
+    # rescue (a heavy printed baseline hid a genuine mark from fill_ratio's
+    # own floor entirely -- see evaluate_sheet), not from fill_ratio's
+    # ordinary ranking. Always implies low_confidence, like
+    # pattern_inferred, but for a different reason worth keeping distinct:
+    # this signal's own check (erosion-verified solidity) is already
+    # independent, real evidence of a genuine mark -- see
+    # _apply_readability_checks, which trusts it over _dark_fraction's
+    # strict near-black floor the same way it already trusts a directly-
+    # confident fill_ratio answer.
+    solid_fill: bool = False
 
 
 def _value_channel(image: np.ndarray) -> np.ndarray:
@@ -174,17 +185,59 @@ def _solid_fill_choice(
     field -- return it; otherwise None. Only meant to be consulted when
     score_bubbles's ordinary signal came back blank (see evaluate_sheet):
     unlike _partial_mark_choice, this never needs to *rank* choices
-    against each other (fill_ratio's own adjusted ranking already did
-    that) -- it only asks whether the leader's own ink shape is
-    trustworthy enough to promote past the absolute floor that decided
-    blank in the first place."""
+    against each other in the usual case -- fill_ratio's own adjusted
+    ranking already did that -- it only asks whether the leader's own ink
+    shape is trustworthy enough to promote past the absolute floor that
+    decided blank in the first place. The exception is an exact tie at
+    the top: found on a real sheet whose heavy, uniform baseline print
+    made two adjacent bubbles measure *exactly* equal by area (down to
+    many decimal places) while only one was actually erosion-solid --
+    picking fill_ratio's own dict-order winner there is arbitrary and
+    blind to which one is real, so every choice tied for the lead gets
+    its own solidity checked and the most solid one wins.
+    """
     adjusted = _baseline_adjust(fill_ratios)
     if not adjusted:
         return None
-    top_choice = max(adjusted, key=adjusted.get)
-    x, y = next((x, y) for choice, x, y in bubbles if choice == top_choice)
-    if _solidity(binary, x, y, radius) >= min_solidity:
-        return top_choice
+    max_ratio = max(adjusted.values())
+    tied_for_top = [choice for choice, ratio in adjusted.items() if ratio == max_ratio]
+    best_choice, best_solidity = None, 0.0
+    for choice in tied_for_top:
+        x, y = next((bx, by) for c, bx, by in bubbles if c == choice)
+        solidity = _solidity(binary, x, y, radius)
+        if solidity > best_solidity:
+            best_choice, best_solidity = choice, solidity
+    if best_choice is not None and best_solidity >= min_solidity:
+        return best_choice
+    return None
+
+
+def _solidity_standout_choice(
+    binary: np.ndarray,
+    bubbles: List[Tuple[str, int, int]],
+    radius: int,
+    min_solidity: float = _SOLID_FILL_MIN,
+) -> "str | None":
+    """Last-resort rescue for a row where fill_ratio's own area-based
+    ranking is simply misleading, not just too compressed to clear a
+    floor -- a heavy, *uneven* baseline print can make an unmarked
+    choice's ring+letter measure *more* raw area than a genuinely marked
+    choice elsewhere in the same row, so the real mark never even reaches
+    _solid_fill_choice's own check (which only ever reconsiders
+    fill_ratio's own top pick(s)). Confirmed against a real sheet where
+    the genuinely marked choice ranked *last* of four by fill_ratio, yet
+    was the only one of the four whose ink actually survived erosion.
+
+    Ignores fill_ratio's ranking entirely and checks every choice's own
+    solidity directly; if exactly one clears `min_solidity`, it's
+    trusted. Two or more clearing it is left alone rather than guessed
+    at -- indistinguishable from this same signal's job on a genuine
+    double-mark (see evaluate_sheet's MULTIPLE handling), and a real
+    reason for solid_fill_choice's own exact-tie case above to exist
+    rather than just reusing this."""
+    solid = [choice for choice, x, y in bubbles if _solidity(binary, x, y, radius) >= min_solidity]
+    if len(solid) == 1:
+        return solid[0]
     return None
 
 
@@ -785,6 +838,21 @@ def _apply_readability_checks(
        that fools this floor is, per _find_mark_floor's own module
        history, the sheet-relative exception, not one that also happens to
        win score_bubbles' own independent area comparison decisively.
+
+    Both checks also skip a `solid_fill` answer outright, regardless of
+    low_confidence (which that signal always sets -- see QuestionResult).
+    Found against a real sheet combining two problems at once: heavy
+    baseline printing (needing _solid_fill_choice's erosion-verified
+    rescue just to see the mark past fill_ratio's own inflated floor at
+    all) *and* genuinely gray, not black, ink throughout that same region
+    -- every one of that rescue's answers measured ~0 on _dark_fraction's
+    strict near-black scale, both checks (1 directly, 2 via a floor
+    computed from a majority of similarly near-zero neighbors) wiping the
+    rescue right back to blank. _solid_fill_choice's own check (does this
+    bubble's ink survive erosion, unlike a ring/letter/scribble) is
+    already independent, real evidence of a genuine mark -- the same
+    reason a directly-confident fill_ratio answer is exempted above, just
+    reached through a different signal.
     """
     dark_fractions_by_result: List[Dict[str, float]] = []
     for r in results:
@@ -793,7 +861,7 @@ def _apply_readability_checks(
 
     updated = list(results)
     for i, r in enumerate(results):
-        if r.answer not in ("", "MULTIPLE") and not r.low_confidence:
+        if (r.answer not in ("", "MULTIPLE") and not r.low_confidence) or r.solid_fill:
             # score_bubbles already found one choice confidently, decisively
             # ahead of the rest by area -- real, independent evidence of a
             # mark that this absolute darkness floor has no business
@@ -807,7 +875,9 @@ def _apply_readability_checks(
             # answers -- silently wiping every one of them to blank. This
             # check exists to catch the opposite real problem (print that's
             # too faded to trust *any* signal on), not to second-guess a
-            # signal that's already trustworthy on its own terms.
+            # signal that's already trustworthy on its own terms -- and a
+            # solid_fill answer's own erosion-verified solidity is exactly
+            # that, despite always carrying low_confidence too.
             continue
         fractions = dark_fractions_by_result[i]
         if fractions and max(fractions.values()) < _UNREADABLE_MAX:
@@ -816,12 +886,12 @@ def _apply_readability_checks(
     winner_fractions = [
         dark_fractions_by_result[i][r.answer]
         for i, r in enumerate(updated)
-        if r.answer not in ("", "MULTIPLE") and not r.pattern_inferred
+        if r.answer not in ("", "MULTIPLE") and not r.pattern_inferred and not r.solid_fill
     ]
     floor = _find_mark_floor(winner_fractions) if len(winner_fractions) >= 20 else None
     if floor is not None:
         for i, r in enumerate(updated):
-            if r.answer == "" or r.pattern_inferred or r.unreadable:
+            if r.answer == "" or r.pattern_inferred or r.unreadable or r.solid_fill:
                 continue
             if r.answer != "MULTIPLE" and not r.low_confidence:
                 continue
@@ -902,6 +972,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
             # low-confidence single answers (tried, then reverted -- see the
             # threshold comment above): only a question with no fill-ratio
             # answer at all gets a second opinion from the residual signal.
+            solid_fill = False
             if answer in ("", "MULTIPLE"):
                 residuals = {
                     choice: _residual_ratio(binary, x, y, template.bubble_radius, choice_templates[choice])
@@ -918,6 +989,23 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     and _partial_mark_agrees_with_fill_ratio(partial_mark, fill_ratios)
                 ):
                     answer, candidates, low_confidence = partial_mark, [partial_mark], True
+                    # Deliberately never clears low_confidence (see the test
+                    # this fixed) -- this override's own accuracy assumes a
+                    # human glance regardless of ink shape. But a *third*,
+                    # independent signal (does this specific bubble's ink
+                    # survive erosion -- unlike a ring/letter/scribble) can
+                    # still tell _apply_readability_checks' dark_fraction-
+                    # based floors this row has a genuine mark, the same way
+                    # it already does for a directly-solid fill_ratio answer
+                    # below -- found on a real sheet combining heavy
+                    # baseline printing (which is what made partial_mark's
+                    # residual signal, not fill_ratio's own ranking, the one
+                    # to settle this row) with genuinely gray, not black,
+                    # ink (which reads ~0 on that strict scale regardless of
+                    # which signal picked the answer).
+                    x, y = next((bx, by) for choice, bx, by in bubbles if choice == answer)
+                    if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
+                        solid_fill = True
 
             # A still-blank question's own leading choice, promoted only if
             # its ink is a genuinely solid fill (see _solid_fill_choice) --
@@ -936,6 +1024,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 solid_choice = _solid_fill_choice(fill_ratios, binary, bubbles, template.bubble_radius)
                 if solid_choice is not None:
                     answer, candidates, low_confidence = solid_choice, [solid_choice], True
+                    solid_fill = True
             elif direct_single_answer and low_confidence:
                 # Same signal, the other direction: a single answer
                 # fill_ratio already found confidently-ranked, just flagged
@@ -947,6 +1036,20 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
                     low_confidence = False
 
+            # Absolute last resort, only reached if fill_ratio's own
+            # ranking (direct, partial-mark, and solid-fill alike) never
+            # settled on anything -- see _solidity_standout_choice for why
+            # this is a distinct case from the ones above: a heavy,
+            # *uneven* baseline print can rank a genuinely marked choice
+            # below an unmarked one by raw area, so the real mark never
+            # even reaches those checks (they only ever reconsider
+            # fill_ratio's own leader).
+            if answer in ("", "MULTIPLE"):
+                standout = _solidity_standout_choice(binary, bubbles, template.bubble_radius)
+                if standout is not None:
+                    answer, candidates, low_confidence = standout, [standout], True
+                    solid_fill = True
+
             section_results.append(
                 QuestionResult(
                     section=section.name,
@@ -955,6 +1058,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     candidates=candidates,
                     fill_ratios=fill_ratios,
                     low_confidence=low_confidence,
+                    solid_fill=solid_fill,
                 )
             )
 
