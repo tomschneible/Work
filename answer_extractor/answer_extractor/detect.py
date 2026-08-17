@@ -759,9 +759,12 @@ def _apply_readability_checks(
 
     Two independent checks, in order:
     1. Absolute: a question where every choice has essentially no dark
-       ink anywhere gets flagged `unreadable` and forced blank, regardless
-       of what it currently reads -- this needs no per-sheet calibration
-       to be safe (see _UNREADABLE_MAX).
+       ink anywhere gets flagged `unreadable` and forced blank -- unless
+       score_bubbles' own area-based signal already answered it
+       confidently, which this never overrules (see _UNREADABLE_MAX;
+       confirmed against a real sheet marked throughout in genuinely
+       light pencil that score_bubbles read correctly and this absolute
+       floor did not).
     2. Sheet-relative: among whatever's left, a question (single-answer or
        MULTIPLE alike) whose best candidate falls below *this sheet's* own
        floor separating its genuine marks from weaker artifacts gets
@@ -778,6 +781,22 @@ def _apply_readability_checks(
 
     updated = list(results)
     for i, r in enumerate(results):
+        if r.answer not in ("", "MULTIPLE") and not r.low_confidence:
+            # score_bubbles already found one choice confidently, decisively
+            # ahead of the rest by area -- real, independent evidence of a
+            # mark that this absolute darkness floor has no business
+            # overruling. Found against a real sheet marked throughout in
+            # genuinely light pencil: score_bubbles' own Otsu-relative
+            # binarization correctly separated every mark from that sheet's
+            # paper/print regardless, but _dark_fraction's *strict, sheet-
+            # independent* near-black threshold (deliberately so, see its
+            # own docstring) never saw enough of that lighter graphite to
+            # clear _UNREADABLE_MAX even once, on over 70 already-confident
+            # answers -- silently wiping every one of them to blank. This
+            # check exists to catch the opposite real problem (print that's
+            # too faded to trust *any* signal on), not to second-guess a
+            # signal that's already trustworthy on its own terms.
+            continue
         fractions = dark_fractions_by_result[i]
         if fractions and max(fractions.values()) < _UNREADABLE_MAX:
             updated[i] = dataclasses.replace(r, answer="", candidates=[], low_confidence=False, unreadable=True)

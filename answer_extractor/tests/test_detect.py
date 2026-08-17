@@ -912,6 +912,32 @@ def test_evaluate_sheet_flags_a_faded_block_as_unreadable_and_blank():
         assert by_q[q].answer == _idx0(q)  # untouched -- these are genuine, unambiguous marks
 
 
+def test_evaluate_sheet_does_not_wipe_a_confident_answer_marked_in_light_pencil():
+    # Regression coverage for a real scan marked throughout in genuinely
+    # light pencil/graphite: score_bubbles' Otsu-relative binarization
+    # correctly separated every mark from that sheet's own paper and
+    # print regardless (the ring, the mark, everything sat at one
+    # consistently light tone, but a consistently *lighter* tone than the
+    # white paper is still exactly what Otsu's threshold is built to
+    # find) -- but _dark_fraction's strict, sheet-independent near-black
+    # cutoff (deliberately so, see its own docstring) never saw enough of
+    # that light graphite to clear _UNREADABLE_MAX on over 70 already-
+    # confident answers, silently wiping every one of them to blank. The
+    # absolute-floor check must not overrule an answer score_bubbles
+    # already found confidently on its own, independent terms.
+    template = _pattern_template()
+    answers = {q: [_idx0(q)] for q in range(1, 20) if q != 3}
+    image = render_sheet(template, answers, ink_color=(90, 90, 90), coverage=1.0, darkness=90)
+    marked = next(b for b in template.bubbles()[("Answers", 3)] if b.choice == _idx0(3))
+    fill_bubble(image, marked.x, marked.y, template.bubble_radius, coverage=1.0, darkness=90)
+
+    results, _ = evaluate_sheet(image, template)
+    q3 = next(r for r in results if r.question == 3)
+    assert q3.answer == _idx0(3)
+    assert not q3.unreadable
+    assert not q3.low_confidence
+
+
 # -- evaluate_sheet: rendered-image tests ------------------------------------
 
 
