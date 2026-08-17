@@ -7,7 +7,7 @@ from typing import Iterable, List, Tuple
 
 from .align import align_to_template
 from .detect import QuestionResult, evaluate_sheet
-from .loading import load_sheets
+from .loading import iter_source_files, load_sheets
 from .template import Template
 from .template_detect import DEFAULT_TEMPLATES_DIR, detect_template
 
@@ -85,28 +85,70 @@ def process_path_auto(
     sheet is (see template_detect) instead of taking one as a fixed
     argument -- so a batch can freely mix sheet formats. Sheets that can't
     be confidently matched to a template are returned separately rather
-    than silently skipped or guessed at."""
+    than silently skipped or guessed at.
+
+    Within any *one* source file (`path` itself, or each file found by
+    walking it if it's a directory -- see iter_source_files), only the
+    LAST matching page is kept as a real result when more than one
+    matches. Real-world case this exists for: a whole multi-page test
+    booklet PDF (not just the bubble sheet cropped out on its own) whose
+    answer sheet is always the last page that's actually a bubble sheet,
+    per this project's own template_detect module docstring on why a
+    structural, ink-independent match is trusted at all -- but that same
+    docstring's assumption ("a wrong template's sections essentially
+    never all agree by coincidence") turned out not to hold for dense
+    justified body text: a reading passage's short words can fall in the
+    same bounding-box size range _find_glyph_boxes looks for, and enough
+    of them can coincidentally line up into a matching row/column grid.
+    Confirmed against a real 50-page booklet where two ordinary passage
+    pages structurally matched a template this way, alongside the one
+    genuine bubble sheet at the very end. Demoting every earlier match in
+    the same file to undetected (rather than silently guessing which of
+    several is "the" answer sheet, or reporting all of them as if there
+    were several real ones) is what a single test booklet needs; a batch
+    scan of many *different* students' sheets concatenated into one PDF
+    -- every page a real, independent bubble sheet -- would lose all but
+    the last student's under this same rule, so don't combine unrelated
+    students' sheets into one file when using this function."""
     results: List[SheetResult] = []
     undetected: List[UndetectedSheet] = []
-    for label, image in load_sheets(path):
-        detection = detect_template(image, templates_dir)
-        if detection.match is None:
-            undetected.append(
-                UndetectedSheet(label=label, source=str(path), reason=detection.describe_failure())
+    for file_path in iter_source_files(path):
+        file_results: List[SheetResult] = []
+        file_undetected: List[UndetectedSheet] = []
+        for label, image in load_sheets(file_path):
+            detection = detect_template(image, templates_dir)
+            if detection.match is None:
+                file_undetected.append(
+                    UndetectedSheet(label=label, source=str(file_path), reason=detection.describe_failure())
+                )
+                continue
+            match = detection.match
+            questions, fallback_sections = evaluate_sheet(match.aligned_image, match.template)
+            file_results.append(
+                SheetResult(
+                    label=label,
+                    source=str(file_path),
+                    used_contour_alignment=match.used_contour,
+                    questions=questions,
+                    fallback_sections=fallback_sections,
+                    template_name=match.path.stem,
+                )
             )
-            continue
-        match = detection.match
-        questions, fallback_sections = evaluate_sheet(match.aligned_image, match.template)
-        results.append(
-            SheetResult(
-                label=label,
-                source=str(path),
-                used_contour_alignment=match.used_contour,
-                questions=questions,
-                fallback_sections=fallback_sections,
-                template_name=match.path.stem,
-            )
-        )
+        if len(file_results) > 1:
+            for extra in file_results[:-1]:
+                file_undetected.append(
+                    UndetectedSheet(
+                        label=extra.label,
+                        source=str(file_path),
+                        reason=(
+                            "a later page in this same file also matched a template; "
+                            "kept only that last match, treating this one as a false positive"
+                        ),
+                    )
+                )
+            file_results = file_results[-1:]
+        results.extend(file_results)
+        undetected.extend(file_undetected)
     return results, undetected
 
 

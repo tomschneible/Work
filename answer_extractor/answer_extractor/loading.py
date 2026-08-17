@@ -63,6 +63,28 @@ def _extract_full_page_image(page) -> Optional[np.ndarray]:
     return image
 
 
+def iter_source_files(path: str | Path) -> Iterator[Path]:
+    """Yield each individual image/PDF file at `path` -- itself if it's
+    already a single file, or every matching file found by walking a
+    directory. This is the unit callers that need to treat "everything
+    from one source document" as a group (e.g. picking one page out of a
+    multi-page PDF) should key on -- `load_sheets` on a *directory*
+    otherwise gives no way to tell which yielded sheet came from which
+    underlying file.
+    """
+    path = Path(path)
+    if path.is_dir():
+        for child in sorted(path.iterdir()):
+            if child.suffix.lower() in IMAGE_SUFFIXES or child.suffix.lower() in PDF_SUFFIXES:
+                yield from iter_source_files(child)
+        return
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_SUFFIXES or suffix in PDF_SUFFIXES:
+        yield path
+    else:
+        raise ValueError(f"Unsupported file type: {path}")
+
+
 def load_sheets(path: str | Path) -> Iterator[Tuple[str, np.ndarray]]:
     """Yield (label, image) pairs for every sheet found at `path`.
 

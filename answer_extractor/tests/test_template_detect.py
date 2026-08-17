@@ -7,6 +7,7 @@ columns/section, Math has 5 choices) -- don't get confused for each other.
 from pathlib import Path
 
 import cv2
+import fitz
 import numpy as np
 
 from answer_extractor.pipeline import process_path_auto
@@ -208,3 +209,74 @@ def test_process_path_auto_reports_an_unmatched_sheet_without_failing_the_rest(t
     assert [r.label for r in results] == ["good"]
     assert [u.label for u in undetected] == ["blank"]
     assert undetected[0].reason
+
+
+# -- pipeline.process_path_auto: one file, multiple matching pages -----------
+#
+# Regression coverage for a real 50-page test-booklet PDF (not just the
+# bubble sheet cropped out on its own): two ordinary reading-passage text
+# pages structurally matched a template alongside the one genuine bubble
+# sheet at the very end. Body text's short words can fall in the same
+# bounding-box size range _find_glyph_boxes looks for, and with justified
+# text's regular line spacing, enough of them coincidentally lined up into
+# a matching row/column grid for whole sections -- undermining
+# template_detect's own stated assumption that a wrong template's
+# sections "essentially never all agree by coincidence" (true for a
+# genuinely different bubble-sheet layout, not for dense body text
+# apparently). Produced three separate "sheets" in the exported output
+# for what was really one student's one bubble sheet.
+
+
+def _write_multi_page_pdf(path: str, images, page_width_pt: float, page_height_pt: float) -> None:
+    doc = fitz.open()
+    for image in images:
+        ok, buf = cv2.imencode(".png", image)
+        assert ok
+        page = doc.new_page(width=page_width_pt, height=page_height_pt)
+        page.insert_image(fitz.Rect(0, 0, page_width_pt, page_height_pt), stream=buf.tobytes())
+    doc.save(path)
+    doc.close()
+
+
+def test_process_path_auto_keeps_only_the_last_matching_page_within_one_pdf(tmp_path):
+    template_a_path = make_template_a(tmp_path)
+    template_a = Template.from_yaml(template_a_path)
+
+    # Two pages that both structurally match template_a within the same
+    # PDF -- standing in for the real case (an incidental match on an
+    # earlier page, a genuine bubble sheet on the last one) without
+    # needing to reproduce the exact text-page coincidence that caused it
+    # for real; what's under test here is the "only the last one counts"
+    # behavior, not template_detect's own matching logic (covered above).
+    page1 = render_sheet(template_a, {1: ["F"]}, letters=True)
+    page2 = render_sheet(template_a, {1: ["G"]}, letters=True)
+    pdf_path = tmp_path / "booklet.pdf"
+    _write_multi_page_pdf(
+        str(pdf_path), [page1, page2], page_width_pt=template_a.page_width, page_height_pt=template_a.page_height
+    )
+
+    results, undetected = process_path_auto(pdf_path, templates_dir=tmp_path)
+
+    assert len(results) == 1
+    answers = {(r.section, r.question): r.answer for r in results[0].questions}
+    assert answers[("Answers", 1)] == "G"  # the later page's answer, not the earlier page's
+    assert len(undetected) == 1
+    assert "later page" in undetected[0].reason
+
+
+def test_process_path_auto_does_not_collapse_matches_across_different_files(tmp_path):
+    # The "keep only the last match" rule is scoped to *one* source file --
+    # a directory of several genuinely separate students' single-page
+    # sheets must not lose all but the last one to this same rule.
+    template_a_path = make_template_a(tmp_path)
+    template_a = Template.from_yaml(template_a_path)
+
+    sheets_dir = tmp_path / "sheets"
+    sheets_dir.mkdir()
+    cv2.imwrite(str(sheets_dir / "student1.png"), render_sheet(template_a, {1: ["F"]}, letters=True))
+    cv2.imwrite(str(sheets_dir / "student2.png"), render_sheet(template_a, {1: ["G"]}, letters=True))
+
+    results, undetected = process_path_auto(sheets_dir, templates_dir=tmp_path)
+
+    assert undetected == []
+    assert {r.label for r in results} == {"student1", "student2"}
