@@ -51,7 +51,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 import cv2
 import numpy as np
 
-from .template import Section, Template
+from .template import ColumnSpec, Section, Template
 
 _T = TypeVar("_T")
 
@@ -396,6 +396,54 @@ def _uniform_shift_match(
     return boxes_sorted
 
 
+# How many individual box-to-slot dx samples a column needs (all from
+# _uniform_shift_match's own confirmed matches -- see
+# _retry_with_column_shift) before its own median shift is trusted over
+# the section-wide one. One fully-matched row already contributes this
+# many samples for a normal 4-choice column; the bar exists mainly to
+# keep a column that's never once matched cleanly from being "estimated"
+# off of a single stray value.
+_MIN_COLUMN_SHIFT_SAMPLES = 2
+
+
+def _retry_with_column_shift(
+    boxes_sorted: List[_Box],
+    nominal_xs: Sequence[float],
+    column_dx_samples: Optional[List[float]],
+    bubble_spacing_x: float,
+) -> Optional[List[Optional[_Box]]]:
+    """Re-run the capped box-to-slot match for one row/column-group,
+    shifting `nominal_xs` by this column's own confirmed offset first --
+    only ever called on a group _match_to_slots already left with at
+    least one empty slot.
+
+    Real case this was built from: a photographed (not flatbed-scanned)
+    sheet whose one rightmost column sat, row after row, a consistent
+    ~43px left of nominal -- confirmed on a neighboring row that had all
+    4 real boxes and passed _uniform_shift_match outright. A row in that
+    same column with only 2 of its 4 real boxes detected doesn't qualify
+    for that whole-row check at all (it needs every slot filled to
+    verify internal consistency), so the plain capped match ran against
+    the *raw*, uncorrected nominal positions instead -- and matched its 2
+    real boxes to the wrong two slots entirely (an off-by-one column
+    match, the same failure _uniform_shift_match exists to prevent, just
+    with a short row instead of a shifted one hiding it from that check).
+    Both of those real boxes were within the ordinary cap of the
+    *shifted* nominal positions, just not the unshifted ones.
+
+    `column_dx_samples` -- gathered only from _uniform_shift_match's own
+    confirmed matches elsewhere in this same column, never from a plain
+    capped match (which, as above, can fill every slot while still being
+    wrong) -- must clear _MIN_COLUMN_SHIFT_SAMPLES before being trusted;
+    returns None otherwise, leaving the original (unshifted) match as-is.
+    """
+    if not column_dx_samples or len(column_dx_samples) < _MIN_COLUMN_SHIFT_SAMPLES:
+        return None
+    column_dx = statistics.median(column_dx_samples)
+    shifted_nominal_xs = [x + column_dx for x in nominal_xs]
+    return _match_to_slots(boxes_sorted, lambda b: b.cx, shifted_nominal_xs, max_distance=bubble_spacing_x / 2)
+
+
 def locate_section_bubbles(
     gray: np.ndarray, template: Template, section: Section
 ) -> Optional[Dict[int, List[tuple]]]:
@@ -429,6 +477,26 @@ def locate_section_bubbles(
     nominal: Dict[int, List[Tuple[str, float, float]]] = {}
     detected: Dict[int, List[Optional[Tuple[float, float]]]] = {}
 
+    # Per-column x-shift samples, keyed by that column's own x_start --
+    # populated only from _uniform_shift_match's own confirmed matches
+    # (never from the capped DP's, even when it fills every slot: with
+    # too few real boxes for the whole-row consistency check to run at
+    # all, the capped DP can still fill every slot by matching against
+    # the *wrong* ones -- see _retry_with_column_shift's docstring for
+    # the real case this was built from). Revisited once every row's
+    # first pass is done, so a column's shift can be estimated from *any*
+    # row in it, not just earlier ones.
+    column_dx_samples: Dict[float, List[float]] = {}
+    # (question, col, boxes_sorted, nominal_xs, choices) for every column-
+    # group that came out of the first pass with at least one slot still
+    # unmatched -- revisited in the second pass below.
+    pending_retries: List[Tuple[int, ColumnSpec, List[_Box], List[float], List[str]]] = []
+    # question -> its own column's x_start, so the final per-slot fallback
+    # below can look up whether that column has its own decisively-
+    # different shift on file (see column_dx there) for any slot still
+    # unmatched after the retry pass.
+    question_column_x_start: Dict[int, float] = {}
+
     for row_index, row_boxes in enumerate(rows):
         groups = _split_columns(row_boxes, gap_threshold)
         active_columns = [
@@ -459,6 +527,7 @@ def locate_section_bubbles(
             choices = template.choices_for(section.name, question)
             nominal_slots = [(choice, col.x_start + i * template.bubble_spacing_x) for i, choice in enumerate(choices)]
             nominal[question] = [(choice, x, col.y_start + row_index * col.row_height) for choice, x in nominal_slots]
+            question_column_x_start[question] = col.x_start
 
             if group:
                 group = _drop_size_outlier_boxes(group, len(choices))
@@ -494,6 +563,9 @@ def locate_section_bubbles(
             uniform = _uniform_shift_match(boxes_sorted, nominal_xs, template.bubble_radius)
             if uniform is not None:
                 matched_boxes = uniform
+                column_dx_samples.setdefault(col.x_start, []).extend(
+                    box.cx - nx for box, nx in zip(uniform, nominal_xs)
+                )
             else:
                 matched_boxes = _match_to_slots(
                     boxes_sorted, lambda b: b.cx, nominal_xs, max_distance=template.bubble_spacing_x / 2
@@ -501,9 +573,29 @@ def locate_section_bubbles(
             detected[question] = [
                 (box.cx, box.cy) if box is not None else None for box in matched_boxes
             ]
+            if any(box is None for box in matched_boxes):
+                pending_retries.append((question, col, boxes_sorted, nominal_xs, choices))
 
-    # Section-wide median shift from every bubble that got a clean match,
-    # used to correct the ones that didn't.
+    # Section-wide median shift from every bubble that got a clean match on
+    # the first pass, used to correct whatever's still unmatched below --
+    # deliberately snapshotted *before* the retry pass runs, even though
+    # retries can turn some of these same None slots into real matches too.
+    # A retry only ever fires on a row that already had a detection problem
+    # (see pending_retries above), so its newly-matched slots are real
+    # boxes but a less representative sample of "this section's ordinary
+    # shift" than the first pass's -- feeding them back into this median
+    # would let a fixed row's own correction quietly nudge the *section-
+    # wide* fallback estimate too, which every other, unrelated row's still-
+    # unmatched slots also draw on. Confirmed against a real sheet: a row
+    # with no detection problem of its own (both its answer's real box and
+    # the section's own median_dx unaffected by anything above) still
+    # flipped from a correct answer to blank, because two *other* rows'
+    # retries added new samples to this median, nudging it by a few px --
+    # just enough to move a fallback-estimated neighbor bubble's fill_ratio
+    # across this row's own baseline-subtraction threshold (see
+    # detect.decide_answer). Keeping this section-wide estimate exactly as
+    # stable as it was before the retry mechanism existed is what avoids
+    # that ripple.
     dxs = []
     dys = []
     for question, slots in detected.items():
@@ -515,14 +607,67 @@ def locate_section_bubbles(
     median_dx = statistics.median(dxs) if dxs else 0.0
     median_dy = statistics.median(dys) if dys else 0.0
 
+    for question, col, boxes_sorted, nominal_xs, choices in pending_retries:
+        retried = _retry_with_column_shift(
+            boxes_sorted, nominal_xs, column_dx_samples.get(col.x_start), template.bubble_spacing_x
+        )
+        if retried is None:
+            continue
+        still_unmatched = sum(1 for m in detected[question] if m is None)
+        newly_unmatched = sum(1 for m in retried if m is None)
+        # Not just a strict improvement in fill count: the original match
+        # (against *uncorrected* nominal) can "successfully" fill some
+        # slots while getting their identity wrong -- see this function's
+        # own docstring above. Once a column's shift is confirmed
+        # elsewhere, its own shifted-nominal match is the more trustworthy
+        # read for every slot in this row, not just the ones the original
+        # pass happened to leave empty; only reject it if it's actually
+        # worse (fills fewer slots than before).
+        if newly_unmatched <= still_unmatched:
+            detected[question] = [(box.cx, box.cy) if box is not None else None for box in retried]
+
+    # A column's own dx is only preferred over the section-wide one here if
+    # it's decisively different -- not just present with enough samples
+    # (_MIN_COLUMN_SHIFT_SAMPLES). A slot that reaches this fallback loop
+    # still None was never matched to any real detected box at all (unlike
+    # _retry_with_column_shift above, which only ever re-matches boxes that
+    # were actually found), so *some* per-column noise is expected even on
+    # a column with no real problem -- confirmed against a real sheet whose
+    # every column showed its own few-px median_dx purely from ordinary
+    # sub-pixel detection noise, not a real shift. Trusting all of those
+    # unconditionally nudged a handful of otherwise-fine rows' fallback
+    # positions on that sheet by exactly that few px each -- individually
+    # harmless, but enough of them summed sheet-wide moved a confidently-
+    # read answer's dark_fraction (see detect._dark_fraction) just past a
+    # new gap in the sheet's own distribution that hadn't existed before,
+    # and it was wiped to blank (see detect._apply_readability_checks).
+    # The real cases this correction exists for (see _retry_with_column_shift's
+    # docstring) shifted by a large fraction of a whole bubble_spacing_x or
+    # more -- an off-by-one-slot's worth of misalignment, not sub-pixel
+    # noise. Confirmed noise ceiling on a real sheet with no real per-column
+    # problem: every column's own median sat within ~6px of the section's
+    # (see above); confirmed real shifts needing this correction ranged
+    # from ~30px to ~150px on two different real sheets. Half of
+    # bubble_spacing_x sits with comfortable margin below every real case
+    # measured so far and well above that noise ceiling.
+    column_dx = {
+        x_start: statistics.median(samples)
+        for x_start, samples in column_dx_samples.items()
+        if len(samples) >= _MIN_COLUMN_SHIFT_SAMPLES
+    }
+    column_dx = {
+        x_start: dx for x_start, dx in column_dx.items() if abs(dx - median_dx) >= template.bubble_spacing_x / 2
+    }
+
     result: Dict[int, List[tuple]] = {}
     for question, slots in detected.items():
+        dx = column_dx.get(question_column_x_start[question], median_dx)
         entries = []
         for (choice, nx, ny), match in zip(nominal[question], slots):
             if match is not None:
                 x, y = match
             else:
-                x, y = nx + median_dx, ny + median_dy
+                x, y = nx + dx, ny + median_dy
             entries.append((choice, round(x), round(y)))
         result[question] = entries
 

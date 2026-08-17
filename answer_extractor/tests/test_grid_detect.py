@@ -15,6 +15,7 @@ from answer_extractor.grid_detect import (
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
     _match_to_slots,
+    _retry_with_column_shift,
     _uniform_shift_match,
     locate_section_bubbles,
 )
@@ -186,6 +187,50 @@ def test_uniform_shift_match_returns_none_for_empty_boxes():
     assert _uniform_shift_match([], [290.0, 320.67], radius=11) is None
 
 
+# -- _retry_with_column_shift: pure logic tests -------------------------------
+#
+# Regression coverage for a fifth real bug, found on a real photographed
+# (not flatbed-scanned) sheet whose one rightmost column sat, row after
+# row, a consistent ~43px left of nominal -- confirmed on a neighboring row
+# in the same column that had all 4 real boxes and passed
+# _uniform_shift_match outright. A row in that same column with only 2 of
+# its 4 real boxes detected doesn't qualify for that whole-row check at all
+# (it needs every slot filled to verify internal consistency), so the
+# plain capped match in _match_to_slots ran against the *raw*, uncorrected
+# nominal positions instead -- and matched its 2 real boxes to the wrong
+# two slots entirely, silently reading the *next* choice's ink. Both boxes
+# were within the ordinary cap of the *shifted* nominal positions, just not
+# the unshifted ones.
+
+
+def test_retry_with_column_shift_recovers_a_short_row_using_the_columns_own_offset():
+    # Real deltas from the sheet that motivated this: every confirmed box
+    # in the column ~43px left of nominal. This row only has 2 of its 4
+    # real boxes (the other 2 genuinely undetected, not just off nominal).
+    nominal = [1270.5, 1301.17, 1331.83, 1362.5]
+    boxes = [_box(1288.8, 27, 20), _box(1319.5, 27, 20)]  # the row's real H, J boxes, ~43px left of nominal
+    samples = [-43.0, -43.0, -42.5, -43.5]  # from _uniform_shift_match elsewhere in this column
+    result = _retry_with_column_shift(boxes, nominal, samples, bubble_spacing_x=30.67)
+    assert result == [None, None, boxes[0], boxes[1]]
+
+
+def test_retry_with_column_shift_returns_none_below_the_minimum_sample_count():
+    # A single sample (e.g. from one other row's uniform match) isn't
+    # enough to trust a column's own shift over the section-wide one --
+    # see _MIN_COLUMN_SHIFT_SAMPLES.
+    nominal = [1270.5, 1301.17, 1331.83, 1362.5]
+    boxes = [_box(1335.0, 27, 20), _box(1368.0, 27, 20)]
+    result = _retry_with_column_shift(boxes, nominal, [-43.0], bubble_spacing_x=30.67)
+    assert result is None
+
+
+def test_retry_with_column_shift_returns_none_without_any_samples():
+    nominal = [1270.5, 1301.17, 1331.83, 1362.5]
+    boxes = [_box(1335.0, 27, 20), _box(1368.0, 27, 20)]
+    result = _retry_with_column_shift(boxes, nominal, None, bubble_spacing_x=30.67)
+    assert result is None
+
+
 # -- _drop_sparse_rows: pure logic tests --------------------------------------
 #
 # Regression coverage for a third real bug found against a real scanned ACT
@@ -242,6 +287,90 @@ def test_drop_sparse_rows_leaves_rows_alone_when_count_is_under_expected():
 def test_drop_sparse_rows_is_a_no_op_when_nothing_is_sparse():
     rows = [_row(20), _row(19), _row(18)]
     assert _drop_sparse_rows(rows, expected_rows=3) == rows
+
+
+# -- locate_section_bubbles: column-shift integration test -------------------
+#
+# End-to-end reproduction of the real bug _retry_with_column_shift fixes
+# (see its own docstring above): one column sits, row after row, a
+# consistent offset from nominal -- confirmed on a fully-detected
+# neighboring row in the same column -- while a *different* row in that
+# same column only has some of its real boxes detected at all, and the
+# marked one is among the missing. Without the fix, that short row's
+# available boxes get matched against raw, uncorrected nominal positions
+# and silently land in the wrong slots.
+
+
+def make_two_column_template() -> Template:
+    return Template.from_dict(
+        {
+            "page": {"width": 900, "height": 900},
+            "sections": [
+                {
+                    "name": "Answers",
+                    "columns": [
+                        # Column A: rows are drawn shifted (see the test) to
+                        # simulate the real per-column perspective drift.
+                        {"first_question": 1, "last_question": 2, "x_start": 150, "y_start": 100, "row_height": 60},
+                        # Column B: left alone, untouched by the shift, and
+                        # far enough away that pasted regions below never
+                        # reach it -- exercises that the fix doesn't perturb
+                        # a column with no problem of its own.
+                        {"first_question": 3, "last_question": 3, "x_start": 600, "y_start": 100, "row_height": 60},
+                    ],
+                }
+            ],
+            "bubble_spacing_x": 30,
+            "bubble_radius": 11,
+            "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+            "thresholds": {"fill_ratio_min": 0.35, "relative_margin": 0.15},
+        }
+    )
+
+
+def test_locate_section_bubbles_recovers_a_short_row_in_a_shifted_column():
+    template = make_two_column_template()
+    section = template.sections[0]
+    pad = template.bubble_radius + 6
+
+    # Q1 (column A) drawn fully shifted +40px, all 4 boxes present -- this
+    # is what lets _uniform_shift_match confirm column A's own offset.
+    shifted = render_sheet(template, {1: ["F"]}, letters=True, x_shift=40)
+    # Base canvas: everything else drawn unshifted (including column A's
+    # Q2 row, which gets overwritten below). Q3 (odd) -> F/G/H/J.
+    image = render_sheet(template, {3: ["G"]}, letters=True)
+
+    bubbles = template.bubbles()
+    q1_row_y = bubbles[("Answers", 1)][0].y
+    image[q1_row_y - pad : q1_row_y + pad, :450] = shifted[q1_row_y - pad : q1_row_y + pad, :450]
+
+    # Column A, row 2 (Q2, even -> A/B/C/D): only 2 of its 4 real boxes are
+    # actually present -- A/B genuinely undetected (erased entirely, not
+    # just unmarked), C/D drawn at their real, shifted (+40px) position, C
+    # filled in as the genuine mark. Mirrors the real case: the row's
+    # available boxes are within the retry's shifted cap, not the raw one.
+    q2_row_y = bubbles[("Answers", 2)][0].y
+    image[q2_row_y - pad : q2_row_y + pad, :450] = 255  # erase Q2's whole (unshifted) row first
+    shifted_q2 = render_sheet(template, {2: ["C"]}, letters=True, x_shift=40)
+    c_x = next(b.x for b in bubbles[("Answers", 2)] if b.choice == "C") + 40
+    d_x = next(b.x for b in bubbles[("Answers", 2)] if b.choice == "D") + 40
+    image[q2_row_y - pad : q2_row_y + pad, c_x - pad : d_x + pad] = shifted_q2[
+        q2_row_y - pad : q2_row_y + pad, c_x - pad : d_x + pad
+    ]
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    detected = locate_section_bubbles(gray, template, section)
+    assert detected is not None
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r.answer for r in results}
+    # The real bug: without the column-shift retry, Q2's available C/D
+    # boxes get matched to A/B's raw-nominal slots instead, silently
+    # reading C's ink as "A".
+    assert by_q[2] == "C"
+    # Column B (never shifted, never missing a box) must read correctly
+    # throughout -- confirms the fix doesn't perturb an unrelated column.
+    assert by_q[3] == "G"
 
 
 def test_drop_sparse_rows_trims_multiple_excess_rows():

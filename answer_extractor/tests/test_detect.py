@@ -4,6 +4,7 @@ import pytest
 
 from answer_extractor.detect import (
     QuestionResult,
+    _apply_readability_checks,
     _baseline_adjust,
     _crop_patch,
     _dark_fraction,
@@ -868,6 +869,70 @@ def test_find_mark_floor_ignores_a_gap_that_would_isolate_only_a_tiny_minority()
     continuous_tail = [0.04 + 0.002 * i for i in range(204)]  # spread 0.04-0.446, no real gap
     lone_outlier = [0.6]
     assert _find_mark_floor(continuous_tail + lone_outlier) is None
+
+
+# -- _apply_readability_checks: the sheet-relative floor's own confidence ----
+#    exemption
+#
+# Regression coverage for a real sheet where a widespread, unrelated fix
+# (grid_detect's per-column shift correction -- see that module) nudged
+# many *fallback-estimated* bubble positions sheet-wide by only a few px
+# each, individually harmless, but enough of them together to open up a
+# gap in the sheet's own dark_fraction distribution that hadn't existed
+# before and didn't reflect any real faded/smudged region. That gap wiped
+# an otherwise confidently and correctly read answer to blank. Mechanism 1
+# (_UNREADABLE_MAX) already never overrules a single-answer result
+# score_bubbles found confidently and not low_confidence (see
+# test_evaluate_sheet_does_not_wipe_a_confident_answer_marked_in_light_pencil
+# above) -- mechanism 2 needs the identical exemption for the identical
+# reason: independent, already-trustworthy evidence of a mark that a
+# noisy sheet-relative floor has no business overruling.
+
+
+def _readability_check_fixture(target_low_confidence: bool):
+    """20 questions (the minimum _apply_readability_checks needs before it
+    will even compute a floor), each with its own single, well-separated
+    bubble. Questions 1-19 are genuine, solidly-dark marks (dark_fraction
+    ~0.5+); question 20 is *also* already answered confidently by
+    score_bubbles' own signal (`low_confidence` set directly, decoupled
+    from the image -- this function never reads fill_ratios at all) but
+    drawn with a decisively smaller dark region, well past
+    _MARK_FLOOR_MIN_GAP below the other 19 -- reproducing the real sheet's
+    gap without needing a real column-shift bug to produce it.
+    """
+    radius = 15
+    value = np.full((60, 60 * 20), 255, dtype=np.uint8)
+    results = []
+    bubbles_by_qkey = {}
+    for q in range(1, 21):
+        x = 30 + (q - 1) * 60
+        y = 30
+        bubbles_by_qkey[("Answers", q)] = [("F", x, y)]
+        if q < 20:
+            cv2.circle(value, (x, y), int(radius * 0.85), 0, -1)  # solidly dark -> high dark_fraction
+            low_confidence = False
+        else:
+            cv2.circle(value, (x, y), 4, 0, -1)  # small dark region -> low dark_fraction
+            low_confidence = target_low_confidence
+        results.append(_qr(q, "F", low_confidence=low_confidence))
+    return results, bubbles_by_qkey, value, radius
+
+
+def test_readability_floor_does_not_wipe_an_already_confident_answer():
+    results, bubbles_by_qkey, value, radius = _readability_check_fixture(target_low_confidence=False)
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    q20 = next(r for r in updated if r.question == 20)
+    assert q20.answer == "F"
+    assert not q20.unreadable
+
+
+def test_readability_floor_still_wipes_a_low_confidence_answer_below_it():
+    # Same gap, but question 20 wasn't already confident on its own terms
+    # -- the floor must still catch this, the real problem it exists for.
+    results, bubbles_by_qkey, value, radius = _readability_check_fixture(target_low_confidence=True)
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    q20 = next(r for r in updated if r.question == 20)
+    assert q20.answer == ""
 
 
 def _fade_bubble(image: np.ndarray, x: int, y: int, radius: int, light_value: int = 170) -> None:

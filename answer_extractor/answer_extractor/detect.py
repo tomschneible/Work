@@ -772,7 +772,19 @@ def _apply_readability_checks(
        have some real ink, just not enough to trust as a deliberate mark).
        Skipped entirely if the sheet doesn't show a decisive enough gap to
        derive a safe floor from (see _find_mark_floor) -- most sheets
-       don't have this problem, and are left untouched.
+       don't have this problem, and are left untouched. Like check 1, this
+       never overrules a single-answer result score_bubbles already found
+       confidently and not low_confidence -- found against a real sheet
+       (see grid_detect's per-column shift correction) where a handful of
+       rows' fallback-estimated bubble positions (used when a box wasn't
+       actually detected) shifted a few px sheet-wide once the fix landed,
+       which was enough to open up a gap in the sheet's dark_fraction
+       distribution that hadn't existed before and didn't reflect any real
+       faded/smudged region -- silently wiping an otherwise confidently
+       and correctly read answer to blank. A genuine smudge or faded mark
+       that fools this floor is, per _find_mark_floor's own module
+       history, the sheet-relative exception, not one that also happens to
+       win score_bubbles' own independent area comparison decisively.
     """
     dark_fractions_by_result: List[Dict[str, float]] = []
     for r in results:
@@ -810,6 +822,8 @@ def _apply_readability_checks(
     if floor is not None:
         for i, r in enumerate(updated):
             if r.answer == "" or r.pattern_inferred or r.unreadable:
+                continue
+            if r.answer != "MULTIPLE" and not r.low_confidence:
                 continue
             # A MULTIPLE result has no single "winning" choice; if even its
             # best candidate doesn't clear the floor, none of them do --
