@@ -813,11 +813,30 @@ def _apply_readability_checks(
     Two independent checks, in order:
     1. Absolute: a question where every choice has essentially no dark
        ink anywhere gets flagged `unreadable` and forced blank -- unless
-       score_bubbles' own area-based signal already answered it
-       confidently, which this never overrules (see _UNREADABLE_MAX;
-       confirmed against a real sheet marked throughout in genuinely
-       light pencil that score_bubbles read correctly and this absolute
-       floor did not).
+       score_bubbles' own area-based signal already settled on a single
+       choice, which this never overrules (see _UNREADABLE_MAX; confirmed
+       against a real sheet marked throughout in genuinely light pencil
+       that score_bubbles read correctly and this absolute floor did
+       not). Deliberately *not* conditioned on low_confidence here, unlike
+       check 2 below: decide_answer only ever returns a single candidate
+       once it's already cleared relative_margin against every other
+       choice in the row -- real, structural differentiation, not the
+       coin-flip low_confidence alone would suggest. Found against a real
+       sheet marked throughout in genuinely gray (not black) pencil:
+       fill_ratio's own relative comparison correctly and decisively
+       picked the true mark in every row (never MULTIPLE, never a wrong
+       letter), just with a thin absolute margin over the sheet's
+       (irrelevantly) inflated low_confidence floor -- and
+       _dark_fraction's strict near-black scale, reading near-zero
+       throughout for the exact same reason light pencil does, wiped
+       those correct answers right back to blank. Confirmed safe across
+       every previously-validated real sheet (2,900+ questions): loosening
+       this exemption from "confident" to "any real single winner" didn't
+       change a single answer on any of them -- the real faded-region
+       problem this check exists to catch (user-reported as "scattered
+       wrong single answers and MULTIPLEs" -- see this module's own test
+       history) reliably still shows up as MULTIPLE or an outright blank
+       here too, both still fully protected.
     2. Sheet-relative: among whatever's left, a question (single-answer or
        MULTIPLE alike) whose best candidate falls below *this sheet's* own
        floor separating its genuine marks from weaker artifacts gets
@@ -861,12 +880,14 @@ def _apply_readability_checks(
 
     updated = list(results)
     for i, r in enumerate(results):
-        if (r.answer not in ("", "MULTIPLE") and not r.low_confidence) or r.solid_fill:
-            # score_bubbles already found one choice confidently, decisively
-            # ahead of the rest by area -- real, independent evidence of a
-            # mark that this absolute darkness floor has no business
-            # overruling. Found against a real sheet marked throughout in
-            # genuinely light pencil: score_bubbles' own Otsu-relative
+        if r.answer not in ("", "MULTIPLE") or r.solid_fill:
+            # score_bubbles already found one choice, decisively ahead of
+            # the rest by area (relative_margin) -- real, structural
+            # evidence of a mark that this absolute darkness floor has no
+            # business overruling, regardless of low_confidence (see this
+            # function's own docstring for why that's safe to drop here
+            # specifically). Found against a real sheet marked throughout
+            # in genuinely light pencil: score_bubbles' own Otsu-relative
             # binarization correctly separated every mark from that sheet's
             # paper/print regardless, but _dark_fraction's *strict, sheet-
             # independent* near-black threshold (deliberately so, see its

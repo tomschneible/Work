@@ -1021,6 +1021,49 @@ def test_readability_absolute_floor_does_not_wipe_a_solid_fill_answer():
     assert not updated[0].unreadable
 
 
+def test_readability_absolute_floor_does_not_wipe_a_direct_low_confidence_answer():
+    # Regression coverage for a real sheet marked throughout in genuinely
+    # gray (not black) pencil: fill_ratio's own relative comparison
+    # decisively (past relative_margin) picked the true mark, just with a
+    # thin absolute margin over the sheet's low_confidence floor --
+    # unlike the light-pencil case above, this answer was never rescued
+    # through solid_fill or partial_mark, it's decide_answer's own direct
+    # single candidate. _dark_fraction's strict near-black scale read
+    # near-zero throughout the row for the same reason light pencil does,
+    # and used to wipe this correct, decisively-single answer to blank.
+    radius = 15
+    value = np.full((60, 60), 255, dtype=np.uint8)  # nothing dark drawn at all
+    bubbles_by_qkey = {("Answers", 1): [("F", 30, 30)]}
+    results = [_qr(1, "F", low_confidence=True)]
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    assert updated[0].answer == "F"
+    assert not updated[0].unreadable
+
+
+def test_readability_absolute_floor_still_wipes_a_multiple_with_near_zero_darkness():
+    # The exemption above is deliberately scoped to a real single winner
+    # (decide_answer already cleared relative_margin against every other
+    # choice) -- a MULTIPLE result never got that same differentiation,
+    # so it stays fully protected, the same real problem this check
+    # exists to catch (see this function's own docstring).
+    radius = 15
+    value = np.full((60, 60), 255, dtype=np.uint8)  # nothing dark drawn at all
+    bubbles_by_qkey = {("Answers", 1): [("F", 30, 30), ("G", 30, 30)]}
+    results = [
+        QuestionResult(
+            section="Answers",
+            question=1,
+            answer="MULTIPLE",
+            candidates=["F", "G"],
+            fill_ratios={},
+            low_confidence=True,
+        )
+    ]
+    updated = _apply_readability_checks(results, bubbles_by_qkey, value, radius)
+    assert updated[0].answer == ""
+    assert updated[0].unreadable
+
+
 def _fade_bubble(image: np.ndarray, x: int, y: int, radius: int, light_value: int = 170) -> None:
     """Simulate a faded/washed-out print: cap how dark *any* ink already in
     this bubble's neighborhood (ring, printed letter, whatever) is allowed
