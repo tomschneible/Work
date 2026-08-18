@@ -444,6 +444,61 @@ def _retry_with_column_shift(
     return _match_to_slots(boxes_sorted, lambda b: b.cx, shifted_nominal_xs, max_distance=bubble_spacing_x / 2)
 
 
+def _resolve_extra_boxes_by_column_shift(
+    boxes_sorted: List[_Box],
+    nominal_xs: Sequence[float],
+    column_dx_samples: Optional[List[float]],
+    radius: int,
+) -> Optional[List[_Box]]:
+    """Pick which contiguous run of `len(nominal_xs)` boxes out of a
+    *larger* `boxes_sorted` is the row's real choices, when
+    _drop_size_outlier_boxes declined to guess (the extra box wasn't
+    decisively smaller by area) -- only ever called on a group that still
+    has more boxes than slots.
+
+    Real case this was built from: a question-number label (e.g. "12")
+    printed just left of a row's real first bubble, close enough in size
+    that the area-based drop correctly refused to touch it (see its own
+    docstring on why that refusal itself is by design). Passed straight
+    through, the capped position-based match then had 5 boxes for 4
+    slots and picked whichever contiguous 4 minimized total distance --
+    which turned out to be the label plus the row's first 3 real bubbles,
+    *not* the row's real last bubble (the one genuinely marked, in the
+    case that surfaced this): both the label and the true last bubble
+    sat within the ordinary cap of their respective misaligned slot, so
+    nothing in that match was individually implausible enough to reject.
+
+    The real signal position-based matching alone can't see: this
+    column's own already-established shift (`column_dx_samples`, from
+    _uniform_shift_match's confirmed matches on *other* rows in the same
+    column -- see _retry_with_column_shift). Tries every contiguous
+    len(nominal_xs)-sized window of `boxes_sorted` through
+    _uniform_shift_match (both the label+3-real and the 3-real+true-last
+    windows passed that check on the real sheet -- a label sized close
+    enough to a real bubble to fool the area check is also close enough
+    to fool this consistency check by itself) and returns whichever
+    passing window's own implied shift sits closest to the column's
+    established one. Returns None (defer to the existing capped match)
+    if `column_dx_samples` hasn't cleared _MIN_COLUMN_SHIFT_SAMPLES yet,
+    or if no window passes _uniform_shift_match at all.
+    """
+    if not column_dx_samples or len(column_dx_samples) < _MIN_COLUMN_SHIFT_SAMPLES:
+        return None
+    column_dx = statistics.median(column_dx_samples)
+    target_count = len(nominal_xs)
+    best_window, best_diff = None, None
+    for start in range(len(boxes_sorted) - target_count + 1):
+        window = boxes_sorted[start : start + target_count]
+        uniform = _uniform_shift_match(window, nominal_xs, radius)
+        if uniform is None:
+            continue
+        window_dx = statistics.median(b.cx - nx for b, nx in zip(uniform, nominal_xs))
+        diff = abs(window_dx - column_dx)
+        if best_diff is None or diff < best_diff:
+            best_window, best_diff = uniform, diff
+    return best_window
+
+
 def locate_section_bubbles(
     gray: np.ndarray, template: Template, section: Section
 ) -> Optional[Dict[int, List[tuple]]]:
@@ -491,6 +546,10 @@ def locate_section_bubbles(
     # group that came out of the first pass with at least one slot still
     # unmatched -- revisited in the second pass below.
     pending_retries: List[Tuple[int, ColumnSpec, List[_Box], List[float], List[str]]] = []
+    # Same shape, but for a column-group that came out of
+    # _drop_size_outlier_boxes with *more* boxes than slots -- see
+    # _resolve_extra_boxes_by_column_shift.
+    pending_extra_boxes: List[Tuple[int, ColumnSpec, List[_Box], List[float], List[str]]] = []
     # question -> its own column's x_start, so the final per-slot fallback
     # below can look up whether that column has its own decisively-
     # different shift on file (see column_dx there) for any slot still
@@ -575,6 +634,28 @@ def locate_section_bubbles(
             ]
             if any(box is None for box in matched_boxes):
                 pending_retries.append((question, col, boxes_sorted, nominal_xs, choices))
+            elif len(boxes_sorted) > len(nominal_xs):
+                # _drop_size_outlier_boxes declined to trim (the extra
+                # wasn't decisively smaller by area), so the capped match
+                # above picked *some* contiguous run of len(nominal_xs)
+                # boxes and filled every slot -- but with more real
+                # candidates than slots, "every slot filled" doesn't mean
+                # the right ones were kept. See
+                # _resolve_extra_boxes_by_column_shift.
+                pending_extra_boxes.append((question, col, boxes_sorted, nominal_xs, choices))
+
+    # Resolved before the section-wide median below (unlike the retry pass
+    # further down) precisely so a correction here *does* feed into it: a
+    # window that passes _uniform_shift_match is just as clean a match as
+    # any other one found in the first pass above -- there's no partial-
+    # data caveat here the way there is for a retry-derived match (see
+    # that pass's own comment on why *it* stays excluded).
+    for question, col, boxes_sorted, nominal_xs, choices in pending_extra_boxes:
+        resolved = _resolve_extra_boxes_by_column_shift(
+            boxes_sorted, nominal_xs, column_dx_samples.get(col.x_start), radius
+        )
+        if resolved is not None:
+            detected[question] = [(box.cx, box.cy) for box in resolved]
 
     # Section-wide median shift from every bubble that got a clean match on
     # the first pass, used to correct whatever's still unmatched below --

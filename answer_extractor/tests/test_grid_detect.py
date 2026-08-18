@@ -15,12 +15,13 @@ from answer_extractor.grid_detect import (
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
     _match_to_slots,
+    _resolve_extra_boxes_by_column_shift,
     _retry_with_column_shift,
     _uniform_shift_match,
     locate_section_bubbles,
 )
 from answer_extractor.template import Template
-from tests.synth import render_sheet
+from tests.synth import fill_bubble, render_sheet
 
 
 # -- _match_to_slots: pure logic tests ----------------------------------------
@@ -231,6 +232,58 @@ def test_retry_with_column_shift_returns_none_without_any_samples():
     assert result is None
 
 
+# -- _resolve_extra_boxes_by_column_shift: pure logic tests -------------------
+#
+# Regression coverage for a sixth real bug, found on a real scanned sheet:
+# a question-number label (e.g. "12") printed just left of a row's real
+# first bubble, close enough in size to the real bubbles that
+# _drop_size_outlier_boxes correctly declined to drop it as a decisive
+# outlier (see that function's own docstring on why that refusal is by
+# design). Passed through with 5 boxes for 4 slots, the capped
+# position-based match picked whichever contiguous 4 minimized total
+# distance -- the label plus the row's first 3 real bubbles, silently
+# dropping the row's real *last* bubble (the one genuinely marked, in the
+# case that surfaced this) instead of the label. Both the label and the
+# true last bubble sat within the ordinary cap of their respective
+# (wrong) slot, and both the "keep the label" and "keep the true last
+# bubble" 4-box windows passed _uniform_shift_match's own internal-
+# consistency check on their own -- a label sized close enough to fool
+# the area check is also close enough to fool that check by itself. What
+# position alone can't see: this column's own already-established shift
+# from _uniform_shift_match's confirmed matches on *other* rows in the
+# same column, real deltas from the sheet that motivated this (~19.7px
+# right of nominal, confirmed on 44 other boxes in the same column).
+
+
+def test_resolve_extra_boxes_by_column_shift_drops_the_label_not_the_true_last_bubble():
+    nominal = [290.0, 320.67, 351.34, 382.01]
+    label = _box(277.0, 24, 17)  # the "12" question-number glyph, not a bubble at all
+    real = [_box(309.5, 27, 20), _box(340.5, 27, 20), _box(371.0, 27, 20), _box(401.5, 27, 20)]
+    boxes_sorted = [label] + real
+    column_dx_samples = [19.83, 20.0, 19.66, 19.49] * 3  # from other, fully-matched rows in this column
+    result = _resolve_extra_boxes_by_column_shift(boxes_sorted, nominal, column_dx_samples, radius=11)
+    assert result == real
+
+
+def test_resolve_extra_boxes_by_column_shift_returns_none_below_the_minimum_sample_count():
+    nominal = [290.0, 320.67, 351.34, 382.01]
+    label = _box(277.0, 24, 17)
+    real = [_box(309.5, 27, 20), _box(340.5, 27, 20), _box(371.0, 27, 20), _box(401.5, 27, 20)]
+    result = _resolve_extra_boxes_by_column_shift([label] + real, nominal, [19.83], radius=11)
+    assert result is None
+
+
+def test_resolve_extra_boxes_by_column_shift_returns_none_when_no_window_is_uniform():
+    # Neither a genuine label-plus-shift shape nor any other internally
+    # consistent run -- five boxes scattered with no shared offset at
+    # all. Must not guess; the existing capped match is left standing.
+    nominal = [290.0, 320.67, 351.34, 382.01]
+    boxes_sorted = [_box(260.0, 24, 17), _box(300.0, 27, 20), _box(360.0, 27, 20), _box(395.0, 27, 20), _box(440.0, 27, 20)]
+    column_dx_samples = [19.83, 20.0, 19.66, 19.49] * 3
+    result = _resolve_extra_boxes_by_column_shift(boxes_sorted, nominal, column_dx_samples, radius=11)
+    assert result is None
+
+
 # -- _drop_sparse_rows: pure logic tests --------------------------------------
 #
 # Regression coverage for a third real bug found against a real scanned ACT
@@ -370,6 +423,54 @@ def test_locate_section_bubbles_recovers_a_short_row_in_a_shifted_column():
     assert by_q[2] == "C"
     # Column B (never shifted, never missing a box) must read correctly
     # throughout -- confirms the fix doesn't perturb an unrelated column.
+    assert by_q[3] == "G"
+
+
+# -- locate_section_bubbles: stray-label-plus-shift integration test ---------
+#
+# End-to-end reproduction of the real bug _resolve_extra_boxes_by_column_
+# shift fixes (see its own docstring above): a question-number label sized
+# close enough to the real bubbles that _drop_size_outlier_boxes correctly
+# declined to drop it, landing 5 boxes in a row with only 4 slots. The
+# capped match filled every slot anyway -- the label plus the row's first
+# 3 real (shifted) bubbles -- silently dropping the row's real *last*
+# bubble, the one genuinely marked, and reading a solid, unrelated label
+# glyph as the answer instead.
+
+
+def test_locate_section_bubbles_drops_a_same_sized_label_not_the_true_last_bubble():
+    template = make_two_column_template()
+    section = template.sections[0]
+
+    # Column A, Q1: fully shifted +20px, all 4 boxes present -- confirms
+    # column A's own offset via _uniform_shift_match, same as the test
+    # above. Column B, Q3: untouched, unshifted -- non-regression check.
+    image = render_sheet(template, {1: ["F"], 3: ["G"]}, letters=True, x_shift=20)
+
+    # Column A, Q2 (even -> A/B/C/D): all 4 real boxes are present, shifted
+    # +20px like Q1, with C genuinely marked -- but a same-sized stray
+    # label sits where the *unshifted* nominal A would be, giving this row
+    # 5 boxes for 4 slots, none of them individually implausible for a
+    # position-only match (see this function's own docstring).
+    bubbles = template.bubbles()
+    q2 = next(b for b in bubbles[("Answers", 2)] if b.choice == "A")
+    marked = next(b for b in bubbles[("Answers", 2)] if b.choice == "C")
+    cv2.circle(image, (q2.x - 10, q2.y), template.bubble_radius + 2, (0, 0, 0), -1)
+    fill_bubble(image, marked.x + 20, marked.y, template.bubble_radius, coverage=1.0, darkness=20)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    detected = locate_section_bubbles(gray, template, section)
+    assert detected is not None
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r.answer for r in results}
+    # The real bug: without this fix, the label steals A's slot and every
+    # real bubble after it shifts one slot over, reading the label's own
+    # solid ink as "A" (or losing the real mark to MULTIPLE/ambiguity)
+    # instead of the genuinely marked "C".
+    assert by_q[2] == "C"
+    # Neither of the other, unaffected rows should be disturbed.
+    assert by_q[1] == "F"
     assert by_q[3] == "G"
 
 
