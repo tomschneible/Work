@@ -485,6 +485,88 @@ def _partial_mark_agrees_with_fill_ratio(partial_mark: str, fill_ratios: Dict[st
     return partial_mark == max(adjusted, key=adjusted.get)
 
 
+# How much larger a gap in one choice letter's own residual distribution
+# (across every occurrence of that letter in the section) must be before
+# it's trusted as a real "some of these are marked, some aren't" split,
+# rather than noise -- see _find_letter_residual_floor. Residual values
+# cluster far more tightly than dark_fraction's when genuinely unmarked
+# (confirmed against five real cases across four sheets using this
+# reversed-print style: every unmarked occurrence of the same letter sat
+# within ~0.03 of its own cluster, with the genuine-mark gap itself
+# landing at 0.052-0.10), so this is deliberately smaller than
+# _MARK_FLOOR_MIN_GAP, which was calibrated for dark_fraction's much wider
+# natural spread on a different signal entirely.
+_LETTER_RESIDUAL_MIN_GAP = 0.05
+
+# A letter needs to appear at least this many times in a section before
+# its own residual distribution is trusted at all -- same bar
+# _apply_readability_checks already uses for _find_mark_floor, for the
+# same reason: a gap search over too few points can't tell a real cluster
+# boundary from noise.
+_LETTER_RESIDUAL_MIN_SAMPLES = 20
+
+
+def _find_letter_residual_floor(residuals: List[float]) -> "float | None":
+    """A gap search over one choice letter's own residual values across
+    every occurrence of that letter in a section, not dark_fraction
+    across a whole sheet -- shaped like _find_mark_floor's search, but
+    its majority-side requirement does NOT carry over (see below).
+
+    Built for a real sheet whose bubbles print as a solid dark oval with
+    the letter cut out in white -- a mark there *fills in* part of that
+    cutout rather than adding area the way it does everywhere else in
+    this module, which score_bubbles' ordinary fill_ratio_min floor
+    wasn't calibrated for. The residual signal (_residual_ratio) ranked
+    the genuine mark correctly there, clearing _PARTIAL_MARK_MIN_TOP with
+    real margin, but not by enough over that *row's* own runner-up to
+    clear _PARTIAL_MARK_MIN_GAP -- the wrong comparison for this shape of
+    problem, since a fill differs from this letter's own baseline in
+    degree, not by standing out against unrelated choices sharing its
+    row. What actually separates a genuine mark here: every *other*
+    occurrence of the same letter elsewhere in the section, which
+    cluster tightly when genuinely unmarked and leave a real, checkable
+    gap below one that's actually been marked in. Confirmed on five real
+    cases across four different sheets using this print style (not just
+    one outlier form) -- gaps of 0.054, 0.052, 0.052, 0.0996, and 0.057,
+    against adjacent same-cluster gaps under 0.024 on either side in
+    every case.
+
+    _find_mark_floor requires its "genuine" side to be at least as large
+    as its "suspect" side, because dark_fraction there spans an entire
+    sheet where most answers are expected to be genuinely marked. That
+    assumption does not transfer here: this distribution is every
+    occurrence of ONE letter across a section, and any specific letter is
+    only the correct answer to a minority of the questions it appears in
+    (roughly a quarter, for a 4-5 choice format) -- so the genuinely-
+    marked cluster is *structurally* the smaller side, not the larger
+    one. Requiring it to be the majority would reject real cases outright
+    (confirmed: both real cases above have above_count of 7-8 against
+    below_count of 12-16). What still needs guarding against is a single
+    noisy outlier -- one stray high value -- masquerading as a second
+    cluster, so the bar here is a minimum count on the smaller side
+    instead of a majority: at least two occurrences, so one lone reading
+    can never trigger this on its own.
+    """
+    if len(residuals) < _LETTER_RESIDUAL_MIN_SAMPLES:
+        return None
+    ordered = sorted(residuals)
+    n = len(ordered)
+    best_gap = 0.0
+    best_threshold = None
+    for i in range(n - 1):
+        below_count = i + 1
+        above_count = n - below_count
+        if above_count < 2:
+            continue
+        gap = ordered[i + 1] - ordered[i]
+        if gap > best_gap:
+            best_gap = gap
+            best_threshold = (ordered[i] + ordered[i + 1]) / 2
+    if best_gap < _LETTER_RESIDUAL_MIN_GAP:
+        return None
+    return best_threshold
+
+
 # A guessing/rushing student marking the same *position* over and over --
 # real behavior, common when time runs out -- leaves a distinctive
 # signature: many consecutive questions (spanning both odd/even choice
@@ -1027,6 +1109,31 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     x, y = next((bx, by) for choice, bx, by in bubbles if choice == answer)
                     if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
                         solid_fill = True
+
+                if answer == "":
+                    # Still blank: fill_ratio failed its own absolute
+                    # floor entirely (no candidates at all, not a near-
+                    # tie -- MULTIPLE already had its chance above), and
+                    # the residual signal's own isolated-leader check
+                    # just failed too. See _find_letter_residual_floor for
+                    # the real case this covers instead: comparing this
+                    # occurrence's residual against every *other*
+                    # occurrence of the same letter in the section, not
+                    # against this row's own (irrelevant, for this
+                    # problem) runner-up choices.
+                    residual_top = max(residuals, key=residuals.get) if residuals else None
+                    if (
+                        residual_top is not None
+                        and residuals[residual_top] >= _PARTIAL_MARK_MIN_TOP
+                        and _partial_mark_agrees_with_fill_ratio(residual_top, fill_ratios)
+                    ):
+                        letter_residuals = [
+                            _residual_ratio(binary, lx, ly, template.bubble_radius, choice_templates[residual_top])
+                            for lx, ly in bubbles_by_choice.get(residual_top, [])
+                        ]
+                        floor = _find_letter_residual_floor(letter_residuals)
+                        if floor is not None and residuals[residual_top] >= floor:
+                            answer, candidates, low_confidence = residual_top, [residual_top], True
 
             # A still-blank question's own leading choice, promoted only if
             # its ink is a genuinely solid fill (see _solid_fill_choice) --

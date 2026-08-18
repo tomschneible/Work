@@ -1,3 +1,5 @@
+from typing import Dict, List, Tuple
+
 import cv2
 import numpy as np
 import pytest
@@ -8,6 +10,7 @@ from answer_extractor.detect import (
     _baseline_adjust,
     _crop_patch,
     _dark_fraction,
+    _find_letter_residual_floor,
     _find_mark_floor,
     _infer_from_answer_pattern,
     _partial_mark_agrees_with_fill_ratio,
@@ -924,6 +927,177 @@ def test_find_mark_floor_ignores_a_gap_that_would_isolate_only_a_tiny_minority()
     continuous_tail = [0.04 + 0.002 * i for i in range(204)]  # spread 0.04-0.446, no real gap
     lone_outlier = [0.6]
     assert _find_mark_floor(continuous_tail + lone_outlier) is None
+
+
+# -- _find_letter_residual_floor: reversed/negative-print bubble style ------
+# ("solid black oval, letter cut out in white" -- a genuine mark fills in
+# the cutout rather than adding dark area) fix. Shaped after
+# _find_mark_floor's own gap search but deliberately does NOT reuse its
+# majority-side requirement -- see the function's docstring for why.
+
+
+def test_find_letter_residual_floor_locates_the_gap_between_clusters():
+    # Modeled directly on the real Epstein Reading "B" case: 12 genuinely
+    # unmarked occurrences of the letter clustered 0.10-0.13, and 8
+    # genuinely marked ones clustered 0.19-0.22 -- the marked side is a
+    # *minority* of this letter's total occurrences (as expected: any one
+    # letter is only the correct answer to a fraction of the questions it
+    # appears in), unlike _find_mark_floor's whole-sheet dark_fraction use.
+    unmarked = [0.10, 0.11, 0.12, 0.105, 0.115, 0.125, 0.13, 0.108, 0.118, 0.122, 0.112, 0.128]
+    marked = [0.19, 0.20, 0.21, 0.215, 0.205, 0.195, 0.22, 0.208]
+    floor = _find_letter_residual_floor(unmarked + marked)
+    assert floor is not None
+    assert 0.13 < floor < 0.19
+
+
+def test_find_letter_residual_floor_none_below_the_minimum_sample_count():
+    # Same decisive gap shape as above, but the letter appears too few
+    # times in the section to trust a gap search over it at all.
+    unmarked = [0.10, 0.11, 0.12, 0.105, 0.115, 0.125, 0.13, 0.108]
+    marked = [0.19, 0.20, 0.21]
+    assert len(unmarked + marked) < 20
+    assert _find_letter_residual_floor(unmarked + marked) is None
+
+
+def test_find_letter_residual_floor_none_when_the_letter_has_no_real_split():
+    # A normal, continuously-varying spread with no real two-cluster gap
+    # -- every occurrence of this letter genuinely unmarked, on a sheet
+    # that doesn't use the reversed-print style at all. Must not invent a
+    # threshold from noise.
+    values = [0.05 + 0.01 * i for i in range(22)]
+    assert _find_letter_residual_floor(values) is None
+
+
+def test_find_letter_residual_floor_rejects_a_lone_outlier():
+    # A single stray high reading (a scan artifact, bleed-through, one
+    # noisy occurrence) must not be trusted as its own "genuine" cluster
+    # just because it happens to sit far from the rest -- same guard
+    # _find_mark_floor needs against a lone outlier, though for a
+    # different structural reason (see the function's docstring: the
+    # majority-side check itself doesn't transfer to a per-letter
+    # distribution, but a minimum count on the smaller side still must).
+    tight_cluster = [0.10 + 0.005 * i for i in range(24)]  # spread 0.10-0.215
+    lone_outlier = [0.6]
+    assert _find_letter_residual_floor(tight_cluster + lone_outlier) is None
+
+
+def test_find_letter_residual_floor_trusts_a_small_minority_genuine_cluster():
+    # Direct contrast with _find_mark_floor's own
+    # test_find_mark_floor_ignores_a_gap_that_would_isolate_only_a_tiny_minority:
+    # there, a "genuine" side smaller than the "suspect" side is exactly
+    # what must be rejected, because dark_fraction there spans a whole
+    # sheet where most answers are expected to be genuinely marked. Here
+    # the opposite is true by construction -- one specific letter is only
+    # the correct answer to a minority of the questions it appears in --
+    # so a small but decisive minority cluster (5 of 25) must still be
+    # trusted, not rejected the way _find_mark_floor would reject it.
+    unmarked = [0.08 + 0.01 * i for i in range(20)]  # spread 0.08-0.27
+    marked = [0.40, 0.42, 0.44, 0.41, 0.43]
+    floor = _find_letter_residual_floor(unmarked + marked)
+    assert floor is not None
+    assert 0.27 < floor < 0.40
+
+
+def _reversed_print_template() -> Template:
+    # 25 questions, single A-D choice set on every row (not even/odd), so
+    # a single choice letter clears _LETTER_RESIDUAL_MIN_SAMPLES on its
+    # own -- unlike _pattern_template's alternating sets, which only give
+    # a letter half as many occurrences.
+    data = {
+        "page": {"width": 900, "height": 1400},
+        "sections": [
+            {
+                "name": "Answers",
+                "columns": [
+                    {"first_question": 1, "last_question": 25, "x_start": 150, "y_start": 60, "row_height": 50},
+                ],
+            }
+        ],
+        "bubble_spacing_x": 70,
+        "bubble_radius": 20,
+        "choices": {"even": ["A", "B", "C", "D"], "odd": ["A", "B", "C", "D"]},
+        "thresholds": {"fill_ratio_min": 0.225, "relative_margin": 0.13},
+    }
+    return Template.from_dict(data)
+
+
+def test_evaluate_sheet_rescues_a_ragged_mark_a_reversed_print_style_hides_from_everything_else():
+    # Regression coverage for a real bubble-sheet print style (confirmed
+    # against five real cases across four different sheets): a heavy
+    # printed ring around every choice, thick enough that even an
+    # unmarked bubble's area-based fill_ratio already sits well above
+    # this template's usual thresholds (see _thick_ring_template above --
+    # same underlying phenomenon), so a genuine mark barely moves
+    # fill_ratio's own relative margin. Real pencil marks on this style
+    # are also ragged rather than a clean, complete fill, and real scans
+    # are never perfectly clean around a genuine mark either -- both
+    # imitated here with fixed (not random -- the exact numbers below
+    # were tuned against this, so keep them deterministic) scribble/smudge
+    # strokes rather than fill_bubble's solid disc, which is exactly what
+    # keeps this row's *own* residual gap under _PARTIAL_MARK_MIN_GAP even
+    # though the marked choice's residual clears _PARTIAL_MARK_MIN_TOP on
+    # its own (confirmed below: the strict, row-only check still returns
+    # None here, same as it does on the real sheets this covers) --
+    # _solidity stays below _SOLID_FILL_MIN too (confirmed real: solid_fill
+    # stayed False on all five real cases). Neither existing signal can
+    # rescue this row; only _find_letter_residual_floor's per-letter
+    # comparison (this occurrence of "B" against every *other* occurrence
+    # of "B" in the section) can.
+    template = _reversed_print_template()
+    image = make_blank_sheet(template, letters=True)
+    for bubbles in template.bubbles().values():
+        for b in bubbles:
+            cv2.circle(image, (b.x, b.y), template.bubble_radius, (0, 0, 0), 12)
+
+    # Fixed relative-offset strokes, applied identically to every marked
+    # bubble (and, for the smudge, every other choice sharing its row) --
+    # deterministic so every marked row lands at the same residual value.
+    scribble = [(-9, -3, 6, 4), (-4, 8, 7, -6), (2, -8, -6, 5), (0, 0, 9, 9), (-8, 8, 8, -8)]
+    smudge = [(-6, -6, -1, -3), (5, 2, 8, 6)]
+    marked_qs = [1, 2, 3, 4, 5]  # 5 of 25 -- a minority of this letter's occurrences
+    for q in marked_qs:
+        row_bubbles = template.bubbles()[("Answers", q)]
+        b = next(bb for bb in row_bubbles if bb.choice == "B")
+        for x1, y1, x2, y2 in scribble:
+            cv2.line(image, (b.x + x1, b.y + y1), (b.x + x2, b.y + y2), (15, 15, 15), 2)
+        for other in row_bubbles:
+            if other.choice == "B":
+                continue
+            for x1, y1, x2, y2 in smudge:
+                cv2.line(image, (other.x + x1, other.y + y1), (other.x + x2, other.y + y2), (30, 30, 30), 2)
+
+    binary = binarize(image)
+    bubbles = [(b.choice, b.x, b.y) for b in template.bubbles()[("Answers", 1)]]
+    fr = score_bubbles(binary, bubbles, template.bubble_radius)
+    fr_answer, _, _ = decide_answer(fr, template.thresholds.fill_ratio_min, template.thresholds.relative_margin)
+    assert fr_answer == "", "fixture should reproduce the real bug: fill_ratio alone reads this row blank"
+    assert _solidity(binary, *next((x, y) for c, x, y in bubbles if c == "B"), template.bubble_radius) < 0.32, (
+        "fixture should reproduce the real bug: the mark is too ragged to read as solid, either"
+    )
+    bubbles_by_choice: Dict[str, List[Tuple[int, int]]] = {}
+    for q in range(1, 26):
+        for bb in template.bubbles()[("Answers", q)]:
+            bubbles_by_choice.setdefault(bb.choice, []).append((bb.x, bb.y))
+    choice_templates = build_choice_templates(binary, bubbles_by_choice, template.bubble_radius)
+    row1_residuals = {
+        choice: _residual_ratio(binary, x, y, template.bubble_radius, choice_templates[choice]) for choice, x, y in bubbles
+    }
+    assert _partial_mark_choice(row1_residuals) is None, (
+        "fixture should reproduce the real bug: this row's own residual gap is too tight for the strict check"
+    )
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r for r in results}
+    for q in marked_qs:
+        assert by_q[q].answer == "B"
+        assert by_q[q].low_confidence
+        assert not by_q[q].solid_fill  # rescued by the residual floor, not solidity
+    # A genuinely unmarked row using the same heavy baseline print must
+    # stay blank -- this signal must not fire just because the row's
+    # baseline ink is heavy, only when this letter's own residual
+    # actually stands apart from its other occurrences in the section.
+    for q in range(6, 26):
+        assert by_q[q].answer == ""
 
 
 # -- _apply_readability_checks: the sheet-relative floor's own confidence ----
