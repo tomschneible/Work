@@ -69,6 +69,26 @@ _MAX_HEIGHT_RATIO = 2.6
 # the template.
 _ROW_Y_TOLERANCE_RATIO = 0.75
 
+# _find_glyph_boxes's adaptive-threshold neighborhood, in units of
+# bubble_radius, and the constant subtracted from each neighborhood's own
+# weighted mean before calling a pixel foreground -- see that function's
+# `adaptive` parameter for what this is for. ~2.8x radius (confirmed
+# against a real 22px-tall shaded row: comfortably wider than one bubble,
+# so a bubble's own ink can't dominate its own neighborhood's mean, but
+# comfortably narrower than the shaded band's own extent, so the boundary
+# between a shaded and unshaded row doesn't blur together). C left at the
+# low end of what OpenCV recommends since real bubble ink is already much
+# darker than either a shaded or unshaded background -- a small constant
+# is enough margin without needlessly risking a faint mark.
+_ADAPTIVE_THRESHOLD_BLOCK_RATIO = 2.8
+_ADAPTIVE_THRESHOLD_C = 10
+
+
+def _odd(n: int) -> int:
+    """Round up to the nearest odd integer -- cv2.adaptiveThreshold
+    requires an odd blockSize."""
+    return n if n % 2 == 1 else n + 1
+
 
 @dataclasses.dataclass(frozen=True)
 class _Box:
@@ -86,7 +106,34 @@ class _Box:
         return self.y + self.h / 2
 
 
-def _find_glyph_boxes(gray: np.ndarray, radius: float, roi) -> List[_Box]:
+def _find_glyph_boxes(gray: np.ndarray, radius: float, roi, adaptive: bool = False) -> List[_Box]:
+    """`adaptive=False` (the default, tried first by locate_section_bubbles)
+    binarizes against one fixed global cutoff -- simple, and correct for
+    every sheet checked except one. `adaptive=True` is a fallback for that
+    one real sheet: it printed an alternating light-gray background band
+    behind every other row (a legibility aid, common on official-style
+    forms), which a fixed global threshold can't handle at all -- its
+    shaded rows measured 130-230 in raw pixel value, well under the fixed
+    cutoff, so the *entire* band (not just the ink in it) binarized as
+    foreground and merged into oversized blobs that failed the glyph size
+    filter outright, losing every bubble in those rows. Gaussian-weighted
+    adaptive thresholding computes each pixel's own cutoff from its local
+    neighborhood instead of one global constant, so a shaded band's
+    background and a white row's background each separately settle near
+    their own local mean regardless of the other's -- only genuinely
+    darker ink (bubble ring, letter, mark) stands out from *either*.
+
+    Kept as an explicit fallback rather than the default: adaptive
+    thresholding redraws every glyph's exact pixel boundary slightly
+    differently even on a perfectly ordinary, unshaded sheet, which
+    nudges downstream box positions/sizes just enough to occasionally
+    flip a near-threshold confidence flag or residual-based call —
+    confirmed by running it globally against the full regression fleet.
+    Reaching for it only once the plain version has already failed to
+    find this section's expected row structure at all means it can only
+    ever turn a previous failure into a success, never perturb a sheet
+    that plain thresholding already reads correctly.
+    """
     x0, y0, x1, y1 = roi
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(gray.shape[1], x1), min(gray.shape[0], y1)
@@ -94,7 +141,13 @@ def _find_glyph_boxes(gray: np.ndarray, radius: float, roi) -> List[_Box]:
         return []
 
     patch = gray[y0:y1, x0:x1]
-    _, binary = cv2.threshold(patch, 200, 255, cv2.THRESH_BINARY_INV)
+    if adaptive:
+        block_size = _odd(round(radius * _ADAPTIVE_THRESHOLD_BLOCK_RATIO))
+        binary = cv2.adaptiveThreshold(
+            patch, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, _ADAPTIVE_THRESHOLD_C
+        )
+    else:
+        _, binary = cv2.threshold(patch, 200, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     min_w, max_w = radius * _MIN_SIZE_RATIO, radius * _MAX_SIZE_RATIO
@@ -570,17 +623,22 @@ def locate_section_bubbles(
     """
     radius = template.bubble_radius
     roi = _section_roi(section, template)
-    boxes = _find_glyph_boxes(gray, radius, roi)
-    if not boxes:
-        return None
-
     row_tolerance = radius * _ROW_Y_TOLERANCE_RATIO
-    rows = _cluster_rows(boxes, row_tolerance)
-
     expected_rows = max(c.last_question - c.first_question + 1 for c in section.columns)
-    rows = _drop_sparse_rows(rows, expected_rows)
+
+    boxes = _find_glyph_boxes(gray, radius, roi)
+    rows = _drop_sparse_rows(_cluster_rows(boxes, row_tolerance), expected_rows)
     if len(rows) != expected_rows:
-        return None
+        # Plain thresholding couldn't establish this section's expected
+        # row structure at all -- try again with adaptive thresholding
+        # (see _find_glyph_boxes's `adaptive` parameter) before giving up.
+        # Only ever reached after the ordinary path has already failed,
+        # so this can only turn a failure into a success, never disturb a
+        # section plain thresholding already reads correctly.
+        boxes = _find_glyph_boxes(gray, radius, roi, adaptive=True)
+        rows = _drop_sparse_rows(_cluster_rows(boxes, row_tolerance), expected_rows)
+        if len(rows) != expected_rows:
+            return None
 
     gap_threshold = _column_gap_threshold(template, section)
 

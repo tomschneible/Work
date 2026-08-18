@@ -12,9 +12,11 @@ import numpy as np
 from answer_extractor.detect import evaluate_sheet
 from answer_extractor.grid_detect import (
     _Box,
+    _cluster_rows,
     _column_group_max_distance,
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
+    _find_glyph_boxes,
     _match_to_slots,
     _positions_uniform,
     _resolve_extra_boxes_by_column_shift,
@@ -23,7 +25,7 @@ from answer_extractor.grid_detect import (
     locate_section_bubbles,
 )
 from answer_extractor.template import Template
-from tests.synth import fill_bubble, render_sheet
+from tests.synth import fill_bubble, make_blank_sheet, render_sheet
 
 
 # -- _match_to_slots: pure logic tests ----------------------------------------
@@ -684,3 +686,124 @@ def test_evaluate_sheet_falls_back_gracefully_when_detection_fails():
     results, fallback_sections = evaluate_sheet(image, template)
     assert "English" in fallback_sections
     assert len(results) == template.sections[0].num_questions + template.sections[1].num_questions
+
+
+# -- _find_glyph_boxes / locate_section_bubbles: shaded-row-band fallback ----
+#
+# Regression coverage for an eighth real bug, found on a real scanned
+# sheet: it printed an alternating light-gray background band behind
+# every other row (a legibility aid, common on official-style forms),
+# measuring 130-230 in raw pixel value on the shaded rows -- well under
+# _find_glyph_boxes's fixed global threshold (200). The *entire* band, not
+# just the ink in it, binarized as foreground and merged into oversized
+# blobs that failed the glyph size filter outright, losing every bubble in
+# those rows and failing every candidate template's structural match, on
+# every section of the sheet (each has some shaded rows). Fixed with an
+# adaptive-threshold fallback (see _find_glyph_boxes's `adaptive`
+# parameter), reached only once the ordinary fixed-threshold pass has
+# already failed to find a section's expected row structure -- confirmed
+# against the full regression fleet that this changes nothing for any
+# section the fixed-threshold pass already read correctly.
+
+
+def _shaded_row_canvas(radius: int) -> np.ndarray:
+    """A synthetic two-row, 4-bubble-per-row patch: row 1 on a plain white
+    background, row 2 on a light-gray shaded band (value 165, well under
+    the fixed threshold) -- reproducing the real sheet's own measured
+    shape closely enough that a fixed global threshold merges row 2's
+    bubbles into its background the same way."""
+    canvas = np.full((110, 400), 255, dtype=np.uint8)
+    cv2.rectangle(canvas, (0, 60), (400, 90), 165, -1)
+    for y in (25, 75):
+        for i in range(4):
+            cx = 40 + i * 40
+            cv2.ellipse(canvas, (cx, y), (round(radius * 1.27), round(radius * 0.91)), 0, 0, 360, 0, 2)
+    return canvas
+
+
+def test_find_glyph_boxes_fixed_threshold_loses_the_shaded_rows_bubbles():
+    radius = 11
+    canvas = _shaded_row_canvas(radius)
+    boxes = _find_glyph_boxes(canvas, radius, (0, 0, canvas.shape[1], canvas.shape[0]), adaptive=False)
+    # Only row 1's (unshaded) 4 bubbles survive; row 2's are gone entirely.
+    assert len(boxes) == 4
+    assert all(b.cy < 50 for b in boxes)
+
+
+def test_find_glyph_boxes_adaptive_recovers_both_rows():
+    radius = 11
+    canvas = _shaded_row_canvas(radius)
+    boxes = _find_glyph_boxes(canvas, radius, (0, 0, canvas.shape[1], canvas.shape[0]), adaptive=True)
+    assert len(boxes) == 8
+    assert sum(1 for b in boxes if b.cy < 50) == 4  # row 1, unshaded
+    assert sum(1 for b in boxes if b.cy > 50) == 4  # row 2, shaded
+
+
+def _shaded_template() -> Template:
+    return Template.from_dict(
+        {
+            "page": {"width": 900, "height": 900},
+            "sections": [
+                {
+                    "name": "Answers",
+                    "columns": [{"first_question": 1, "last_question": 6, "x_start": 150, "y_start": 100, "row_height": 30}],
+                }
+            ],
+            "bubble_spacing_x": 30,
+            "bubble_radius": 11,
+            "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+            "thresholds": {"fill_ratio_min": 0.35, "relative_margin": 0.15},
+        }
+    )
+
+
+def _draw_shaded_bands(image: np.ndarray, template: Template, questions) -> None:
+    bubbles = template.bubbles()
+    pad = template.bubble_radius + 6
+    for q in questions:
+        y = bubbles[("Answers", q)][0].y
+        cv2.rectangle(image, (0, y - pad), (image.shape[1], y + pad), (170, 170, 170), -1)
+        for b in bubbles[("Answers", q)]:
+            cv2.circle(image, (b.x, b.y), template.bubble_radius, (0, 0, 0), 3)
+            cv2.putText(image, b.choice, (b.x - 6, b.y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
+
+
+def test_locate_section_bubbles_returns_none_for_a_shaded_section_without_the_fallback():
+    # Confirms the fixture actually reproduces the real failure -- without
+    # ever calling the adaptive fallback -- before checking the fix below.
+    template = _shaded_template()
+    image = make_blank_sheet(template, letters=True)
+    _draw_shaded_bands(image, template, (2, 4, 6))
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    boxes = _find_glyph_boxes(gray, template.bubble_radius, (0, 0, 900, 900), adaptive=False)
+    row_tolerance = template.bubble_radius * 0.75
+    rows = _drop_sparse_rows(_cluster_rows(boxes, row_tolerance), 6)
+    assert len(rows) != 6
+
+
+def test_locate_section_bubbles_recovers_a_fully_shaded_row_section():
+    # Scoped to locate_section_bubbles's own job -- finding each shaded
+    # row's real bubble positions -- rather than the full evaluate_sheet
+    # answer, which also depends on binarize()'s separate, already-tested
+    # baseline-adjustment handling of an elevated fill_ratio floor (see
+    # test_detect.py's own heavy-baseline-print tests) that a flat
+    # synthetic shading block doesn't reproduce faithfully enough to
+    # exercise here.
+    template = _shaded_template()
+    image = make_blank_sheet(template, letters=True)
+    _draw_shaded_bands(image, template, (2, 4, 6))
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    section = template.sections[0]
+    detected = locate_section_bubbles(gray, template, section)
+    assert detected is not None
+    for q in range(1, 7):
+        assert len(detected[q]) == 4
+        # Every detected bubble should land within a couple px of its own
+        # nominal position -- confirming the shaded rows' positions were
+        # genuinely recovered, not just present in some wrong location.
+        nominal = {b.choice: (b.x, b.y) for b in template.bubbles()[("Answers", q)]}
+        for choice, x, y in detected[q]:
+            nx, ny = nominal[choice]
+            assert abs(x - nx) <= 2
+            assert abs(y - ny) <= 2
