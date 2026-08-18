@@ -485,32 +485,61 @@ def _partial_mark_agrees_with_fill_ratio(partial_mark: str, fill_ratios: Dict[st
     return partial_mark == max(adjusted, key=adjusted.get)
 
 
-# How much larger a gap in one choice letter's own residual distribution
-# (across every occurrence of that letter in the section) must be before
-# it's trusted as a real "some of these are marked, some aren't" split,
-# rather than noise -- see _find_letter_residual_floor. Residual values
-# cluster far more tightly than dark_fraction's when genuinely unmarked
-# (confirmed against five real cases across four sheets using this
-# reversed-print style: every unmarked occurrence of the same letter sat
-# within ~0.03 of its own cluster, with the genuine-mark gap itself
-# landing at 0.052-0.10), so this is deliberately smaller than
-# _MARK_FLOOR_MIN_GAP, which was calibrated for dark_fraction's much wider
-# natural spread on a different signal entirely.
+# How far apart the two candidate clusters' own means must be before a
+# split in one choice letter's residual distribution is trusted as a real
+# "some of these are marked, some aren't" split, rather than noise -- see
+# _find_letter_residual_floor. Residual values cluster far more tightly
+# than dark_fraction's when genuinely unmarked (confirmed against eight
+# real cases across five sheets using this reversed-print style: every
+# unmarked occurrence of the same letter sat within ~0.03 of its own
+# cluster, with the genuine-mark separation itself landing at 0.11-0.20),
+# so this is deliberately smaller than _MARK_FLOOR_MIN_GAP, which was
+# calibrated for dark_fraction's much wider natural spread on a different
+# signal entirely.
 _LETTER_RESIDUAL_MIN_GAP = 0.05
+
+# How decisively a split must separate the two candidate clusters relative
+# to their own internal spread before it's trusted -- see
+# _find_letter_residual_floor's docstring for why a plain "widest adjacent
+# gap" search (_find_mark_floor's own approach) isn't enough here, and
+# what this ratio actually measures. Real confirmed cases scored 18-47;
+# a genuinely continuous, single-cluster spread (no real split at all)
+# scored 5-6 even at the split point that flatters it most; a lone-outlier
+# construction (already rejected on sample count alone, see
+# _LETTER_RESIDUAL_MIN_SAMPLES) scored under 2. 10 sits with real margin
+# on both sides of that gap.
+_LETTER_RESIDUAL_MIN_FISHER = 10.0
+
+# How many standard deviations above the identified "unmarked" cluster's
+# own mean a specific occurrence must sit before it's trusted as belonging
+# to the marked side -- see _find_letter_residual_floor's docstring for
+# why this, rather than the split point itself, is the actual promotion
+# line. A real, unambiguous mark scored 4.02-9.89 standard deviations out
+# on every sheet checked; several real but non-mark sources of a mildly
+# elevated residual -- a strike-through line crossing a genuinely blank
+# row, an unrelated bolder letter elsewhere in the section -- scored
+# 1.26-2.68 on sheets in the regression fleet, close enough to each other
+# that no threshold in that band could safely tell them apart (one
+# genuine mark on a different sheet also measured only 2.26, and is
+# deliberately left uncaught rather than risk it). 3.0 sits with real
+# margin above every non-mark source found so far and below every
+# unambiguous real mark.
+_LETTER_RESIDUAL_MIN_SIGMA = 3.0
 
 # A letter needs to appear at least this many times in a section before
 # its own residual distribution is trusted at all -- same bar
 # _apply_readability_checks already uses for _find_mark_floor, for the
-# same reason: a gap search over too few points can't tell a real cluster
-# boundary from noise.
+# same reason: a split search over too few points can't tell a real
+# cluster boundary from noise.
 _LETTER_RESIDUAL_MIN_SAMPLES = 20
 
 
 def _find_letter_residual_floor(residuals: List[float]) -> "float | None":
-    """A gap search over one choice letter's own residual values across
-    every occurrence of that letter in a section, not dark_fraction
-    across a whole sheet -- shaped like _find_mark_floor's search, but
-    its majority-side requirement does NOT carry over (see below).
+    """Split one choice letter's own residual values -- across every
+    occurrence of that letter in a section, not dark_fraction across a
+    whole sheet -- into an "unmarked" and a "marked" cluster, the way
+    _find_mark_floor does for dark_fraction, but neither of that
+    function's two tools carries over unchanged (see below for both).
 
     Built for a real sheet whose bubbles print as a solid dark oval with
     the letter cut out in white -- a mark there *fills in* part of that
@@ -524,47 +553,110 @@ def _find_letter_residual_floor(residuals: List[float]) -> "float | None":
     degree, not by standing out against unrelated choices sharing its
     row. What actually separates a genuine mark here: every *other*
     occurrence of the same letter elsewhere in the section, which
-    cluster tightly when genuinely unmarked and leave a real, checkable
-    gap below one that's actually been marked in. Confirmed on five real
-    cases across four different sheets using this print style (not just
-    one outlier form) -- gaps of 0.054, 0.052, 0.052, 0.0996, and 0.057,
-    against adjacent same-cluster gaps under 0.024 on either side in
-    every case.
+    cluster tightly when genuinely unmarked and leave the marked ones
+    decisively separated. Confirmed on eight real cases across five
+    different sheets using this print style (not just one outlier form).
 
-    _find_mark_floor requires its "genuine" side to be at least as large
-    as its "suspect" side, because dark_fraction there spans an entire
-    sheet where most answers are expected to be genuinely marked. That
-    assumption does not transfer here: this distribution is every
+    _find_mark_floor picks its split by the single widest gap between
+    adjacent sorted values. That search assumes the two clusters butt
+    right up against each other with nothing in between; one real case
+    here didn't fit that shape at all -- two marks that were unmistakable
+    on the source scan sat behind a couple of intermediate-looking
+    "bridge" values (lighter smudges, scan noise) that spread what should
+    have been one clean gap into several smaller ones, none individually
+    over _LETTER_RESIDUAL_MIN_GAP. What those bridge values don't change
+    is the shape either side of them: a tight, low-variance run of
+    genuinely unmarked occurrences, and a tight, low-variance run of
+    genuinely marked ones, far apart in absolute terms. That's exactly
+    what a between/within variance ratio (the same idea Otsu's threshold,
+    already used in binarize() above, applies to pixel intensities)
+    picks out -- it rewards a split whose two sides are each internally
+    consistent, however many individual small steps it takes to cross
+    between them, and punishes a split of what's actually one smooth,
+    continuous spread (see _LETTER_RESIDUAL_MIN_FISHER) even if that
+    spread's two halves happen to average far apart.
+
+    That variance-ratio search picks the single BEST split, which is not
+    the same thing as a reliable BOUNDARY: with bridge values in the mix,
+    the split that most cleanly separates two internally-tight clusters
+    can end up carving the tightest possible "marked" cluster out of only
+    its most decisive members, leaving a real but slightly weaker mark
+    (still one of those bridge values) stranded just under that specific
+    split's own midpoint -- confirmed on a second real case, where using
+    that midpoint as the promotion line would have missed a mark this
+    same mechanism had already correctly promoted elsewhere. What the
+    chosen split is still reliable for for is identifying which values
+    belong to the tight, high-confidence "unmarked" side and reading off
+    that side's own mean and spread -- so the actual promotion line
+    compares a candidate value against *that* baseline (how many standard
+    deviations above its mean, see _LETTER_RESIDUAL_MIN_SIGMA) rather than
+    against the split's own midpoint.
+
+    _find_mark_floor also requires its "genuine" side to be at least as
+    large as its "suspect" side, because dark_fraction there spans an
+    entire sheet where most answers are expected to be genuinely marked.
+    That assumption does not transfer here: this distribution is every
     occurrence of ONE letter across a section, and any specific letter is
     only the correct answer to a minority of the questions it appears in
     (roughly a quarter, for a 4-5 choice format) -- so the genuinely-
     marked cluster is *structurally* the smaller side, not the larger
-    one. Requiring it to be the majority would reject real cases outright
-    (confirmed: both real cases above have above_count of 7-8 against
-    below_count of 12-16). What still needs guarding against is a single
-    noisy outlier -- one stray high value -- masquerading as a second
-    cluster, so the bar here is a minimum count on the smaller side
-    instead of a majority: at least two occurrences, so one lone reading
-    can never trigger this on its own.
+    one. Requiring it to be the majority would reject every real case
+    behind this function outright. What still needs guarding against is a
+    single noisy outlier -- one stray high value -- masquerading as a
+    second cluster, so the bar here is a minimum count on the smaller
+    side instead of a majority: at least two occurrences, so one lone
+    reading can never trigger this on its own.
     """
     if len(residuals) < _LETTER_RESIDUAL_MIN_SAMPLES:
         return None
     ordered = sorted(residuals)
     n = len(ordered)
+    best_fisher = -1.0
     best_gap = 0.0
-    best_threshold = None
+    best_mean_below = None
+    best_std_below = None
     for i in range(n - 1):
-        below_count = i + 1
-        above_count = n - below_count
-        if above_count < 2:
+        below, above = ordered[: i + 1], ordered[i + 1 :]
+        # The unmarked side is structurally expected to be at least as
+        # large as the marked side (see below) -- and, separately, a
+        # "below" side of only one or two points is too small a sample to
+        # trust its own variance at all: a single point has *zero*
+        # variance by definition, which can make an otherwise ordinary,
+        # continuous (non-bimodal) spread look like a decisively tight
+        # cluster purely because the search is free to wall off just its
+        # single lowest reading as "below" -- confirmed on a real sheet
+        # using the ordinary (non reversed-print) style this function
+        # isn't meant to touch at all: a smooth, gradually-increasing
+        # spread of a letter's residuals, no real split anywhere in it,
+        # still scored a fisher ratio of 24.8 (comfortably over
+        # _LETTER_RESIDUAL_MIN_FISHER) by isolating one low outlier this
+        # way. Requiring below >= above closes that off; since a
+        # letter is only the correct answer to a minority of the questions
+        # it appears in, above being the smaller side is the norm anyway
+        # (confirmed on every real case behind this function).
+        if len(above) < 2 or len(below) < len(above):
             continue
-        gap = ordered[i + 1] - ordered[i]
-        if gap > best_gap:
-            best_gap = gap
-            best_threshold = (ordered[i] + ordered[i + 1]) / 2
-    if best_gap < _LETTER_RESIDUAL_MIN_GAP:
+        mean_below = sum(below) / len(below)
+        mean_above = sum(above) / len(above)
+        var_below = sum((v - mean_below) ** 2 for v in below) / len(below)
+        var_above = sum((v - mean_above) ** 2 for v in above) / len(above)
+        within = var_below + var_above
+        fisher = (mean_above - mean_below) ** 2 / within if within > 0 else float("inf")
+        if fisher > best_fisher:
+            best_fisher = fisher
+            best_gap = mean_above - mean_below
+            best_mean_below = mean_below
+            best_std_below = var_below**0.5
+    if best_fisher < _LETTER_RESIDUAL_MIN_FISHER or best_gap < _LETTER_RESIDUAL_MIN_GAP:
         return None
-    return best_threshold
+    if best_std_below == 0:
+        # Degenerate but real possibility: every unmarked occurrence read
+        # back byte-for-byte identical, so there's no spread to measure
+        # standard deviations against. The candidate split's own "above"
+        # side already cleared _LETTER_RESIDUAL_MIN_GAP above that single
+        # baseline value, so trust the split boundary itself here instead.
+        return best_mean_below + best_gap / 2
+    return best_mean_below + _LETTER_RESIDUAL_MIN_SIGMA * best_std_below
 
 
 # A guessing/rushing student marking the same *position* over and over --

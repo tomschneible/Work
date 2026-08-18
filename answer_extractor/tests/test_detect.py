@@ -998,6 +998,56 @@ def test_find_letter_residual_floor_trusts_a_small_minority_genuine_cluster():
     assert 0.27 < floor < 0.40
 
 
+def test_find_letter_residual_floor_does_not_strand_a_bridge_value_below_a_tighter_sub_cluster():
+    # Shaped after a real scan (Buschmann Science 7): the widest single
+    # adjacent gap and the best variance-ratio split don't land in the
+    # same place here. A few "bridge" values (light smudges, scan noise)
+    # sit between the tight unmarked cluster and an even tighter top
+    # cluster of the clearest marks, so the split that most cleanly
+    # separates two internally-consistent clusters ends up drawing its
+    # boundary *above* a real but slightly weaker mark, stranding it on
+    # the "unmarked" side of that split's own midpoint (0.1523 here) even
+    # though it's still >3 standard deviations above the unmarked
+    # cluster's own mean. A version of this function that classified by
+    # the split's midpoint instead of by distance from the unmarked
+    # cluster's own baseline missed a real mark shaped exactly like this;
+    # confirm it doesn't happen again. (The real scan's own weaker mark
+    # measured only ~2.3 standard deviations out -- see
+    # _LETTER_RESIDUAL_MIN_SIGMA for why that specific real case is
+    # deliberately left below this function's bar rather than risk it;
+    # this value is nudged up just enough to clear that bar while keeping
+    # the same "stranded below the split's midpoint" shape.)
+    values = [
+        0.0213, 0.0231, 0.0239, 0.0239, 0.0241, 0.0277, 0.03, 0.03, 0.0322, 0.0364, 0.0397, 0.025,
+        0.0595, 0.065, 0.0676,  # bridge values
+        0.12,  # weaker mark, stranded below the split's own midpoint -- must still be promoted
+        0.1846, 0.1947, 0.1988, 0.2069,  # the tightest, clearest marks
+    ]
+    floor = _find_letter_residual_floor(values)
+    assert floor is not None
+    assert floor <= 0.12
+
+
+def test_find_letter_residual_floor_leaves_a_too_ambiguous_real_mark_unpromoted():
+    # The real Buschmann Science 7 scan this function was built against:
+    # its own weaker mark measured only ~2.3 standard deviations above
+    # the unmarked cluster's own mean -- indistinguishable, in practice,
+    # from real non-mark sources of a mildly elevated residual found
+    # elsewhere in the regression fleet (a strike-through line crossing a
+    # genuinely blank row measured ~2.2; see _LETTER_RESIDUAL_MIN_SIGMA).
+    # Confirms this function deliberately leaves it unpromoted -- whatever
+    # floor it settles on for the rest of this letter's distribution, this
+    # specific weaker mark's own residual must fall short of it -- rather
+    # than risk that ambiguity: a flagged blank, not a wrong answer.
+    values = [
+        0.0213, 0.0231, 0.0239, 0.0239, 0.0241, 0.0277, 0.03, 0.03, 0.0322, 0.0364, 0.0397,
+        0.0595, 0.065, 0.0676, 0.1237, 0.1322,
+        0.1846, 0.1947, 0.1988, 0.2069,
+    ]
+    floor = _find_letter_residual_floor(values)
+    assert floor is None or 0.1237 < floor
+
+
 def _reversed_print_template() -> Template:
     # 25 questions, single A-D choice set on every row (not even/odd), so
     # a single choice letter clears _LETTER_RESIDUAL_MIN_SAMPLES on its
