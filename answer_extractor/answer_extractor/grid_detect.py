@@ -198,6 +198,33 @@ def _column_gap_threshold(template: Template, section: Section) -> float:
     return (template.bubble_spacing_x + min(inter_column_gaps)) / 2
 
 
+def _column_group_max_distance(column_nominal_cxs: Sequence[float]) -> Optional[float]:
+    """How far a detected column-group's own mean position may sit from a
+    column's nominal center and still be trusted as that column's real
+    group -- the same principle _column_gap_threshold already applies one
+    level down (telling a within-column gap from a between-column one),
+    applied here to whole column-groups instead of individual boxes.
+
+    Without this cap, a row where one column's own boxes are missing or
+    faint enough to fragment (see _split_columns) can still end up with
+    exactly as many groups as active columns by coincidence -- and
+    _match_to_slots, maximizing match count with no per-pair distance
+    limit, will happily fill every column with whichever group is
+    *relatively* closest, however far that actually is. Confirmed on a
+    real sheet: one column's two faint bubbles fragmented its group in
+    two, and every column from there on grabbed its *neighbor's* group
+    instead of its own -- a full column-width away, not a plausible scan
+    shift. Half the smallest real gap between this row's own column
+    centers is the natural cap: a genuine match never needs to cross that
+    halfway line, so nothing genuine is ever rejected by it. Returns None
+    (no cap) when there's only one active column -- nothing adjacent to
+    confuse it with."""
+    if len(column_nominal_cxs) < 2:
+        return None
+    gaps = [column_nominal_cxs[i + 1] - column_nominal_cxs[i] for i in range(len(column_nominal_cxs) - 1)]
+    return min(gaps) / 2
+
+
 # How much larger, by area, the smallest *kept* box must be than the
 # largest *dropped* box before _drop_size_outlier_boxes trusts an
 # area-based drop. Calibrated against every real stray-label row found
@@ -352,6 +379,21 @@ def _match_to_slots(
     return result
 
 
+def _positions_uniform(boxes_sorted: List[_Box], nominal_xs: Sequence[float], radius: float) -> bool:
+    """Whether every box in `boxes_sorted` (left-to-right) sits offset from
+    its corresponding (same-index) nominal slot by nearly the same
+    amount -- the position half of _uniform_shift_match's own check,
+    split out so a caller with a *stronger* way to settle whether a
+    tightly-clustered run is real (see _resolve_extra_boxes_by_column_shift)
+    can use just this, without also being subject to that function's own
+    size-outlier veto -- see it for why that veto, while right for its own
+    unaided use, can reject a perfectly real run here."""
+    if len(boxes_sorted) != len(nominal_xs) or not boxes_sorted:
+        return False
+    deltas = [b.cx - nx for b, nx in zip(boxes_sorted, nominal_xs)]
+    return max(deltas) - min(deltas) <= radius
+
+
 def _uniform_shift_match(
     boxes_sorted: List[_Box], nominal_xs: Sequence[float], radius: float
 ) -> Optional[List[_Box]]:
@@ -383,11 +425,13 @@ def _uniform_shift_match(
     *any single one* of them looks like a size outlier against the rest
     (the same comparison _drop_size_outlier_boxes already makes for the
     surplus case) catches this the same way.
+
+    This size check is a *default*, not an absolute one, though -- see
+    _positions_uniform for a caller that deliberately skips it because it
+    has independent evidence this check can't see and, on a real sheet,
+    got actively misled by.
     """
-    if len(boxes_sorted) != len(nominal_xs) or not boxes_sorted:
-        return None
-    deltas = [b.cx - nx for b, nx in zip(boxes_sorted, nominal_xs)]
-    if max(deltas) - min(deltas) > radius:
+    if not _positions_uniform(boxes_sorted, nominal_xs, radius):
         return None
     if len(boxes_sorted) >= 2 and len(_drop_size_outlier_boxes(boxes_sorted, len(boxes_sorted) - 1)) != len(
         boxes_sorted
@@ -473,14 +517,28 @@ def _resolve_extra_boxes_by_column_shift(
     _uniform_shift_match's confirmed matches on *other* rows in the same
     column -- see _retry_with_column_shift). Tries every contiguous
     len(nominal_xs)-sized window of `boxes_sorted` through
-    _uniform_shift_match (both the label+3-real and the 3-real+true-last
+    _positions_uniform (both the label+3-real and the 3-real+true-last
     windows passed that check on the real sheet -- a label sized close
     enough to a real bubble to fool the area check is also close enough
     to fool this consistency check by itself) and returns whichever
     passing window's own implied shift sits closest to the column's
     established one. Returns None (defer to the existing capped match)
     if `column_dx_samples` hasn't cleared _MIN_COLUMN_SHIFT_SAMPLES yet,
-    or if no window passes _uniform_shift_match at all.
+    or if no window is position-consistent at all.
+
+    Deliberately uses _positions_uniform rather than the full
+    _uniform_shift_match (position *and* size) that every other caller of
+    "is this window rigid" reaches for: this function's whole reason to
+    exist is telling apart two windows that are *already* both position-
+    consistent enough to fool _uniform_shift_match's own size-outlier veto
+    (that's exactly what happened on the real sheet above) using a signal
+    that veto doesn't have -- the column's own established shift. Adding
+    it back here would just re-veto the same window this function was
+    built to rescue: confirmed on a second real sheet, where the true
+    last bubble printed just small enough to itself look like the size
+    outlier next to its own row's neighbors, tripping that veto on the
+    *correct* window while the label-containing one, coincidentally
+    closer in size to a real bubble here, passed it untouched.
     """
     if not column_dx_samples or len(column_dx_samples) < _MIN_COLUMN_SHIFT_SAMPLES:
         return None
@@ -489,13 +547,12 @@ def _resolve_extra_boxes_by_column_shift(
     best_window, best_diff = None, None
     for start in range(len(boxes_sorted) - target_count + 1):
         window = boxes_sorted[start : start + target_count]
-        uniform = _uniform_shift_match(window, nominal_xs, radius)
-        if uniform is None:
+        if not _positions_uniform(window, nominal_xs, radius):
             continue
-        window_dx = statistics.median(b.cx - nx for b, nx in zip(uniform, nominal_xs))
+        window_dx = statistics.median(b.cx - nx for b, nx in zip(window, nominal_xs))
         diff = abs(window_dx - column_dx)
         if best_diff is None or diff < best_diff:
-            best_window, best_diff = uniform, diff
+            best_window, best_diff = window, diff
     return best_window
 
 
@@ -578,7 +635,10 @@ def locate_section_bubbles(
             for col in active_columns
         ]
         matched_groups = _match_to_slots(
-            groups_sorted, lambda g: sum(b.cx for b in g) / len(g), column_nominal_cxs
+            groups_sorted,
+            lambda g: sum(b.cx for b in g) / len(g),
+            column_nominal_cxs,
+            max_distance=_column_group_max_distance(column_nominal_cxs),
         )
 
         for col, group in zip(active_columns, matched_groups):

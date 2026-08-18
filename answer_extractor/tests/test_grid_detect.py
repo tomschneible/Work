@@ -12,9 +12,11 @@ import numpy as np
 from answer_extractor.detect import evaluate_sheet
 from answer_extractor.grid_detect import (
     _Box,
+    _column_group_max_distance,
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
     _match_to_slots,
+    _positions_uniform,
     _resolve_extra_boxes_by_column_shift,
     _retry_with_column_shift,
     _uniform_shift_match,
@@ -77,6 +79,67 @@ def test_match_to_slots_far_item_with_no_nearby_alternative_leaves_slot_empty():
     nominal = [1270.5, 1301.17, 1331.83, 1362.5]
     result = _match_to_slots(items, lambda x: x, nominal, max_distance=15.3)
     assert result == [None, None, 1335.5, 1366.5]
+
+
+# -- _column_group_max_distance / locate_section_bubbles's column-group ------
+# matching: a seventh real bug, on a real scanned legacy-template sheet.
+# Column-group-to-column matching (unlike box-to-slot matching within a
+# column, which _match_to_slots' max_distance cap already protected) had
+# no equivalent cap: a row where one column's own bubbles were faint
+# enough to fragment its group (see _split_columns) could still end up
+# with exactly as many groups as active columns by coincidence, and
+# _match_to_slots -- maximizing match count with no per-pair distance
+# limit -- filled every column with whichever group was *relatively*
+# closest, however far that actually was. On the real sheet this
+# surfaced on, that meant every column from the fragmented one onward
+# grabbed its *neighbor's* group instead of its own -- a full
+# column-width away, not a plausible scan shift -- misreading four
+# separate questions (39, 46, 59, 65) from the wrong column entirely.
+
+
+def test_column_group_max_distance_is_half_the_smallest_gap():
+    # Real nominal column centers from the sheet above (English section,
+    # six 4-choice columns spaced ~214-215px apart).
+    nominal_cxs = [336.0, 550.5, 766.0, 980.0, 1194.0, 1409.0]
+    assert _column_group_max_distance(nominal_cxs) == 107.0
+
+
+def test_column_group_max_distance_none_for_a_single_column():
+    assert _column_group_max_distance([336.0]) is None
+
+
+def test_match_to_slots_without_a_cap_misassigns_every_fragmented_column():
+    # Real column-group means from the sheet above, row 6 (questions 7,
+    # 20, 33, 46, 59, 72): column 2's own bubbles (row 6 = question 20)
+    # were faint enough that _split_columns fragmented what should have
+    # been one 4-box group into a 1-box and a 2-box piece, leaving 6
+    # groups total for 6 active columns -- coincidentally matching count.
+    # Without a distance cap, every group past the fragmented one gets
+    # force-matched to the *next* column over.
+    groups_mean_cx = [334.4, 473.0, 579.2, 747.7, 963.5, 1131.8]
+    nominal_cxs = [336.0, 550.5, 766.0, 980.0, 1194.0, 1409.0]
+    result = _match_to_slots(groups_mean_cx, lambda x: x, nominal_cxs)
+    assert result == groups_mean_cx  # every column "filled" -- silently, all but the first two wrongly
+
+
+def test_match_to_slots_with_the_column_group_cap_rejects_the_misassigned_ones():
+    # Same real data as above, this time with _column_group_max_distance's
+    # own cap applied. The one genuinely ambiguous group (473.0 -- itself
+    # only a fragment, not clearly any column's real group) is now too
+    # costly to keep pinned to column 2: the DP's own order-preserving
+    # search, freed by the cap from having to accept every same-index
+    # pairing, finds a *better* (more matches, all within the cap)
+    # alignment by skipping it instead and sliding columns 2-5 each back
+    # to their own *real* group -- exactly recovering the four questions
+    # (46, 59, 65, and column 5's own row) the uncapped version misread
+    # from their neighbor. Column 6, with nothing left close enough,
+    # correctly comes back unmatched rather than stealing column 5's.
+    groups_mean_cx = [334.4, 473.0, 579.2, 747.7, 963.5, 1131.8]
+    nominal_cxs = [336.0, 550.5, 766.0, 980.0, 1194.0, 1409.0]
+    result = _match_to_slots(
+        groups_mean_cx, lambda x: x, nominal_cxs, max_distance=_column_group_max_distance(nominal_cxs)
+    )
+    assert result == [334.4, 579.2, 747.7, 963.5, 1131.8, None]
 
 
 # -- _drop_size_outlier_boxes: pure logic tests -------------------------------
@@ -188,6 +251,34 @@ def test_uniform_shift_match_returns_none_for_empty_boxes():
     assert _uniform_shift_match([], [290.0, 320.67], radius=11) is None
 
 
+def test_uniform_shift_match_rejects_a_real_window_whose_own_bubble_prints_undersized():
+    # Real shape from a second real scan: the row's real, correct choices
+    # (not a label -- these four are the genuine A/B/C/D bubbles), one of
+    # which (C, area 513) happens to print small enough next to its
+    # neighbors (areas 638, 620, 609) to trip the size-outlier veto on its
+    # own, even though nothing here is a stray label at all. Confirms
+    # _resolve_extra_boxes_by_column_shift's deliberate choice to check
+    # only _positions_uniform, not this full function, is necessary --
+    # this exact window is what it needs to rescue.
+    nominal = [719.5, 750.17, 780.84, 811.51]
+    real = [_box(716.5, 29, 22), _box(746.5, 31, 20), _box(778.5, 27, 19), _box(808.5, 29, 21)]
+    assert _uniform_shift_match(real, nominal, radius=11) is None
+
+
+def test_positions_uniform_accepts_the_same_window_uniform_shift_match_rejects():
+    # Same real window as above -- position-only agreement doesn't care
+    # that C happens to print smaller than its neighbors.
+    nominal = [719.5, 750.17, 780.84, 811.51]
+    real = [_box(716.5, 29, 22), _box(746.5, 31, 20), _box(778.5, 27, 19), _box(808.5, 29, 21)]
+    assert _positions_uniform(real, nominal, radius=11)
+
+
+def test_positions_uniform_rejects_a_scattered_run():
+    nominal = [290.0, 320.67, 351.34, 382.0]
+    boxes = [_box(260.0, 26, 19), _box(321.0, 27, 20), _box(352.0, 27, 20), _box(383.0, 27, 20)]
+    assert not _positions_uniform(boxes, nominal, radius=11)
+
+
 # -- _retry_with_column_shift: pure logic tests -------------------------------
 #
 # Regression coverage for a fifth real bug, found on a real photographed
@@ -282,6 +373,26 @@ def test_resolve_extra_boxes_by_column_shift_returns_none_when_no_window_is_unif
     column_dx_samples = [19.83, 20.0, 19.66, 19.49] * 3
     result = _resolve_extra_boxes_by_column_shift(boxes_sorted, nominal, column_dx_samples, radius=11)
     assert result is None
+
+
+def test_resolve_extra_boxes_by_column_shift_rescues_a_window_whose_own_bubble_looks_undersized():
+    # Real shape from a second real scan (English 39 on a legacy-template
+    # sheet): the same "label sized close enough to survive the area
+    # check" setup as the test above, but here the row's real, genuinely
+    # marked last choice ("D") happens to print small enough itself (see
+    # test_uniform_shift_match_rejects_a_real_window_whose_own_bubble_
+    # prints_undersized) that the *correct* window -- not the label one --
+    # is what a plain _uniform_shift_match call rejects. Without this
+    # function skipping that veto (via _positions_uniform), the wrong
+    # (label-containing) window would have been the only one accepted and
+    # kept, exactly reproducing the real misread ("A" answered as "B").
+    nominal = [719.5, 750.17, 780.84, 811.51]
+    label = _box(688.5, 25, 20)  # the "39" question-number glyph
+    real = [_box(716.5, 29, 22), _box(746.5, 31, 20), _box(778.5, 27, 19), _box(808.5, 29, 21)]
+    boxes_sorted = [label] + real
+    column_dx_samples = [-3.0, -3.17, -3.34, -3.01, -3.0, -2.67, -2.34, -2.51]  # this column's real, established shift
+    result = _resolve_extra_boxes_by_column_shift(boxes_sorted, nominal, column_dx_samples, radius=11)
+    assert result == real
 
 
 # -- _drop_sparse_rows: pure logic tests --------------------------------------
