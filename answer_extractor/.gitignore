@@ -4,3 +4,10 @@ __pycache__/
 .pytest_cache/
 *.xlsx
 !templates/*.xlsx
+
+# Google OAuth credentials for the Sheets/Drive export path (see
+# answer_extractor/google_auth.py) default to ~/.config and ~/.cache, well
+# outside this repo -- these patterns are only a safety net in case one
+# ever ends up dropped in here by habit instead. Never commit a real one.
+client_secret*.json
+google_token.json
