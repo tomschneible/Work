@@ -2,8 +2,8 @@
 independently-scored reference spreadsheet (see scoresheet_check.py).
 
     python -m answer_extractor.compare_cli \
-        --ours results.xlsx --reference Vinca_Dion_....xlsx \
-        --output vinca_comparison.xlsx
+        --ours results.xlsx --reference reference_scores.xlsx \
+        --output comparison.xlsx
 
 `--ours` is one tab of this tool's own exported .xlsx (defaults to that
 workbook's first tab -- pass --ours-tab to pick a different one out of a

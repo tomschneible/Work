@@ -337,7 +337,7 @@ def test_infer_from_answer_pattern_counts_the_total_across_both_sides():
 
 
 def test_infer_from_answer_pattern_fills_two_consecutive_blanks_in_a_long_run():
-    # Real case (Goldman): two blanks sitting back-to-back in the middle of
+    # Real case (Gol.): two blanks sitting back-to-back in the middle of
     # a 20+ question guessing run. An earlier version of this only ever
     # checked a blank's *immediate* neighbor -- for two adjacent blanks,
     # each one's immediate neighbor on one side is the *other* blank, not
@@ -394,7 +394,7 @@ def test_infer_from_answer_pattern_leaves_a_multiple_run_between_mismatched_side
 
 
 def test_infer_from_answer_pattern_bridges_scattered_non_adjacent_blanks():
-    # Real case (Goldman): a single long guessing run (20+ questions) with
+    # Real case (Gol.): a single long guessing run (20+ questions) with
     # several blanks scattered through it, none adjacent to each other.
     # Each individual blank IS bracketed by the same choice index on both
     # sides once you skip past the *other* blanks -- but an earlier version
@@ -435,7 +435,7 @@ def test_infer_from_answer_pattern_a_genuine_mismatch_still_blocks_inference():
 
 
 def test_infer_from_answer_pattern_fills_a_sections_last_question_given_a_long_one_sided_run():
-    # Real case (Goldman): a section's very last question has no
+    # Real case (Gol.): a section's very last question has no
     # right-side neighbor to ever confirm against -- only the left side,
     # held to _BOUNDARY_PATTERN_MIN_RUN (double the two-sided minimum) as
     # its margin of safety. Q1-17 idx0 (17, comfortably over 16), Q18
@@ -465,7 +465,7 @@ def test_infer_from_answer_pattern_requires_double_the_run_at_the_last_question(
 
 
 def test_infer_from_answer_pattern_never_infers_a_last_question_with_no_real_run_before_it():
-    # Real case (Vinca, Rizza): a student who genuinely ran out of time
+    # Real case (Vin., Riz.): a student who genuinely ran out of time
     # and left the true end of a section blank is common -- and in every
     # real example of it, the questions immediately preceding the blank
     # tail were an ordinary mix of answers, not a matching-index run at
@@ -485,7 +485,7 @@ def test_infer_from_answer_pattern_never_infers_a_last_question_with_no_real_run
 
 # -- _reconsider_low_confidence_pattern: pure logic tests ---------------------
 #
-# Real case (Goldman): a sheet printed one choice letter structurally
+# Real case (Gol.): a sheet printed one choice letter structurally
 # bolder than the others across an entire section, occasionally letting it
 # narrowly outscore a genuine but lighter mark elsewhere in the same
 # question -- fill_ratio's own low_confidence flag already says "this read
@@ -937,7 +937,7 @@ def test_find_mark_floor_ignores_a_gap_that_would_isolate_only_a_tiny_minority()
 
 
 def test_find_letter_residual_floor_locates_the_gap_between_clusters():
-    # Modeled directly on the real Epstein Reading "B" case: 12 genuinely
+    # Modeled directly on the real Eps. Reading "B" case: 12 genuinely
     # unmarked occurrences of the letter clustered 0.10-0.13, and 8
     # genuinely marked ones clustered 0.19-0.22 -- the marked side is a
     # *minority* of this letter's total occurrences (as expected: any one
@@ -999,7 +999,7 @@ def test_find_letter_residual_floor_trusts_a_small_minority_genuine_cluster():
 
 
 def test_find_letter_residual_floor_does_not_strand_a_bridge_value_below_a_tighter_sub_cluster():
-    # Shaped after a real scan (Buschmann Science 7): the widest single
+    # Shaped after a real scan (Bus. Science 7): the widest single
     # adjacent gap and the best variance-ratio split don't land in the
     # same place here. A few "bridge" values (light smudges, scan noise)
     # sit between the tight unmarked cluster and an even tighter top
@@ -1029,7 +1029,7 @@ def test_find_letter_residual_floor_does_not_strand_a_bridge_value_below_a_tight
 
 
 def test_find_letter_residual_floor_leaves_a_too_ambiguous_real_mark_unpromoted():
-    # The real Buschmann Science 7 scan this function was built against:
+    # The real Bus. Science 7 scan this function was built against:
     # its own weaker mark measured only ~2.3 standard deviations above
     # the unmarked cluster's own mean -- indistinguishable, in practice,
     # from real non-mark sources of a mildly elevated residual found

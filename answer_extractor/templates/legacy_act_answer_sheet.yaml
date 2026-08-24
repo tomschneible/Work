@@ -10,7 +10,7 @@
 # Coordinates were measured directly from the blank template PDF rendered
 # at 200 DPI (1700x2200 px) by detecting each bubble glyph's bounding box
 # and clustering by row/column, not eyeballed -- see the real filled
-# sheets this was validated against (Buschmann, Silverman) for what "a
+# sheets this was validated against (Bus., Sil.) for what "a
 # real scan of this form" actually looks like.
 #
 # Column x-positions are identical across all four sections (same six
