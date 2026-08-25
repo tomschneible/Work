@@ -82,7 +82,7 @@ _SCORE_LABEL_PATTERN = re.compile(r"^(?P<subject>.+?)\s*score\s*$", re.IGNORECAS
 _SCORE_VALUE_SEARCH_ROWS = 5  # how far above a "<Subject> Score" label to look for its value cell
 
 
-def _normalize_subject(raw: str) -> str:
+def normalize_subject(raw: str) -> str:
     key = re.sub(r"\s+", " ", raw.strip().lower())
     if key not in _SUBJECT_ALIASES:
         raise ValueError(f"Unrecognized SAT subject title {raw!r}")
@@ -116,7 +116,7 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
             match = _TITLE_PATTERN.match(value.strip())
             if not match:
                 continue
-            subject = _normalize_subject(match.group("subject"))
+            subject = normalize_subject(match.group("subject"))
             if match.group("module_num") == "1":
                 module_slot = "module1"
             else:
@@ -189,7 +189,7 @@ def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
             if not match:
                 continue
             try:
-                subject = _normalize_subject(match.group("subject"))
+                subject = normalize_subject(match.group("subject"))
             except ValueError:
                 continue  # e.g. "Total Score" -- not a subject this module knows
             for candidate_row in range(cell.row - 1, cell.row - _SCORE_VALUE_SEARCH_ROWS - 1, -1):

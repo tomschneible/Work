@@ -34,6 +34,13 @@ def test_parse_scan_filename_handles_sat():
     assert result.test_code == "1234"
 
 
+def test_parse_scan_filename_handles_dsat():
+    result = parse_scan_filename("Smith, John 2026 DSAT 8 March 8 2026")
+
+    assert result.test_family == "DSAT"
+    assert result.test_code == "8"
+
+
 def test_parse_scan_filename_is_case_insensitive_on_family_and_month():
     result = parse_scan_filename("Student, Jane 2027 act 25MC1 january 17 2026")
 

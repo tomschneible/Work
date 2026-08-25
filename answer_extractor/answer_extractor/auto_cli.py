@@ -24,12 +24,20 @@ gets its own individual score-report PDF exported there instead of a tab
 in the combined .xlsx -- named after the student and flagged (a " FLAG"
 suffix, plus the familiar color-coded .xlsx alongside it) whenever the
 sheet has any review items (blank/MULTIPLE/low-confidence/unreadable/
-pattern-inferred). Everything else -- SAT scans, an unrecognized
-template, or any sheet when --template forces a fixed one -- still goes
-into the combined .xlsx exactly as before this existed. A sheet that
-fails to export (bad filename convention, no matching Drive template,
-Google auth not set up) falls back into the combined .xlsx too, with a
-warning explaining why, rather than failing the whole batch.
+pattern-inferred). A score-report PDF's rows are similarly grouped by
+source file (one PDF, one student) and exported the same way (see
+sat_score_report_pipeline.export_sat_report) once answer-key
+identification succeeds for it -- this is the one export path that
+prompts for input mid-run (each subject's scaled section score, via a
+native dialog; see gui_prompt.py), since nothing upstream can supply that
+value yet. Everything else -- an unidentified score report, an
+unrecognized bubble-sheet template, or any bubble sheet when --template
+forces a fixed one -- still goes into the combined .xlsx exactly as
+before this existed. Anything that fails to export on its own (bad
+filename convention, no matching Drive template, an unidentified Module 2
+difficulty, a cancelled score prompt, Google auth not set up) falls back
+into the combined .xlsx too, with a warning explaining why, rather than
+failing the whole batch.
 """
 from __future__ import annotations
 
@@ -46,7 +54,8 @@ from .export import add_bubble_sheet_answers_sheet
 from .google_sheets_export import build_services
 from .loading import IMAGE_SUFFIXES, PDF_SUFFIXES
 from .pipeline import SheetResult, UndetectedSheet, process_paths, process_paths_auto
-from .score_report import ScoreReportRow, parse_score_report
+from .sat_score_report_pipeline import export_sat_report
+from .score_report import ScoreReportRow, group_by_source, parse_score_report
 from .score_report_export import add_score_report_answers_sheet
 from .score_report_pipeline import ExportOutcome, export_sheet_report, should_export_to_sheets
 from .template import Template
@@ -192,72 +201,107 @@ def main(argv: list[str] | None = None) -> int:
     del wb["Sheet"]
     summary_parts = []
     exported: List[ExportOutcome] = []
+    exported_sat_paths: List[Path] = []
 
+    # --template forces a fixed template for every bubble sheet, which
+    # also means opting out of the per-student Sheets-report path
+    # (should_export_to_sheets only ever recognizes an *auto-detected*
+    # template name -- see pipeline.SheetResult).
+    to_export: List[SheetResult] = []
+    to_combine: List[SheetResult] = []
     if bubble_paths:
-        results = scan_bubble_sheets(bubble_paths, args.template)
-        if results:
-            # --template forces a fixed template for everything, which
-            # also means opting out of the per-student Sheets-report path
-            # (should_export_to_sheets only ever recognizes an
-            # *auto-detected* template name -- see pipeline.SheetResult).
-            to_export: List[SheetResult] = []
-            to_combine: List[SheetResult] = []
-            for r in results:
-                (to_export if args.template is None and should_export_to_sheets(r) else to_combine).append(r)
+        for r in scan_bubble_sheets(bubble_paths, args.template):
+            (to_export if args.template is None and should_export_to_sheets(r) else to_combine).append(r)
 
-            if to_export:
-                try:
-                    drive, _sheets = build_services()
-                except Exception as exc:
-                    print(
-                        f"Warning: couldn't set up Google Sheets access ({exc}); "
-                        f"including these {len(to_export)} sheet(s) in {args.output} instead.",
-                        file=sys.stderr,
-                    )
-                    to_combine.extend(to_export)
-                    to_export = []
-                else:
-                    output_dir = Path(
-                        args.report_output_dir
-                        or os.environ.get("ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR")
-                        or (Path.home() / "Desktop")
-                    )
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    templates_root_folder_id = (
-                        args.templates_root_folder_id
-                        or os.environ.get("ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID")
-                        or _DEFAULT_TEMPLATES_ROOT_FOLDER_ID
-                    )
-                    for r in to_export:
-                        try:
-                            exported.append(export_sheet_report(drive, templates_root_folder_id, r, output_dir))
-                        except Exception as exc:
-                            print(
-                                f"Warning: couldn't export {r.label} to a Sheets report ({exc}); "
-                                f"including it in {args.output} instead.",
-                                file=sys.stderr,
-                            )
-                            to_combine.append(r)
-
-            if to_combine:
-                add_bubble_sheet_answers_sheet(wb, to_combine)
-                summary_parts.append(f"{len(to_combine)} bubble sheet(s) in {args.output}{template_breakdown(to_combine)}")
-            if exported:
-                flagged = sum(1 for o in exported if o.xlsx_path is not None)
-                flagged_note = f", {flagged} flagged for review" if flagged else ""
-                summary_parts.append(f"{len(exported)} score report(s) exported to {output_dir}{flagged_note}")
-
+    # A score-report PDF's rows can only be routed to the per-student SAT
+    # export path once answer-key identification succeeds for it (that's
+    # what determines each Module 2's difficulty, without which there's
+    # no way to know which of the SAT template's block-pairs to fill in)
+    # -- if identification itself fails, every row falls straight back to
+    # the combined .xlsx, same as always, with the one warning below
+    # rather than a redundant one per source file.
+    sat_row_groups: List[List[ScoreReportRow]] = []
+    score_rows_to_combine: List[ScoreReportRow] = []
     if score_rows:
         try:
             library = load_answer_keys(refresh=not args.no_refresh_keys)
             score_rows = annotate_rows(score_rows, library)
         except Exception as exc:  # answer-key identification is a bonus, not required for extraction
             print(f"Warning: answer key identification skipped ({exc})", file=sys.stderr)
-        add_score_report_answers_sheet(wb, score_rows)
-        num_reports = len({row.source for row in score_rows})
-        summary_parts.append(f"{len(score_rows)} score-report question(s) from {num_reports} file(s)")
+            score_rows_to_combine = score_rows
+        else:
+            sat_row_groups = list(group_by_source(score_rows).values())
 
-    if not wb.sheetnames and not exported:
+    output_dir = None
+    templates_root_folder_id = None
+    if to_export or sat_row_groups:
+        try:
+            drive, _sheets = build_services()
+        except Exception as exc:
+            print(
+                f"Warning: couldn't set up Google Sheets access ({exc}); "
+                f"including these sheet(s)/report(s) in {args.output} instead.",
+                file=sys.stderr,
+            )
+            to_combine.extend(to_export)
+            to_export = []
+            for group in sat_row_groups:
+                score_rows_to_combine.extend(group)
+            sat_row_groups = []
+        else:
+            output_dir = Path(
+                args.report_output_dir
+                or os.environ.get("ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR")
+                or (Path.home() / "Desktop")
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            templates_root_folder_id = (
+                args.templates_root_folder_id
+                or os.environ.get("ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID")
+                or _DEFAULT_TEMPLATES_ROOT_FOLDER_ID
+            )
+
+            for r in to_export:
+                try:
+                    exported.append(export_sheet_report(drive, templates_root_folder_id, r, output_dir))
+                except Exception as exc:
+                    print(
+                        f"Warning: couldn't export {r.label} to a Sheets report ({exc}); "
+                        f"including it in {args.output} instead.",
+                        file=sys.stderr,
+                    )
+                    to_combine.append(r)
+
+            for group in sat_row_groups:
+                try:
+                    exported_sat_paths.append(export_sat_report(drive, templates_root_folder_id, group, output_dir))
+                except Exception as exc:
+                    source = group[0].source if group else "(unknown)"
+                    print(
+                        f"Warning: couldn't export {source} to a Sheets report ({exc}); "
+                        f"including it in {args.output} instead.",
+                        file=sys.stderr,
+                    )
+                    score_rows_to_combine.extend(group)
+
+    if to_combine:
+        add_bubble_sheet_answers_sheet(wb, to_combine)
+        summary_parts.append(f"{len(to_combine)} bubble sheet(s) in {args.output}{template_breakdown(to_combine)}")
+
+    total_exported = len(exported) + len(exported_sat_paths)
+    if total_exported:
+        flagged = sum(1 for o in exported if o.xlsx_path is not None)
+        flagged_note = f", {flagged} flagged for review" if flagged else ""
+        summary_parts.append(f"{total_exported} score report(s) exported to {output_dir}{flagged_note}")
+
+    if score_rows_to_combine:
+        add_score_report_answers_sheet(wb, score_rows_to_combine)
+        num_reports = len({row.source for row in score_rows_to_combine})
+        summary_parts.append(
+            f"{len(score_rows_to_combine)} score-report question(s) from {num_reports} file(s) in {args.output}"
+        )
+
+    if not wb.sheetnames and not exported and not exported_sat_paths:
         print("No answers could be extracted from the given input.", file=sys.stderr)
         return 1
 

@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from answer_extractor.auto_cli import classify_inputs, main
 from answer_extractor.detect import QuestionResult
 from answer_extractor.pipeline import SheetResult
+from answer_extractor.score_report import ScoreReportRow
 from answer_extractor.score_report_pipeline import ExportOutcome
 from answer_extractor.template import Template
 from tests.score_report_synth import write_score_report_pdf
@@ -295,3 +296,72 @@ def test_auto_cli_mixes_exported_and_combined_sheets_in_one_run(tmp_path):
     assert export_mock.call_args[0][2] is exported_result
     wb = load_workbook(output_path)
     assert wb.sheetnames == ["Smith, John 2026 SAT 1234 March"]  # truncated to 31 chars
+
+
+def _sat_rows(source="Student, Jane 2027 DSAT 8 March 8 2026"):
+    return [
+        ScoreReportRow(
+            source=source, module=1, question=1, section="Math", your_answer="B", module_label="Module 1"
+        )
+    ]
+
+
+def test_auto_cli_exports_identified_sat_rows_to_a_report_instead_of_the_combined_xlsx(tmp_path):
+    score_pdf_path = tmp_path / "score.pdf"
+    write_score_report_pdf(score_pdf_path, [(1, "Math", "A", "A", "Correct")])
+    output_path = tmp_path / "combined.xlsx"
+    report_dir = tmp_path / "reports"
+    sat_rows = _sat_rows()
+    pdf_path = report_dir / "Jane Student - March 8, 2026.pdf"
+
+    with patch("answer_extractor.auto_cli.classify_inputs", return_value=([], sat_rows)), \
+         patch("answer_extractor.auto_cli.annotate_rows", return_value=sat_rows), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sat_report", return_value=pdf_path) as export_mock:
+        exit_code = main(
+            ["--input", str(score_pdf_path), "--output", str(output_path), "--report-output-dir", str(report_dir)]
+        )
+
+    assert exit_code == 0
+    assert not output_path.exists()  # nothing left to combine
+    export_mock.assert_called_once()
+    assert export_mock.call_args[0][2] == sat_rows
+    assert export_mock.call_args[0][3] == report_dir
+
+
+def test_auto_cli_falls_back_to_the_combined_xlsx_for_a_sat_report_that_fails_to_export(tmp_path):
+    score_pdf_path = tmp_path / "score.pdf"
+    write_score_report_pdf(score_pdf_path, [(1, "Math", "A", "A", "Correct")])
+    output_path = tmp_path / "combined.xlsx"
+    sat_rows = _sat_rows()
+
+    with patch("answer_extractor.auto_cli.classify_inputs", return_value=([], sat_rows)), \
+         patch("answer_extractor.auto_cli.annotate_rows", return_value=sat_rows), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sat_report", side_effect=ValueError("cancelled")):
+        exit_code = main(
+            ["--input", str(score_pdf_path), "--output", str(output_path), "--report-output-dir", str(tmp_path)]
+        )
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Score Report Answers"]
+    rows = list(wb["Score Report Answers"].iter_rows(min_row=2, values_only=True))
+    assert rows == [("Unknown", "Math - Module 1", 1, "B")]
+
+
+def test_auto_cli_never_attempts_sat_export_when_identification_itself_fails(tmp_path):
+    score_pdf_path = tmp_path / "score.pdf"
+    write_score_report_pdf(score_pdf_path, [(1, "Math", "A", "A", "Correct")])
+    output_path = tmp_path / "combined.xlsx"
+
+    with patch("answer_extractor.auto_cli.load_answer_keys", side_effect=RuntimeError("network down")), \
+         patch("answer_extractor.auto_cli.export_sat_report") as export_mock, \
+         patch("answer_extractor.auto_cli.build_services") as build_mock:
+        exit_code = main(["--input", str(score_pdf_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    export_mock.assert_not_called()
+    build_mock.assert_not_called()  # no reason to even attempt Google auth
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Score Report Answers"]

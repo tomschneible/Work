@@ -119,6 +119,17 @@ def group_by_module(rows: List[ScoreReportRow]) -> "dict[int, List[ScoreReportRo
     return blocks
 
 
+def group_by_source(rows: List[ScoreReportRow]) -> "dict[str, List[ScoreReportRow]]":
+    """Group rows by their `source` (one PDF -- one student's report),
+    preserving first-seen order. A batch mixing several students' reports
+    has to be split this way before per-student handling (identification,
+    Drive export, ...) makes sense."""
+    groups: "dict[str, List[ScoreReportRow]]" = {}
+    for row in rows:
+        groups.setdefault(row.source, []).append(row)
+    return groups
+
+
 def section_module_index(rows: List[ScoreReportRow]) -> "dict[int, int]":
     """For each `module` counter value, return which occurrence (1st, 2nd,
     ...) of *that row's section* it is. This is robust to how sections are

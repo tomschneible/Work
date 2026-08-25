@@ -35,7 +35,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .score_report import ScoreReportRow, group_by_module, section_module_index
+from .score_report import ScoreReportRow, group_by_module, group_by_source, section_module_index
 
 _BUNDLED_CSV_PATH = Path(__file__).parent / "answer_keys" / "sat_answer_keys.csv"
 _CACHE_PATH = Path.home() / ".cache" / "answer_extractor" / "sat_answer_keys.csv"
@@ -248,12 +248,8 @@ def annotate_rows(rows: List[ScoreReportRow], library: AnswerKeyLibrary) -> List
     """Return new rows with `test` and `module_label` filled in. Rows from
     different source files are identified independently, since a batch can
     mix reports from different tests."""
-    by_source: Dict[str, List[ScoreReportRow]] = {}
-    for row in rows:
-        by_source.setdefault(row.source, []).append(row)
-
     annotated: List[ScoreReportRow] = []
-    for source_rows in by_source.values():
+    for source_rows in group_by_source(rows).values():
         result = identify_test_and_modules(source_rows, library)
         for row in source_rows:
             annotated.append(

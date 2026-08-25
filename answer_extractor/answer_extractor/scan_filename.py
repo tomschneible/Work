@@ -5,6 +5,10 @@ Year" -- e.g. "Student, Jane 2027 ACT 25MC1 January 17 2026" (day optional;
 before day-level naming existed). This is this pipeline's only source for
 a scan's student name, test date, and which Drive template to use --
 nothing else in the input carries it.
+
+TestFamily is "ACT", "SAT", or "DSAT" -- confirmed against a real
+Digital SAT filename using "DSAT", not "SAT" (sat_score_report_pipeline.py
+treats both as the same "SAT" Drive category).
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ _MONTHS = {
 }
 
 _PATTERN = re.compile(
-    r"^(?P<last>[^,]+),\s*(?P<first>\S+)\s+(?P<grad_year>\d{4})\s+(?P<test_family>ACT|SAT)\s+"
+    r"^(?P<last>[^,]+),\s*(?P<first>\S+)\s+(?P<grad_year>\d{4})\s+(?P<test_family>ACT|DSAT|SAT)\s+"
     r"(?P<test_code>\S+)\s+(?P<month>[A-Za-z]+)(?:\s+(?P<day>\d{1,2}))?\s+(?P<year>\d{4})$",
     re.IGNORECASE,
 )

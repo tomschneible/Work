@@ -138,20 +138,20 @@ correct answer for Module 1, the easier Module 2, and the harder Module 2.
 
 ## Google Sheets score reports
 
-**Status: wired into the main auto_cli/droplet pipeline for ACT (Enhanced
-and Legacy) scans. SAT isn't wired to this path yet** -- a SAT scan still
-goes through the older combined-.xlsx export, same as before this feature
-existed. This section covers what's implemented today.
+**Status: wired into the main auto_cli/droplet pipeline for both ACT
+(Enhanced and Legacy) scans and SAT/DSAT score-report PDFs.** This
+section covers what's implemented today.
 
-For a scan whose auto-detected bubble-sheet template is one of the wired
-ACT formats, results get written into a copy of the matching Google
-Sheets template found automatically in your Drive, then exported as a
-PDF and cleaned up -- so the final artifact looks exactly like the score
-reports you already produce by hand from that template, honoring
-whatever print setup (page range, layout) is already saved on it.
-Anything not wired to this path (a SAT scan, an unrecognized template, or
-any sheet when `--template` forces a fixed one) still goes into the
-combined `.xlsx`, same as always.
+For an ACT scan whose auto-detected bubble-sheet template is one of the
+wired formats, or a SAT/DSAT score-report PDF that answer-key
+identification can confidently place, results get written into a copy of
+the matching Google Sheets template found automatically in your Drive,
+then exported as a PDF and cleaned up -- so the final artifact looks
+exactly like the score reports you already produce by hand from that
+template, honoring whatever print setup (page range, layout) is already
+saved on it. Anything not wired to this path (an unidentified/unrecognized
+input, or any bubble sheet when `--template` forces a fixed one) still
+goes into the combined `.xlsx`, same as always.
 
 ### Identity: a dedicated org account, not a personal one
 
@@ -220,48 +220,67 @@ worked, or to look around the folder tree while debugging.
    `template_lookup.py` walks category subfolders by name from one
    configured root (`Testmastergrids`, by default -- override with
    `--templates-root-folder-id` or `$ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID`),
-   e.g. `ACT/Enhanced`, then matches a template file by test code
-   substring against real template names like `ACT 25MC1`. Uploading a
-   new template to the right subfolder is all a new test code needs --
-   no code change. An ambiguous or missing match raises, listing what it
-   actually found, rather than guessing.
+   e.g. `ACT/Enhanced` or `SAT`, then matches a template file by test
+   code substring against real template names like `ACT 25MC1` or
+   `DSAT 8`. Uploading a new template to the right subfolder is all a new
+   test code needs -- no code change. An ambiguous or missing match
+   raises, listing what it actually found, rather than guessing.
 2. **The student's name, test date, and which category/test code to look
-   for all come from the scanned sheet's own filename** -- see
+   for all come from the input's own filename** -- for an ACT scan, the
+   image/PDF's filename; for SAT, the score-report PDF's. See
    `scan_filename.py` for the exact convention
-   (`"LastName, FirstName GradYear ACT/SAT TestCode Month [Day] Year"`,
-   e.g. `Student, Jane 2027 ACT 25MC1 January 17 2026`). This is the
-   *only* source for those fields; a sheet dropped in without being
-   renamed to this convention first fails to export (with a clear error)
-   and falls back to the combined `.xlsx` instead.
+   (`"LastName, FirstName GradYear ACT/SAT/DSAT TestCode Month [Day] Year"`,
+   e.g. `Student, Jane 2027 ACT 25MC1 January 17 2026` or
+   `Student, Jane 2027 DSAT 8 March 8 2026`). This is the *only* source
+   for those fields; an input dropped in without being renamed to this
+   convention first fails to export (with a clear error) and falls back
+   to the combined `.xlsx` instead.
 3. **The template is filled in.** Since the templates are live Google
    Sheets, not uploaded `.xlsx` files, `google_sheets_export.py`
    round-trips through a local file: `copy_template` duplicates it,
-   `export_xlsx` pulls the copy down locally, `score_report_writer.fill_score_report`
-   edits it exactly like any other `.xlsx` (see its own docstring for
-   what does and doesn't get touched -- cell positions are never
-   hardcoded there either), and `replace_content` pushes the filled file
-   back in (Drive converts it back to native Sheets format on upload).
-   `export_pdf` then renders the final PDF, and the working Sheet copy is
-   deleted -- all tied together by `google_score_report_export.export_score_report`.
-4. **Flagging.** A blank or MULTIPLE-marked bubble always comes through
-   as blank on the report -- never a guessed answer. If the sheet has any
-   review items at all (blank/MULTIPLE/low-confidence/unreadable/
-   pattern-inferred), the run also writes the familiar color-coded
-   `.xlsx` for that one sheet alongside the PDF, and both filenames get a
-   `" FLAG"` suffix, so a report that needs a human look never looks
-   identical to a clean one in a folder listing. See
-   `score_report_pipeline.py` for this glue logic (`should_export_to_sheets`,
-   `answers_from_result`, `export_sheet_report`).
+   `export_xlsx` pulls the copy down locally, the format-specific writer
+   (`score_report_writer.fill_score_report` for ACT,
+   `sat_score_report_writer.fill_sat_score_report` for SAT -- see either
+   module's own docstring for what does and doesn't get touched, and why
+   they're different enough not to share one implementation) edits it
+   exactly like any other `.xlsx`, and `replace_content` pushes the
+   filled file back in (Drive converts it back to native Sheets format on
+   upload). `export_pdf` then renders the final PDF, and the working
+   Sheet copy is deleted -- the whole sequence lives once in
+   `google_report_export_common.export_filled_report`, shared by both
+   formats' own thin wrapper (`google_score_report_export.export_score_report`,
+   `google_sat_score_report_export.export_sat_score_report`).
+4. **What ACT flags, SAT prompts for.** A blank or MULTIPLE-marked bubble
+   always comes through as blank on an ACT report -- never a guessed
+   answer. If the sheet has any review items at all (blank/MULTIPLE/
+   low-confidence/unreadable/pattern-inferred), the run also writes the
+   familiar color-coded `.xlsx` for that one sheet alongside the PDF, and
+   both filenames get a `" FLAG"` suffix, so a report that needs a human
+   look never looks identical to a clean one in a folder listing (see
+   `score_report_pipeline.py`: `should_export_to_sheets`,
+   `answers_from_result`, `export_sheet_report`). SAT has no equivalent
+   confidence signal to flag on (a parsed PDF's answers are just correct
+   text extraction, not an OMR read), but it does need one piece of input
+   nothing upstream can supply: each subject's scaled section score,
+   which a native macOS dialog prompts for once per report (see
+   `gui_prompt.py`, and `sat_score_report_pipeline.py`'s
+   `answers_from_rows`/`active_variants_from_rows`/`export_sat_report` for
+   the rest of that glue). Cancelling a prompt, or a Module 2 whose
+   difficulty couldn't be confidently identified, falls that report back
+   to the combined `.xlsx` the same as any other export failure.
 5. **Where files land.** PDFs (and any flagged `.xlsx`) are written to
    the Desktop by default -- override with `--report-output-dir` or
    `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`.
 
 `answer_extractor/auto_cli.py` (what the macOS droplet calls) is where
-this is wired in: each auto-detected sheet either goes through this path
-or into the combined `.xlsx`, per the rules in its own module docstring.
-If Google auth isn't set up at all, or one particular sheet fails to
-export (bad filename, no matching template), that sheet falls back into
-the combined `.xlsx` with a warning -- never fails the whole batch.
+this is wired in: each auto-detected bubble sheet, and each identified
+score-report PDF (grouped by source file -- one PDF, one student -- via
+`score_report.group_by_source`), either goes through this path or into
+the combined `.xlsx`, per the rules in its own module docstring. If
+Google auth isn't set up at all, answer-key identification itself fails,
+or one particular sheet/report fails to export on its own, that one falls
+back into the combined `.xlsx` with a warning -- never fails the whole
+batch.
 
 ## macOS drag-and-drop app
 
