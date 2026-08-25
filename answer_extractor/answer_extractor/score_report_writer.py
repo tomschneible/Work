@@ -55,7 +55,7 @@ def fill_score_report(
     template_path: str | Path,
     answers: Mapping[QuestionKey, str],
     student_name: str,
-    test_date: dt.date,
+    test_date: dt.date | str,
     sheet_name: str = "ScoreSheet",
 ) -> Workbook:
     """Load a fresh copy of `template_path` and return it with the
@@ -65,6 +65,13 @@ def fill_score_report(
     and .scoresheet_grid.normalize_section produce -- feed it this
     pipeline's own per-question results run through the same section
     normalization.
+
+    `test_date` takes a plain `str` as well as a `date`/`datetime`
+    deliberately: when the source scan's filename only gave a month/year
+    (see scan_filename.ScanFilename.day_known), pass its
+    formatted_test_date string ("January 2026") instead of manufacturing
+    a specific day nothing in the input confirmed -- a real `date` object
+    is for when the day is genuinely known.
 
     A template question with no entry in `answers` is left blank (an
     omitted bubble is a legitimate outcome). An `answers` entry for a

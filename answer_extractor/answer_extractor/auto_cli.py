@@ -17,10 +17,24 @@ template_detect), rather than assuming every dropped sheet is the same
 format -- pass --template to force one fixed template for all of them
 instead (e.g. if a sheet's format is genuinely ambiguous to auto-detect,
 or for a quick one-off test).
+
+A sheet whose auto-detected template is one of the ACT formats wired to
+the org's Drive templates (see score_report_pipeline.should_export_to_sheets)
+gets its own individual score-report PDF exported there instead of a tab
+in the combined .xlsx -- named after the student and flagged (a " FLAG"
+suffix, plus the familiar color-coded .xlsx alongside it) whenever the
+sheet has any review items (blank/MULTIPLE/low-confidence/unreadable/
+pattern-inferred). Everything else -- SAT scans, an unrecognized
+template, or any sheet when --template forces a fixed one -- still goes
+into the combined .xlsx exactly as before this existed. A sheet that
+fails to export (bad filename convention, no matching Drive template,
+Google auth not set up) falls back into the combined .xlsx too, with a
+warning explaining why, rather than failing the whole batch.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import List, Tuple
@@ -29,11 +43,18 @@ from openpyxl import Workbook
 
 from .answer_keys import annotate_rows, load_answer_keys
 from .export import add_bubble_sheet_answers_sheet
+from .google_sheets_export import build_services
 from .loading import IMAGE_SUFFIXES, PDF_SUFFIXES
 from .pipeline import SheetResult, UndetectedSheet, process_paths, process_paths_auto
 from .score_report import ScoreReportRow, parse_score_report
 from .score_report_export import add_score_report_answers_sheet
+from .score_report_pipeline import ExportOutcome, export_sheet_report, should_export_to_sheets
 from .template import Template
+
+# "Testmastergrids", the root of the org's Drive score-report template
+# tree (see README's "Google Sheets score reports" section) --
+# overridable for a different Drive layout without a code change.
+_DEFAULT_TEMPLATES_ROOT_FOLDER_ID = "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"
 
 
 def _iter_files(path: Path) -> List[Path]:
@@ -121,7 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
             "this to force one fixed template instead)"
         ),
     )
-    parser.add_argument("--output", required=True, help="Path to write the combined .xlsx to")
+    parser.add_argument(
+        "--output", required=True, help="Path to write the combined .xlsx to (sheets exported as their own "
+        "Sheets-report PDF don't go in here -- see --report-output-dir)"
+    )
     parser.add_argument(
         "--no-refresh-keys",
         action="store_true",
@@ -129,6 +153,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Skip fetching the latest answer key reference data over the network; use the "
             "last cached copy (or the one bundled in this checkout) instead"
         ),
+    )
+    parser.add_argument(
+        "--report-output-dir",
+        default=None,
+        help="Where to write per-student Sheets-report PDFs (and any flagged .xlsx alongside them) -- "
+        "defaults to the Desktop, or $ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR if set",
+    )
+    parser.add_argument(
+        "--templates-root-folder-id",
+        default=None,
+        help="Drive folder id of the score-report templates root (see README) -- defaults to this org's "
+        "own templates folder, or $ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID if set",
     )
     return parser
 
@@ -155,12 +191,61 @@ def main(argv: list[str] | None = None) -> int:
     wb = Workbook()
     del wb["Sheet"]
     summary_parts = []
+    exported: List[ExportOutcome] = []
 
     if bubble_paths:
         results = scan_bubble_sheets(bubble_paths, args.template)
         if results:
-            add_bubble_sheet_answers_sheet(wb, results)
-            summary_parts.append(f"{len(results)} bubble sheet(s){template_breakdown(results)}")
+            # --template forces a fixed template for everything, which
+            # also means opting out of the per-student Sheets-report path
+            # (should_export_to_sheets only ever recognizes an
+            # *auto-detected* template name -- see pipeline.SheetResult).
+            to_export: List[SheetResult] = []
+            to_combine: List[SheetResult] = []
+            for r in results:
+                (to_export if args.template is None and should_export_to_sheets(r) else to_combine).append(r)
+
+            if to_export:
+                try:
+                    drive, _sheets = build_services()
+                except Exception as exc:
+                    print(
+                        f"Warning: couldn't set up Google Sheets access ({exc}); "
+                        f"including these {len(to_export)} sheet(s) in {args.output} instead.",
+                        file=sys.stderr,
+                    )
+                    to_combine.extend(to_export)
+                    to_export = []
+                else:
+                    output_dir = Path(
+                        args.report_output_dir
+                        or os.environ.get("ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR")
+                        or (Path.home() / "Desktop")
+                    )
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    templates_root_folder_id = (
+                        args.templates_root_folder_id
+                        or os.environ.get("ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID")
+                        or _DEFAULT_TEMPLATES_ROOT_FOLDER_ID
+                    )
+                    for r in to_export:
+                        try:
+                            exported.append(export_sheet_report(drive, templates_root_folder_id, r, output_dir))
+                        except Exception as exc:
+                            print(
+                                f"Warning: couldn't export {r.label} to a Sheets report ({exc}); "
+                                f"including it in {args.output} instead.",
+                                file=sys.stderr,
+                            )
+                            to_combine.append(r)
+
+            if to_combine:
+                add_bubble_sheet_answers_sheet(wb, to_combine)
+                summary_parts.append(f"{len(to_combine)} bubble sheet(s) in {args.output}{template_breakdown(to_combine)}")
+            if exported:
+                flagged = sum(1 for o in exported if o.xlsx_path is not None)
+                flagged_note = f", {flagged} flagged for review" if flagged else ""
+                summary_parts.append(f"{len(exported)} score report(s) exported to {output_dir}{flagged_note}")
 
     if score_rows:
         try:
@@ -172,12 +257,14 @@ def main(argv: list[str] | None = None) -> int:
         num_reports = len({row.source for row in score_rows})
         summary_parts.append(f"{len(score_rows)} score-report question(s) from {num_reports} file(s)")
 
-    if not wb.sheetnames:
+    if not wb.sheetnames and not exported:
         print("No answers could be extracted from the given input.", file=sys.stderr)
         return 1
 
-    wb.save(args.output)
-    print(f"Wrote {args.output}: {'; '.join(summary_parts)}.")
+    if wb.sheetnames:
+        wb.save(args.output)
+
+    print(f"{'; '.join(summary_parts)}.")
     return 0
 
 

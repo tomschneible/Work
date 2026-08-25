@@ -37,7 +37,7 @@ def export_score_report(
     test_code: str,
     answers: Mapping[QuestionKey, str],
     student_name: str,
-    test_date: dt.date,
+    test_date: dt.date | str,
     output_name: str,
 ) -> bytes:
     """Return the filled report's PDF bytes. `category_path` is the

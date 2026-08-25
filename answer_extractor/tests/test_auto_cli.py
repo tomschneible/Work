@@ -1,7 +1,12 @@
+from unittest.mock import MagicMock, patch
+
 import cv2
 from openpyxl import load_workbook
 
 from answer_extractor.auto_cli import classify_inputs, main
+from answer_extractor.detect import QuestionResult
+from answer_extractor.pipeline import SheetResult
+from answer_extractor.score_report_pipeline import ExportOutcome
 from answer_extractor.template import Template
 from tests.score_report_synth import write_score_report_pdf
 from tests.synth import render_sheet
@@ -146,3 +151,147 @@ def test_auto_cli_handles_score_report_only_input_without_needing_a_valid_templa
     assert exit_code == 0
     wb = load_workbook(output_path)
     assert wb.sheetnames == ["Score Report Answers"]
+
+
+def _act_result(label="Student, Jane 2027 ACT 25MC1 January 17 2026"):
+    """An auto-detected-looking SheetResult matching one of the ACT
+    templates wired to the Drive score-report path -- for tests of
+    auto_cli's export-vs-combine dispatch, without needing real
+    template-detection machinery or a real Drive connection."""
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    return SheetResult(
+        label=label,
+        source="test",
+        used_contour_alignment=False,
+        questions=questions,
+        template_name="act_answer_sheet",
+    )
+
+
+def _fake_image(tmp_path, name="sheet.png"):
+    path = tmp_path / name
+    path.write_bytes(b"not a real image, but scan_bubble_sheets is mocked in these tests")
+    return path
+
+
+def test_auto_cli_exports_an_act_sheet_to_a_report_instead_of_the_combined_xlsx(tmp_path):
+    image_path = _fake_image(tmp_path)
+    output_path = tmp_path / "combined.xlsx"
+    report_dir = tmp_path / "reports"
+    outcome = ExportOutcome(pdf_path=report_dir / "Jane Student - January 17, 2026.pdf", xlsx_path=None)
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sheet_report", return_value=outcome) as export_mock:
+        exit_code = main(
+            [
+                "--input", str(image_path),
+                "--output", str(output_path),
+                "--report-output-dir", str(report_dir),
+            ]
+        )
+
+    assert exit_code == 0
+    assert not output_path.exists()  # nothing left to combine -- no .xlsx written at all
+    export_mock.assert_called_once()
+    assert export_mock.call_args[0][1] == "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"  # default templates root
+    assert export_mock.call_args[0][3] == report_dir
+
+
+def test_auto_cli_respects_a_custom_templates_root_folder_id(tmp_path):
+    image_path = _fake_image(tmp_path)
+    outcome = ExportOutcome(pdf_path=tmp_path / "r.pdf", xlsx_path=None)
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sheet_report", return_value=outcome) as export_mock:
+        main(
+            [
+                "--input", str(image_path),
+                "--output", str(tmp_path / "combined.xlsx"),
+                "--report-output-dir", str(tmp_path),
+                "--templates-root-folder-id", "CUSTOM_ROOT",
+            ]
+        )
+
+    assert export_mock.call_args[0][1] == "CUSTOM_ROOT"
+
+
+def test_auto_cli_still_combines_act_sheets_when_a_fixed_template_is_given(tmp_path):
+    """--template forces one fixed template for everything, which also
+    means opting out of the Sheets-report path -- even for a result whose
+    template_name happens to say "act_answer_sheet"."""
+    template_path = make_bubble_template_yaml(tmp_path)
+    image_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(image_path), render_sheet(Template.from_yaml(template_path), {1: ["F"]}))
+    output_path = tmp_path / "combined.xlsx"
+
+    with patch("answer_extractor.auto_cli.export_sheet_report") as export_mock:
+        exit_code = main(
+            [
+                "--input", str(image_path),
+                "--template", str(template_path),
+                "--output", str(output_path),
+            ]
+        )
+
+    assert exit_code == 0
+    export_mock.assert_not_called()
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["sheet"]
+
+
+def test_auto_cli_falls_back_to_the_combined_xlsx_when_google_auth_is_unavailable(tmp_path):
+    image_path = _fake_image(tmp_path)
+    output_path = tmp_path / "combined.xlsx"
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
+         patch("answer_extractor.auto_cli.build_services", side_effect=FileNotFoundError("no client secret")):
+        exit_code = main(["--input", str(image_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Student, Jane 2027 ACT 25MC1 Ja"]  # openpyxl truncates sheet titles to 31 chars
+
+
+def test_auto_cli_falls_back_to_the_combined_xlsx_for_one_sheet_that_fails_to_export(tmp_path):
+    image_path = _fake_image(tmp_path)
+    output_path = tmp_path / "combined.xlsx"
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sheet_report", side_effect=ValueError("no matching template")):
+        exit_code = main(
+            ["--input", str(image_path), "--output", str(output_path), "--report-output-dir", str(tmp_path)]
+        )
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Student, Jane 2027 ACT 25MC1 Ja"]  # openpyxl truncates sheet titles to 31 chars
+
+
+def test_auto_cli_mixes_exported_and_combined_sheets_in_one_run(tmp_path):
+    exported_result = _act_result("Student, Jane 2027 ACT 25MC1 January 17 2026")
+    combined_result = SheetResult(
+        label="Smith, John 2026 SAT 1234 March 2026",
+        source="test",
+        used_contour_alignment=False,
+        questions=[QuestionResult("Math", 1, "B", ["B"], {}, low_confidence=False)],
+        template_name="default_template",  # not wired to the Drive path
+    )
+    image_path = _fake_image(tmp_path)
+    output_path = tmp_path / "combined.xlsx"
+    outcome = ExportOutcome(pdf_path=tmp_path / "r.pdf", xlsx_path=None)
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[exported_result, combined_result]), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.export_sheet_report", return_value=outcome) as export_mock:
+        exit_code = main(
+            ["--input", str(image_path), "--output", str(output_path), "--report-output-dir", str(tmp_path)]
+        )
+
+    assert exit_code == 0
+    export_mock.assert_called_once()
+    assert export_mock.call_args[0][2] is exported_result
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Smith, John 2026 SAT 1234 March"]  # truncated to 31 chars

@@ -138,17 +138,20 @@ correct answer for Module 1, the easier Module 2, and the harder Module 2.
 
 ## Google Sheets score reports
 
-**Status: setup/auth plumbing, plus a template writer, so far -- the
-Drive template search, PDF export, and wiring this into the main
-CLI/droplet as an output mode aren't built yet.** This section covers
-what's implemented today.
+**Status: wired into the main auto_cli/droplet pipeline for ACT (Enhanced
+and Legacy) scans. SAT isn't wired to this path yet** -- a SAT scan still
+goes through the older combined-.xlsx export, same as before this feature
+existed. This section covers what's implemented today.
 
-Instead of (or alongside) a plain `.xlsx`, results get written into a
-copy of an existing Google Sheets template that already lives in your
-Drive, then exported as a PDF and cleaned up -- so the final artifact
-looks exactly like the score reports you already produce by hand from
-that template, honoring whatever print setup (page range, layout) is
-already saved on it.
+For a scan whose auto-detected bubble-sheet template is one of the wired
+ACT formats, results get written into a copy of the matching Google
+Sheets template found automatically in your Drive, then exported as a
+PDF and cleaned up -- so the final artifact looks exactly like the score
+reports you already produce by hand from that template, honoring
+whatever print setup (page range, layout) is already saved on it.
+Anything not wired to this path (a SAT scan, an unrecognized template, or
+any sheet when `--template` forces a fixed one) still goes into the
+combined `.xlsx`, same as always.
 
 ### Identity: a dedicated org account, not a personal one
 
@@ -194,7 +197,7 @@ this points at, just delete that cached token file -- the next call
 re-prompts for consent, with no changes to the Cloud project or OAuth
 client needed.
 
-### Finding a template's file id
+### Finding a template's file id by hand (setup/debugging only)
 
 ```bash
 python -m answer_extractor.google_sheets_cli list-folder --folder-id <folder id>
@@ -207,27 +210,58 @@ Shared Drive too, as long as the dedicated account has at least Viewer
 access to it) with its own file id and name -- also doubles as a check
 that the sharing step actually worked, since an unexpectedly empty result
 almost always means the folder hasn't been shared with that account yet.
+The real pipeline (below) never needs this run by hand -- it finds the
+right template itself -- but it's the fastest way to confirm sharing
+worked, or to look around the folder tree while debugging.
 
-### Filling in a template
+### How a scan becomes a report
 
-`answer_extractor.score_report_writer.fill_score_report` takes a
-template path, a `{(section, question): answer}` mapping (the same shape
-`scoresheet_check.parse_reference_scoresheet` produces), a student name,
-and a test date, and returns a filled-in copy -- see its docstring for
-exactly what does and doesn't get touched. Cell positions are never
-hardcoded: name/date go wherever a template's own "Enter Name/Date on
-'ScoreSheet' Tab" placeholder cells are, and answers go into whichever
-"Your Answer" block covers each question, both located generically so
-this keeps working against however many differently-sized sub-templates
-(Enhanced ACT, Legacy ACT, SAT, ...) get uploaded without any code
-changes.
+1. **The template is found automatically**, not hardcoded anywhere.
+   `template_lookup.py` walks category subfolders by name from one
+   configured root (`Testmastergrids`, by default -- override with
+   `--templates-root-folder-id` or `$ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID`),
+   e.g. `ACT/Enhanced`, then matches a template file by test code
+   substring against real template names like `ACT 25MC1`. Uploading a
+   new template to the right subfolder is all a new test code needs --
+   no code change. An ambiguous or missing match raises, listing what it
+   actually found, rather than guessing.
+2. **The student's name, test date, and which category/test code to look
+   for all come from the scanned sheet's own filename** -- see
+   `scan_filename.py` for the exact convention
+   (`"LastName, FirstName GradYear ACT/SAT TestCode Month [Day] Year"`,
+   e.g. `Student, Jane 2027 ACT 25MC1 January 17 2026`). This is the
+   *only* source for those fields; a sheet dropped in without being
+   renamed to this convention first fails to export (with a clear error)
+   and falls back to the combined `.xlsx` instead.
+3. **The template is filled in.** Since the templates are live Google
+   Sheets, not uploaded `.xlsx` files, `google_sheets_export.py`
+   round-trips through a local file: `copy_template` duplicates it,
+   `export_xlsx` pulls the copy down locally, `score_report_writer.fill_score_report`
+   edits it exactly like any other `.xlsx` (see its own docstring for
+   what does and doesn't get touched -- cell positions are never
+   hardcoded there either), and `replace_content` pushes the filled file
+   back in (Drive converts it back to native Sheets format on upload).
+   `export_pdf` then renders the final PDF, and the working Sheet copy is
+   deleted -- all tied together by `google_score_report_export.export_score_report`.
+4. **Flagging.** A blank or MULTIPLE-marked bubble always comes through
+   as blank on the report -- never a guessed answer. If the sheet has any
+   review items at all (blank/MULTIPLE/low-confidence/unreadable/
+   pattern-inferred), the run also writes the familiar color-coded
+   `.xlsx` for that one sheet alongside the PDF, and both filenames get a
+   `" FLAG"` suffix, so a report that needs a human look never looks
+   identical to a clean one in a folder listing. See
+   `score_report_pipeline.py` for this glue logic (`should_export_to_sheets`,
+   `answers_from_result`, `export_sheet_report`).
+5. **Where files land.** PDFs (and any flagged `.xlsx`) are written to
+   the Desktop by default -- override with `--report-output-dir` or
+   `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`.
 
-This path is implemented in `answer_extractor/google_auth.py`
-(credentials), `answer_extractor/google_sheets_export.py`
-(duplicate/export-as-PDF/delete against the Drive and Sheets APIs), and
-`answer_extractor/score_report_writer.py` (filling a duplicated
-template's cells in); `answer_extractor/google_sheets_cli.py` is the
-standalone setup command above.
+`answer_extractor/auto_cli.py` (what the macOS droplet calls) is where
+this is wired in: each auto-detected sheet either goes through this path
+or into the combined `.xlsx`, per the rules in its own module docstring.
+If Google auth isn't set up at all, or one particular sheet fails to
+export (bad filename, no matching template), that sheet falls back into
+the combined `.xlsx` with a warning -- never fails the whole batch.
 
 ## macOS drag-and-drop app
 
