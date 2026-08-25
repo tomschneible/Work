@@ -42,12 +42,12 @@ def test_copy_template_names_the_copy_and_requests_shared_drive_support():
     drive = MagicMock()
     drive.files.return_value.copy.return_value.execute.return_value = {"id": "NEW_ID"}
 
-    result = copy_template(drive, "TEMPLATE_ID", "Anne Studnicky - 2026-08-19")
+    result = copy_template(drive, "TEMPLATE_ID", "Jane Student - 2026-08-19")
 
     assert result == "NEW_ID"
     _, kwargs = drive.files.return_value.copy.call_args
     assert kwargs["fileId"] == "TEMPLATE_ID"
-    assert kwargs["body"] == {"name": "Anne Studnicky - 2026-08-19"}
+    assert kwargs["body"] == {"name": "Jane Student - 2026-08-19"}
     assert kwargs["supportsAllDrives"] is True
 
 
