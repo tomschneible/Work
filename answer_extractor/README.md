@@ -136,6 +136,99 @@ To add a new test, append rows to `sat_answer_keys.csv` (via a PR, or
 editing directly on GitHub) -- one row per question, with that question's
 correct answer for Module 1, the easier Module 2, and the harder Module 2.
 
+## Google Sheets score reports
+
+**Status: setup/auth plumbing, plus a template writer, so far -- the
+Drive template search, PDF export, and wiring this into the main
+CLI/droplet as an output mode aren't built yet.** This section covers
+what's implemented today.
+
+Instead of (or alongside) a plain `.xlsx`, results get written into a
+copy of an existing Google Sheets template that already lives in your
+Drive, then exported as a PDF and cleaned up -- so the final artifact
+looks exactly like the score reports you already produce by hand from
+that template, honoring whatever print setup (page range, layout) is
+already saved on it.
+
+### Identity: a dedicated org account, not a personal one
+
+This runs as its own Google identity (e.g. a department account), not
+whoever's logged into a lab laptop's browser at the time -- the account
+this points at needs to already have Drive access to whatever templates
+and destination folders it'll use, granted the ordinary way (Share a
+folder with its email), same as sharing with a coworker.
+
+### One-time Google Cloud setup
+
+This needs an OAuth client of your own -- there's no shared one, since
+whoever holds it can act as this app against your Google account:
+
+1. Create a project at [console.cloud.google.com](https://console.cloud.google.com/)
+   (free -- no billing/credit card needed for this). It can live under any
+   account that's part of your Workspace org -- doesn't have to be the
+   dedicated account itself, since project ownership and "which account's
+   Drive access gets used" are separate things (see step 5).
+2. **APIs & Services -> Library**: enable the **Google Sheets API** and
+   the **Google Drive API**.
+3. **APIs & Services -> OAuth consent screen**: User Type **Internal**
+   (only available because the project belongs to a Workspace org) --
+   this skips Google's app-review process entirely regardless of scope,
+   and avoids the 7-day refresh-token expiry that an External app stuck
+   in "Testing" status would hit.
+4. **APIs & Services -> Credentials -> Create Credentials -> OAuth client
+   ID**, application type **Desktop app**. Download the resulting JSON.
+5. Save that file as `~/.config/answer_extractor/client_secret.json` (or
+   point `ANSWER_EXTRACTOR_GOOGLE_CLIENT_SECRET` at wherever you keep
+   it). **Never commit this file** -- it's excluded by `.gitignore` as a
+   safety net, but the real protection is just not putting it in the repo
+   directory at all.
+
+The first API call after that opens a browser for one-time consent and
+caches a refresh token at `~/.cache/answer_extractor/google_token.json`
+(or `ANSWER_EXTRACTOR_GOOGLE_TOKEN_CACHE`). **Complete that consent
+screen logged in as the dedicated account**, not your own -- whichever
+Google account approves it there is the one every future run acts as.
+Every call after that is silent, with no browser needed, which is what
+makes this workable on an unattended lab laptop. To switch which account
+this points at, just delete that cached token file -- the next call
+re-prompts for consent, with no changes to the Cloud project or OAuth
+client needed.
+
+### Finding a template's file id
+
+```bash
+python -m answer_extractor.google_sheets_cli list-folder --folder-id <folder id>
+```
+
+The folder id is the long token in a Drive folder link:
+`https://drive.google.com/drive/folders/<this part>?usp=drive_link`. This
+lists every file directly inside that folder (works for a folder in a
+Shared Drive too, as long as the dedicated account has at least Viewer
+access to it) with its own file id and name -- also doubles as a check
+that the sharing step actually worked, since an unexpectedly empty result
+almost always means the folder hasn't been shared with that account yet.
+
+### Filling in a template
+
+`answer_extractor.score_report_writer.fill_score_report` takes a
+template path, a `{(section, question): answer}` mapping (the same shape
+`scoresheet_check.parse_reference_scoresheet` produces), a student name,
+and a test date, and returns a filled-in copy -- see its docstring for
+exactly what does and doesn't get touched. Cell positions are never
+hardcoded: name/date go wherever a template's own "Enter Name/Date on
+'ScoreSheet' Tab" placeholder cells are, and answers go into whichever
+"Your Answer" block covers each question, both located generically so
+this keeps working against however many differently-sized sub-templates
+(Enhanced ACT, Legacy ACT, SAT, ...) get uploaded without any code
+changes.
+
+This path is implemented in `answer_extractor/google_auth.py`
+(credentials), `answer_extractor/google_sheets_export.py`
+(duplicate/export-as-PDF/delete against the Drive and Sheets APIs), and
+`answer_extractor/score_report_writer.py` (filling a duplicated
+template's cells in); `answer_extractor/google_sheets_cli.py` is the
+standalone setup command above.
+
 ## macOS drag-and-drop app
 
 You can turn this into a real `.app` icon on a Mac: drop scanned bubble

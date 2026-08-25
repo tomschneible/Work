@@ -7,3 +7,11 @@ numpy>=1.24,<2.0
 PyMuPDF>=1.23,<2
 openpyxl>=3.1,<4
 PyYAML>=6.0,<7
+
+# Google Sheets/Drive score-report export (see README's "Google Sheets
+# score reports" section) -- optional in spirit (only needed if you use
+# --output-mode sheets), but installed unconditionally to keep setup to
+# one `pip install -r requirements.txt` rather than two paths to maintain.
+google-auth>=2.23,<3
+google-auth-oauthlib>=1.1,<2
+google-api-python-client>=2.100,<3
