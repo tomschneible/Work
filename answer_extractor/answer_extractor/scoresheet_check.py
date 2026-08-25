@@ -26,13 +26,17 @@ Two different spreadsheet shapes are involved:
     and this needs to keep working if a future export shifts row numbers.
 
 The two sheets don't even agree on section names (the reference calls it
-"Math", our template calls it "Mathematics") -- see _normalize_section.
+"Math", our template calls it "Mathematics") -- see
+scoresheet_grid.normalize_section. Block-locating itself (the title/header
+scan above) lives in scoresheet_grid.py, shared with score_report_writer.py,
+which fills in a template's own "Your Answer" cells rather than reading a
+vendor's back out.
 """
 from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill
@@ -41,37 +45,11 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .detect import QuestionResult
 from .export import BLANK_FILL, MULTIPLE_FILL, PATTERN_INFERRED_FILL, UNREADABLE_FILL, flag_for
+from .scoresheet_grid import QuestionKey, iter_block_questions, locate_answer_blocks, normalize_section
 
-QuestionKey = Tuple[str, int]
-
-_SECTION_ALIASES = {"math": "mathematics"}
-_KNOWN_SECTION_TITLES = {"english", "math", "mathematics", "reading", "science"}
 _OMITTED_MARKS = {"ø", "o", "omitted", "-"}
 
 _SECTION_ORDER = ["english", "mathematics", "reading", "science"]
-
-
-def _normalize_section(name: str) -> str:
-    key = str(name).strip().lower()
-    return _SECTION_ALIASES.get(key, key)
-
-
-def _section_for_header(
-    titles: List[Tuple[int, int, str]], header_row: int, header_col: int
-) -> Optional[str]:
-    """The section title that governs this "Your Answer" column: the
-    nearest title row above the header, and within that row, the
-    rightmost title at or left of the header's column (one title covers
-    every block-group to its right, up to the next title -- see module
-    docstring)."""
-    above = [(row, col, name) for row, col, name in titles if row < header_row]
-    if not above:
-        return None
-    nearest_row = max(row for row, _, _ in above)
-    same_row = [(col, name) for row, col, name in above if row == nearest_row]
-    left_or_equal = [(col, name) for col, name in same_row if col <= header_col]
-    pool = left_or_equal or same_row
-    return max(pool, key=lambda item: item[0])[1]
 
 
 def parse_reference_scoresheet(
@@ -86,48 +64,22 @@ def parse_reference_scoresheet(
         raise ValueError(f"No {sheet_name!r} tab in {path} (tabs: {wb.sheetnames})")
     ws = wb[sheet_name]
 
-    titles: List[Tuple[int, int, str]] = []
-    headers: List[Tuple[int, int]] = []
-    for row in ws.iter_rows():
-        for cell in row:
-            value = cell.value
-            if not isinstance(value, str):
-                continue
-            text = value.strip()
-            if text.lower() in _KNOWN_SECTION_TITLES:
-                titles.append((cell.row, cell.column, _normalize_section(text)))
-            elif text == "Your Answer":
-                headers.append((cell.row, cell.column))
-
     result: Dict[QuestionKey, str] = {}
-    for header_row, header_col in headers:
-        section = _section_for_header(titles, header_row, header_col)
-        if section is None:
-            raise ValueError(
-                f"Could not find a section title above the 'Your Answer' column at "
-                f"{sheet_name}!R{header_row}C{header_col}"
-            )
-        question_col = header_col - 2
-        mark_col = header_col + 1
-        r = header_row + 1
-        while True:
-            question = ws.cell(row=r, column=question_col).value
-            if question is None:
-                break
-            mark = ws.cell(row=r, column=mark_col).value
-            your_answer = ws.cell(row=r, column=header_col).value
+    for block in locate_answer_blocks(ws):
+        for r, question in iter_block_questions(ws, block):
+            mark = ws.cell(row=r, column=block.mark_col).value
+            your_answer = ws.cell(row=r, column=block.answer_col).value
             omitted = your_answer is None or (
                 isinstance(mark, str) and mark.strip().lower() in _OMITTED_MARKS
             )
             answer = "" if omitted else str(your_answer).strip().upper()
-            key = (section, int(question))
+            key = (block.section, question)
             if key in result and result[key] != answer:
                 raise ValueError(
                     f"Conflicting entries for {key} in {sheet_name}: "
                     f"{result[key]!r} vs {answer!r}"
                 )
             result[key] = answer
-            r += 1
     return result
 
 
@@ -180,7 +132,7 @@ def parse_program_output(
                 continue  # not a real question for this section -- table padding
             answer = cell.value or ""
             low_confidence = bool(cell.font and cell.font.italic)
-            result[(_normalize_section(section), int(question))] = OurAnswer(
+            result[(normalize_section(section), int(question))] = OurAnswer(
                 answer, flag, low_confidence
             )
     return result
@@ -196,7 +148,7 @@ def ours_from_results(questions: List[QuestionResult]) -> Dict[QuestionKey, OurA
     export.flag_for so the flag classification can't drift from what
     export.py would actually put in the cell."""
     return {
-        (_normalize_section(q.section), q.question): OurAnswer(q.answer, flag_for(q), q.low_confidence)
+        (normalize_section(q.section), q.question): OurAnswer(q.answer, flag_for(q), q.low_confidence)
         for q in questions
     }
 
