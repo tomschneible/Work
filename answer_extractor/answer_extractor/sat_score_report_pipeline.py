@@ -116,11 +116,14 @@ def export_sat_report(
     rows: List[ScoreReportRow],
     output_dir: str | Path,
     prompt_fn: Callable[[str, str], Optional[str]] = prompt_for_text,
+    temp_folder_id: Optional[str] = None,
 ) -> Path:
     """Produce one student's DSAT score-report PDF in `output_dir`, from
     `rows` -- every ScoreReportRow for one source file (see
     score_report.group_by_source), already run through
-    answer_keys.annotate_rows.
+    answer_keys.annotate_rows. `temp_folder_id` is passed straight through
+    to export_sat_score_report (see
+    google_report_export_common.export_filled_report).
 
     Prompts once per subject present in `rows` for its scaled section
     score via `prompt_fn` (a native macOS dialog by default -- see
@@ -166,6 +169,7 @@ def export_sat_report(
         test_date=test_date,
         section_scores=section_scores,
         output_name=base_name,
+        temp_folder_id=temp_folder_id,
     )
     pdf_path = output_dir / f"{base_name}.pdf"
     pdf_path.write_bytes(pdf_bytes)

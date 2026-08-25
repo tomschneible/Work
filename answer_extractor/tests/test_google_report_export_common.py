@@ -60,6 +60,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks["copy_template"].assert_called_once()
     assert mocks["copy_template"].call_args[0][1] == "TEMPLATE_ID"
     assert mocks["copy_template"].call_args[0][2] == "Jane Student - 2026-03-04"
+    assert mocks["copy_template"].call_args.kwargs["parent_folder_id"] is None  # temp_folder_id omitted
 
     mocks["export_xlsx"].assert_called_once()
     assert mocks["export_xlsx"].call_args[0][1] == "COPY_ID"
@@ -74,6 +75,24 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
 
     mocks["delete_file"].assert_called_once()
     assert mocks["delete_file"].call_args[0][1] == "COPY_ID"
+
+
+def test_export_filled_report_places_the_working_copy_in_the_given_temp_folder():
+    mocks, patchers = _patch_all()
+    try:
+        export_filled_report(
+            drive=MagicMock(),
+            templates_root_folder_id="ROOT",
+            category_path=["SAT"],
+            test_code="8",
+            output_name="report",
+            fill_fn=MagicMock(return_value=MagicMock()),
+            temp_folder_id="TEMP_FOLDER_ID",
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert mocks["copy_template"].call_args.kwargs["parent_folder_id"] == "TEMP_FOLDER_ID"
 
 
 def test_export_filled_report_deletes_the_working_copy_even_if_a_later_step_fails():

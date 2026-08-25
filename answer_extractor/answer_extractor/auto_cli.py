@@ -64,6 +64,10 @@ from .template import Template
 # tree (see README's "Google Sheets score reports" section) --
 # overridable for a different Drive layout without a code change.
 _DEFAULT_TEMPLATES_ROOT_FOLDER_ID = "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"
+# "Temporary Files", the sibling folder the org already set aside for
+# exactly this -- a working Sheet copy is parked there while it's being
+# filled in, rather than in the same folder as the real templates.
+_DEFAULT_TEMP_FOLDER_ID = "1eUp4nToItX0_xtDe4Dt3VDlfCQU3ba_y"
 
 
 def _iter_files(path: Path) -> List[Path]:
@@ -175,6 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drive folder id of the score-report templates root (see README) -- defaults to this org's "
         "own templates folder, or $ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID if set",
     )
+    parser.add_argument(
+        "--temp-folder-id",
+        default=None,
+        help="Drive folder id to park a working Sheet copy in while it's being filled in, instead of "
+        "the same folder as the real template it was copied from -- defaults to this org's "
+        "\"Temporary Files\" folder, or $ANSWER_EXTRACTOR_TEMP_FOLDER_ID if set",
+    )
     return parser
 
 
@@ -260,10 +271,17 @@ def main(argv: list[str] | None = None) -> int:
                 or os.environ.get("ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID")
                 or _DEFAULT_TEMPLATES_ROOT_FOLDER_ID
             )
+            temp_folder_id = (
+                args.temp_folder_id
+                or os.environ.get("ANSWER_EXTRACTOR_TEMP_FOLDER_ID")
+                or _DEFAULT_TEMP_FOLDER_ID
+            )
 
             for r in to_export:
                 try:
-                    exported.append(export_sheet_report(drive, templates_root_folder_id, r, output_dir))
+                    exported.append(
+                        export_sheet_report(drive, templates_root_folder_id, r, output_dir, temp_folder_id)
+                    )
                 except Exception as exc:
                     print(
                         f"Warning: couldn't export {r.label} to a Sheets report ({exc}); "
@@ -274,7 +292,11 @@ def main(argv: list[str] | None = None) -> int:
 
             for group in sat_row_groups:
                 try:
-                    exported_sat_paths.append(export_sat_report(drive, templates_root_folder_id, group, output_dir))
+                    exported_sat_paths.append(
+                        export_sat_report(
+                            drive, templates_root_folder_id, group, output_dir, temp_folder_id=temp_folder_id
+                        )
+                    )
                 except Exception as exc:
                     source = group[0].source if group else "(unknown)"
                     print(

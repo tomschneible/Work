@@ -237,7 +237,10 @@ worked, or to look around the folder tree while debugging.
    to the combined `.xlsx` instead.
 3. **The template is filled in.** Since the templates are live Google
    Sheets, not uploaded `.xlsx` files, `google_sheets_export.py`
-   round-trips through a local file: `copy_template` duplicates it,
+   round-trips through a local file: `copy_template` duplicates it --
+   into the org's "Temporary Files" folder by default (override with
+   `--temp-folder-id` or `$ANSWER_EXTRACTOR_TEMP_FOLDER_ID`), not the same
+   folder as the real template, so a working copy never sits amid them --
    `export_xlsx` pulls the copy down locally, the format-specific writer
    (`score_report_writer.fill_score_report` for ACT,
    `sat_score_report_writer.fill_sat_score_report` for SAT -- see either

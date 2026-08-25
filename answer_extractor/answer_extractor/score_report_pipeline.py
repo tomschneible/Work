@@ -72,9 +72,12 @@ def export_sheet_report(
     templates_root_folder_id: str,
     result: SheetResult,
     output_dir: str | Path,
+    temp_folder_id: Optional[str] = None,
 ) -> ExportOutcome:
     """Produce this one sheet's score-report PDF -- and, if it has review
     items, the color-coded .xlsx alongside it -- in `output_dir`.
+    `temp_folder_id` is passed straight through to export_score_report
+    (see google_report_export_common.export_filled_report).
 
     Raises ValueError (from scan_filename.parse_scan_filename or
     template_lookup, surfaced through export_score_report) if the sheet's
@@ -105,6 +108,7 @@ def export_sheet_report(
         student_name=scan.student_name,
         test_date=test_date,
         output_name=base_name,
+        temp_folder_id=temp_folder_id,
     )
     pdf_path = output_dir / f"{base_name}.pdf"
     pdf_path.write_bytes(pdf_bytes)

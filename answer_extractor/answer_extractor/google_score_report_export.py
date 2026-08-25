@@ -13,7 +13,7 @@ with Drive or this org's Sheets templates.
 from __future__ import annotations
 
 import datetime as dt
-from typing import List, Mapping
+from typing import List, Mapping, Optional
 
 from googleapiclient.discovery import Resource
 
@@ -30,11 +30,12 @@ def export_score_report(
     student_name: str,
     test_date: dt.date | str,
     output_name: str,
+    temp_folder_id: Optional[str] = None,
 ) -> bytes:
     """Return the filled report's PDF bytes -- see
     google_report_export_common.export_filled_report for what
-    `category_path`/`test_code`/cleanup semantics mean; this just binds
-    the ACT-specific fill step to it."""
+    `category_path`/`test_code`/`temp_folder_id`/cleanup semantics mean;
+    this just binds the ACT-specific fill step to it."""
     return export_filled_report(
         drive,
         templates_root_folder_id,
@@ -42,4 +43,5 @@ def export_score_report(
         test_code,
         output_name,
         fill_fn=lambda tmp_path: fill_score_report(tmp_path, answers, student_name, test_date),
+        temp_folder_id=temp_folder_id,
     )

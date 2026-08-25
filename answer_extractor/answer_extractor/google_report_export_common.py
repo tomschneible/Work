@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from openpyxl.workbook import Workbook
 from googleapiclient.discovery import Resource
@@ -29,6 +29,7 @@ def export_filled_report(
     test_code: str,
     output_name: str,
     fill_fn: Callable[[str | Path], Workbook],
+    temp_folder_id: Optional[str] = None,
 ) -> bytes:
     """Return the filled report's PDF bytes. `category_path` is the
     sequence of Drive subfolder names to walk from the templates root to
@@ -41,15 +42,19 @@ def export_filled_report(
     sat_score_report_writer.fill_sat_score_report, each pre-bound with
     the rest of their own arguments via e.g. functools.partial).
 
-    The working Sheet copy created in Drive along the way is always
-    deleted before returning -- including when a later step raises --
-    since it exists only to be exported as this PDF, never to be kept
-    around. The local temp file used for the same purpose is likewise
-    always cleaned up.
+    `temp_folder_id`, if given, is where the working Sheet copy is placed
+    (e.g. the org's "Temporary Files" folder, alongside the real
+    templates root) instead of Drive's copy default (the same folder as
+    the template it was copied from) -- keeps a working copy from ever
+    sitting amid the real templates, even for the moment before it's
+    deleted. That deletion always happens before this returns -- including
+    when a later step raises -- since the copy exists only to be exported
+    as this PDF, never to be kept around. The local temp file used for the
+    same purpose is likewise always cleaned up.
     """
     folder_id = resolve_template_folder(drive, templates_root_folder_id, category_path)
     template = find_template_file(drive, folder_id, test_code)
-    copy_id = copy_template(drive, template["id"], output_name)
+    copy_id = copy_template(drive, template["id"], output_name, parent_folder_id=temp_folder_id)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)
