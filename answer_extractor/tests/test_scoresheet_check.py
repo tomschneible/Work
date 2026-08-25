@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import openpyxl
@@ -7,11 +8,15 @@ from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
 from answer_extractor.scoresheet_check import (
+    OurAnswer,
     compare,
+    load_our_answers,
+    load_reference_answers,
     ours_from_results,
     parse_program_output,
     parse_reference_scoresheet,
 )
+from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Block, Row, write_scoresheet_pdf
 
 
 def _write_reference_scoresheet(path: Path) -> None:
@@ -216,3 +221,78 @@ def test_ours_from_results_classifies_multiple_and_pattern_inferred():
     result = ours_from_results(questions)
     assert result[("english", 1)].flag == "MULTIPLE"
     assert result[("english", 2)].flag == "pattern_inferred"
+
+
+pdf_pytestmark = pytest.mark.skipif(
+    not os.path.exists(MARK_FONT_PATH),
+    reason=f"synthetic PDF fixtures need a Unicode-capable font at {MARK_FONT_PATH} (fonts-dejavu-core)",
+)
+
+
+def _write_scoresheet_pdf(path: Path) -> None:
+    write_scoresheet_pdf(
+        path,
+        [
+            Block("English", "Math", [
+                [Row(1, "A", "A"), Row(2, "B", "C"), Row(3, "C", None)],
+                [Row(1, "F", "F"), Row(2, "G", "H")],
+            ]),
+        ],
+    )
+
+
+@pdf_pytestmark
+def test_load_reference_answers_picks_the_pdf_parser_by_extension(tmp_path):
+    path = tmp_path / "reference.pdf"
+    _write_scoresheet_pdf(path)
+
+    assert load_reference_answers(path) == {
+        ("english", 1): "A",
+        ("english", 2): "C",
+        ("english", 3): "",
+        ("mathematics", 1): "F",
+        ("mathematics", 2): "H",
+    }
+
+
+def test_load_reference_answers_still_reads_xlsx(tmp_path):
+    path = tmp_path / "reference.xlsx"
+    _write_reference_scoresheet(path)
+
+    assert load_reference_answers(path) == parse_reference_scoresheet(path)
+
+
+@pdf_pytestmark
+def test_load_our_answers_wraps_a_pdf_as_unflagged_answers(tmp_path):
+    path = tmp_path / "ours.pdf"
+    _write_scoresheet_pdf(path)
+
+    result = load_our_answers(path)
+
+    assert result[("english", 1)] == OurAnswer(answer="A", flag=None, low_confidence=False)
+    assert result[("english", 3)] == OurAnswer(answer="", flag=None, low_confidence=False)
+
+
+def test_load_our_answers_still_reads_xlsx(tmp_path):
+    path = tmp_path / "ours.xlsx"
+    _write_our_output(path)
+
+    assert load_our_answers(path) == parse_program_output(path)
+
+
+@pdf_pytestmark
+def test_comparing_two_pdfs_end_to_end_reports_mismatches_as_silent_miss(tmp_path):
+    """A PDF side carries no flag data, so a wrong answer against it always
+    comes out as an unflagged 'silent miss' -- this is what compare_cli
+    actually produces end to end when both --ours and --reference are
+    PDFs (see that module's docstring)."""
+    ours_path = tmp_path / "ours.pdf"
+    reference_path = tmp_path / "reference.pdf"
+    write_scoresheet_pdf(ours_path, [Block("English", "Math", [[Row(1, "A", "A")], [Row(1, "B", "C")]])])
+    write_scoresheet_pdf(reference_path, [Block("English", "Math", [[Row(1, "A", "A")], [Row(1, "B", "B")]])])
+
+    rows = compare(load_reference_answers(reference_path), load_our_answers(ours_path))
+    by_key = {(r.section, r.question): r for r in rows}
+
+    assert by_key[("english", 1)].severity == "match"
+    assert by_key[("mathematics", 1)].severity == "silent_miss"

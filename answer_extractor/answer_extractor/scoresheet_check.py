@@ -31,6 +31,17 @@ scoresheet_grid.normalize_section. Block-locating itself (the title/header
 scan above) lives in scoresheet_grid.py, shared with score_report_writer.py,
 which fills in a template's own "Your Answer" cells rather than reading a
 vendor's back out.
+
+A third shape can stand in for either side: a rendered ScoreSheet PDF (this
+pipeline's own export, or a report someone already has), parsed by
+score_report_pdf_reader.py into the same {(section, question): answer}
+shape parse_reference_scoresheet produces from a .xlsx -- see
+load_reference_answers/load_our_answers, which pick the right parser by
+file extension so callers (e.g. compare_cli) don't need to care whether a
+given side is a .xlsx or a .pdf. A PDF side carries no flag/low-confidence
+data (nothing in a finished report says which answers the pipeline itself
+was unsure of), so it's always treated as unflagged -- any mismatch against
+it comes out as "silent_miss", same as it would for an unflagged xlsx cell.
 """
 from __future__ import annotations
 
@@ -45,6 +56,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .detect import QuestionResult
 from .export import BLANK_FILL, MULTIPLE_FILL, PATTERN_INFERRED_FILL, UNREADABLE_FILL, flag_for
+from .score_report_pdf_reader import parse_scoresheet_pdf
 from .scoresheet_grid import QuestionKey, iter_block_questions, locate_answer_blocks, normalize_section
 
 _OMITTED_MARKS = {"ø", "o", "omitted", "-"}
@@ -136,6 +148,32 @@ def parse_program_output(
                 answer, flag, low_confidence
             )
     return result
+
+
+def _is_pdf(path: str | Path) -> bool:
+    return str(path).lower().endswith(".pdf")
+
+
+def load_reference_answers(path: str | Path, sheet_name: str = "ScoreSheet") -> Dict[QuestionKey, str]:
+    """parse_reference_scoresheet for a .xlsx, or parse_scoresheet_pdf for
+    a .pdf -- picked by file extension so callers can take either kind of
+    reference report without knowing in advance which one they have.
+    `sheet_name` is ignored for a .pdf."""
+    if _is_pdf(path):
+        return parse_scoresheet_pdf(path)
+    return parse_reference_scoresheet(path, sheet_name=sheet_name)
+
+
+def load_our_answers(path: str | Path, tab_name: Optional[str] = None) -> Dict[QuestionKey, OurAnswer]:
+    """parse_program_output for a .xlsx, or parse_scoresheet_pdf (wrapped
+    as unflagged OurAnswers -- see module docstring) for a .pdf. `tab_name`
+    is ignored for a .pdf."""
+    if _is_pdf(path):
+        return {
+            key: OurAnswer(answer=answer, flag=None, low_confidence=False)
+            for key, answer in parse_scoresheet_pdf(path).items()
+        }
+    return parse_program_output(path, tab_name=tab_name)
 
 
 def ours_from_results(questions: List[QuestionResult]) -> Dict[QuestionKey, OurAnswer]:

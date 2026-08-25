@@ -427,6 +427,42 @@ summary (e.g. "171 questions compared: 171 match, 0 flagged mismatch, 0
 silent miss") so you know at a glance whether anything needs a second
 look before you even open the file.
 
+## Comparing two score reports directly (`compare_cli`)
+
+The two droplets above both scan first. For just checking one already-
+finished score report against another -- e.g. this pipeline's own
+generated report against a report you already had for that student, to
+spot-check the program's output -- use `compare_cli` directly instead:
+
+```bash
+python -m answer_extractor.compare_cli \
+    --ours "Jane Student - March 2026.pdf" \
+    --reference "Jane Student (vendor).pdf" \
+    --output comparison.xlsx
+```
+
+`--ours` and `--reference` each accept **either a `.pdf` or a `.xlsx`**,
+in any combination, picked automatically by file extension:
+
+- **`.pdf`**: a rendered ScoreSheet-style report -- this pipeline's own
+  PDF export (`google_score_report_export.py`), or any other report using
+  the same repeated `Question | Correct Answer | Your Answer | (mark) |
+  Category` column-group layout, one section title (`English`/`Math`/
+  `Reading`/`Science`) governing each group of blocks. Parsed straight off
+  the rendered text/positions (`answer_extractor/score_report_pdf_reader.py`)
+  -- no `.xlsx` needed. A PDF carries no flag/low-confidence data (nothing
+  in a finished report says which answers the pipeline itself was unsure
+  of), so on the `--ours` side any mismatch against it always comes out as
+  an unflagged "silent miss".
+- **`.xlsx`**: same as before -- `--ours` is one tab of this tool's own
+  exported spreadsheet (`--ours-tab` to pick a non-default tab out of a
+  multi-sheet batch export), `--reference` is a vendor spreadsheet with a
+  `ScoreSheet` tab (`--reference-tab` if it's named something else).
+
+The output is the same color-coded "Comparison" tab and match/flagged/
+silent-miss/unmatched summary the droplets produce, written to
+`--output` and printed to the terminal.
+
 ## How it works
 
 1. **Load** (`answer_extractor/loading.py`) — reads images directly, or
