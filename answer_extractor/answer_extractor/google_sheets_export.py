@@ -1,7 +1,18 @@
 """Drive/Sheets operations behind the Google Sheets score-report export
-path: duplicate a template, (eventually) fill it in, export the copy as a
-PDF, and clean up the working copy -- see README's "Google Sheets score
-reports" section for the overall design and why each step exists.
+path: duplicate a template, fill it in, export the copy as a PDF, and
+clean up the working copy -- see README's "Google Sheets score reports"
+section for the overall design and why each step exists.
+
+The org's templates are live Google Sheets (not uploaded .xlsx files), so
+filling one in isn't a matter of opening it directly with openpyxl the
+way score_report_writer.fill_score_report does. The round-trip instead
+goes: copy_template duplicates it, export_xlsx pulls that copy down as a
+local .xlsx, fill_score_report edits the local file same as always, and
+replace_content pushes the filled file back in over the live copy (Drive
+converts .xlsx -> native Sheets format on upload) -- only then does
+export_pdf render the filled result. google_score_report_export.py wires
+that whole sequence together; this module is just the individual API
+calls.
 
 Deliberately thin wrappers around the official googleapiclient calls
 rather than a bigger abstraction: there's no meaningful behavior to
@@ -17,9 +28,11 @@ import io
 from typing import Dict, List, Optional
 
 from googleapiclient.discovery import Resource, build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from .google_auth import get_credentials
+
+_XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def build_services() -> tuple[Resource, Resource]:
@@ -77,6 +90,16 @@ def copy_template(
     return result["id"]
 
 
+def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
+    request = drive.files().export_media(fileId=file_id, mimeType=mime_type)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buffer.getvalue()
+
+
 def export_pdf(drive: Resource, file_id: str) -> bytes:
     """The Sheets file at `file_id`, rendered to PDF exactly as Google
     Sheets' own File > Download > PDF would -- that menu and this API
@@ -84,13 +107,27 @@ def export_pdf(drive: Resource, file_id: str) -> bytes:
     layout, scale) is already saved on the file itself, so a template
     with its print settings configured once produces the same PDF shape
     on every copy without this code needing to know or set them itself."""
-    request = drive.files().export_media(fileId=file_id, mimeType="application/pdf")
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return buffer.getvalue()
+    return _export(drive, file_id, "application/pdf")
+
+
+def export_xlsx(drive: Resource, file_id: str) -> bytes:
+    """The Sheets file at `file_id`, converted to .xlsx bytes -- used to
+    pull a freshly-duplicated template down locally so
+    score_report_writer.fill_score_report (which only knows how to edit a
+    local .xlsx via openpyxl, not a live Sheet over the API) can fill it
+    in; see replace_content for pushing the result back."""
+    return _export(drive, file_id, _XLSX_MIME_TYPE)
+
+
+def replace_content(drive: Resource, file_id: str, local_xlsx_path: str) -> None:
+    """Overwrite the Sheets file at `file_id` with the contents of a local
+    .xlsx -- Drive converts it to native Sheets format on upload, the same
+    conversion Google Sheets' own File > Import > Replace spreadsheet does.
+    The other half of the round-trip export_xlsx starts: duplicate a
+    template, export_xlsx it down, fill it in locally, then push the
+    filled copy back in with this before exporting the final PDF."""
+    media = MediaFileUpload(local_xlsx_path, mimetype=_XLSX_MIME_TYPE)
+    drive.files().update(fileId=file_id, media_body=media, supportsAllDrives=True).execute()
 
 
 def delete_file(drive: Resource, file_id: str) -> None:

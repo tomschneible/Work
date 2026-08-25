@@ -4,7 +4,14 @@ the request Drive actually needs (Shared Drive support flags, correct
 body/ids) rather than exercising any real network call."""
 from unittest.mock import MagicMock, patch
 
-from answer_extractor.google_sheets_export import copy_template, delete_file, export_pdf, list_folder
+from answer_extractor.google_sheets_export import (
+    copy_template,
+    delete_file,
+    export_pdf,
+    export_xlsx,
+    list_folder,
+    replace_content,
+)
 
 
 def test_list_folder_queries_by_parent_and_requests_shared_drive_support():
@@ -101,6 +108,39 @@ def test_export_pdf_keeps_downloading_until_done():
         export_pdf(drive, "FILE_ID")
 
     assert downloader.next_chunk.call_count == 3
+
+
+def test_export_xlsx_requests_the_xlsx_mime_type():
+    drive = MagicMock()
+    drive.files.return_value.export_media.return_value = MagicMock()
+
+    downloader = MagicMock()
+    downloader.next_chunk.return_value = (None, True)
+
+    with patch("answer_extractor.google_sheets_export.MediaIoBaseDownload", return_value=downloader):
+        export_xlsx(drive, "FILE_ID")
+
+    drive.files.return_value.export_media.assert_called_once_with(
+        fileId="FILE_ID",
+        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def test_replace_content_uploads_the_local_file_with_shared_drive_support(tmp_path):
+    drive = MagicMock()
+    local_path = tmp_path / "filled.xlsx"
+    local_path.write_bytes(b"fake xlsx bytes")
+
+    with patch("answer_extractor.google_sheets_export.MediaFileUpload") as media_cls:
+        media_cls.return_value = "MEDIA"
+        replace_content(drive, "FILE_ID", str(local_path))
+
+    media_cls.assert_called_once_with(
+        str(local_path), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    drive.files.return_value.update.assert_called_once_with(
+        fileId="FILE_ID", media_body="MEDIA", supportsAllDrives=True
+    )
 
 
 def test_delete_file_requests_shared_drive_support():
