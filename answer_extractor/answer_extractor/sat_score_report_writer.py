@@ -78,6 +78,9 @@ _SUBJECT_ALIASES = {
 _DIFFICULTY_TO_SLOT = {"higher": "harder", "lower": "easier"}
 _HEADER_SEARCH_ROWS = 5  # how far below a title to look for its "Your Answer" header
 
+_SCORE_LABEL_PATTERN = re.compile(r"^(?P<subject>.+?)\s*score\s*$", re.IGNORECASE)
+_SCORE_VALUE_SEARCH_ROWS = 5  # how far above a "<Subject> Score" label to look for its value cell
+
 
 def _normalize_subject(raw: str) -> str:
     key = re.sub(r"\s+", " ", raw.strip().lower())
@@ -167,6 +170,39 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
     return list(blocks_by_key.values())
 
 
+def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
+    """{subject: (row, col)} for every "<Subject> Score" label found (e.g.
+    "Reading\n& Writing\nScore", "Math\nScore") -- these templates put the
+    label a few rows *below* its own value cell (confirmed against a real
+    template: "Total Score" is likewise labeled below the cell that sums
+    it), so this searches upward from each label for the nearest cell in
+    the same column that already holds a number -- the static placeholder
+    value (e.g. 200) every blank template ships with in that slot."""
+    result: Dict[str, Tuple[int, int]] = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            value = cell.value
+            if not isinstance(value, str):
+                continue
+            normalized = re.sub(r"\s+", " ", value.strip())
+            match = _SCORE_LABEL_PATTERN.match(normalized)
+            if not match:
+                continue
+            try:
+                subject = _normalize_subject(match.group("subject"))
+            except ValueError:
+                continue  # e.g. "Total Score" -- not a subject this module knows
+            for candidate_row in range(cell.row - 1, cell.row - _SCORE_VALUE_SEARCH_ROWS - 1, -1):
+                candidate_value = ws.cell(row=candidate_row, column=cell.column).value
+                # bool is technically an int subclass -- excluded explicitly
+                # so a stray flag cell in the search window is never mistaken
+                # for the score value.
+                if isinstance(candidate_value, (int, float)) and not isinstance(candidate_value, bool):
+                    result[subject] = (candidate_row, cell.column)
+                    break
+    return result
+
+
 def _find_name_cell(ws: Worksheet) -> Tuple[int, int]:
     for row in ws.iter_rows():
         for cell in row:
@@ -185,10 +221,12 @@ def fill_sat_score_report(
     active_variants: Mapping[str, str],
     student_name: str,
     test_date: dt.date | str,
+    section_scores: Optional[Mapping[str, int]] = None,
     sheet_name: str = "Student Responses",
 ) -> Workbook:
     """Load a fresh copy of `template_path` and return it with the
-    student's name, test date, and every answer in `answers` filled in.
+    student's name, test date, every answer in `answers`, and (if given)
+    each subject's scaled section score filled in.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
@@ -200,6 +238,15 @@ def fill_sat_score_report(
     silently go nowhere the sheet's own formulas count (its flag stays
     False). A template question with no entry in `answers` is left blank
     (a legitimate omitted bubble).
+
+    `section_scores` maps subject -> scaled score (e.g. {"math": 620}) --
+    unlike every other field here, this isn't something this pipeline can
+    derive from the scan/report itself (see this module's own history in
+    the repo for why: no formula computes it in this template, and
+    nothing upstream currently extracts it either), so it's expected to
+    come from wherever the caller sourced it -- e.g. a value a person
+    typed into a prompt. Omit a subject (or the whole mapping) to leave
+    its score cell at the template's own default, unchanged.
     """
     for subject, slot, _question in answers:
         if slot != "module1" and active_variants.get(subject) != slot:
@@ -216,6 +263,17 @@ def fill_sat_score_report(
     name_row, name_col = _find_name_cell(ws)
     ws.cell(row=name_row, column=name_col).value = student_name
     ws.cell(row=name_row + 1, column=name_col).value = test_date  # date sits directly below name
+
+    if section_scores:
+        score_cells = _find_score_value_cells(ws)
+        for subject, score in section_scores.items():
+            if subject not in score_cells:
+                raise ValueError(
+                    f"No score cell found for subject {subject!r} in {template_path}!{sheet_name} "
+                    f"(found score cells for: {sorted(score_cells)})"
+                )
+            row, col = score_cells[subject]
+            ws.cell(row=row, column=col).value = score
 
     remaining = dict(answers)
     for block in locate_sat_blocks(ws):

@@ -62,6 +62,11 @@ def _write_template(path: Path) -> None:
         ws.cell(row=i, column=21, value=q)
         ws.cell(row=i, column=22, value=correct)
 
+    # Scaled section score: value cell sits a couple rows *above* its own
+    # label, like the real templates' "Total Score"/section-score cells.
+    ws["Z10"] = 200
+    ws["Z12"] = "Reading\n& Writing\nScore"
+
     wb.save(str(path))
 
 
@@ -163,4 +168,66 @@ def test_fill_sat_score_report_raises_on_unmatched_answer_key(tmp_path):
             active_variants={},
             student_name="Jane Student",
             test_date=dt.datetime(2026, 3, 8),
+        )
+
+
+def test_find_score_value_cells_locates_the_value_above_its_label():
+    path_ws = openpyxl.Workbook()
+    ws = path_ws.active
+    ws.title = "Student Responses"
+    ws["A1"] = "Type name here, date below"
+    ws["A2"] = dt.datetime(2024, 1, 1)
+    ws["Z10"] = 200
+    ws["Z12"] = "Reading\n& Writing\nScore"
+
+    from answer_extractor.sat_score_report_writer import _find_score_value_cells
+
+    assert _find_score_value_cells(ws) == {"reading and writing": (10, 26)}
+
+
+def test_fill_sat_score_report_writes_a_given_section_score(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+
+    wb = fill_sat_score_report(
+        path,
+        answers={},
+        active_variants={},
+        student_name="Jane Student",
+        test_date=dt.datetime(2026, 3, 8),
+        section_scores={"reading and writing": 590},
+    )
+    ws = wb["Student Responses"]
+
+    assert ws["Z10"].value == 590
+
+
+def test_fill_sat_score_report_leaves_score_cell_alone_when_not_given(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+
+    wb = fill_sat_score_report(
+        path,
+        answers={},
+        active_variants={},
+        student_name="Jane Student",
+        test_date=dt.datetime(2026, 3, 8),
+        # section_scores omitted entirely
+    )
+
+    assert wb["Student Responses"]["Z10"].value == 200  # untouched template default
+
+
+def test_fill_sat_score_report_raises_for_an_unrecognized_score_subject(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+
+    with pytest.raises(ValueError, match="science"):
+        fill_sat_score_report(
+            path,
+            answers={},
+            active_variants={},
+            student_name="Jane Student",
+            test_date=dt.datetime(2026, 3, 8),
+            section_scores={"science": 500},
         )
