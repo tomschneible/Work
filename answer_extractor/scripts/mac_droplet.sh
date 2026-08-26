@@ -13,11 +13,15 @@
 # (which sheet format it is) auto-detected individually, so different
 # formats can be dropped together too -- set ANSWER_EXTRACTOR_TEMPLATE to
 # force one fixed template instead, e.g. if a particular sheet's format
-# doesn't auto-detect cleanly. Writes the spreadsheet to the Desktop named
-# after whatever was dropped (single file: "<name>_answers.xlsx"; multiple:
-# "<first name>_and_N_others_answers.xlsx", never overwriting an existing
-# file of that name) and opens it, with GUI error/success feedback since an
-# Automator app has no visible terminal to print to.
+# doesn't auto-detect cleanly. A sheet/report auto_cli exports individually
+# (see its own module docstring) lands as its own Sheets-report PDF instead
+# of a tab here; anything else goes to a combined spreadsheet on the
+# Desktop, named after whatever was dropped (single file:
+# "<name>_answers.xlsx"; multiple: "<first name>_and_N_others_answers.xlsx",
+# never overwriting an existing file of that name), which is opened
+# automatically if -- and only if -- anything actually landed in it. GUI
+# error/success feedback throughout, since an Automator app has no visible
+# terminal to print to.
 
 set -euo pipefail
 
@@ -97,10 +101,23 @@ fi
 # plain .xlsx instead of its own Sheets-report PDF (Google auth not set
 # up, no matching Drive template, a bad filename, ...). The run still
 # "succeeded" (you get a valid .xlsx either way), so don't lose that
-# explanation just because nothing failed outright.
+# explanation just because nothing failed outright. $STDOUT_OUTPUT is
+# auto_cli's own one-line summary (e.g. "1 score report(s) exported to
+# /Users/you/Desktop."), which already says where everything actually
+# went, so it's used directly rather than a generic "Wrote <name>".
 if [ -n "$STDERR_OUTPUT" ]; then
-  warn_dialog "Wrote $(basename "$OUTPUT"), but:\n\n$STDERR_OUTPUT"
+  warn_dialog "$STDOUT_OUTPUT\n\n$STDERR_OUTPUT"
 else
-  notify "Wrote $(basename "$OUTPUT")"
+  notify "$STDOUT_OUTPUT"
 fi
-open "$OUTPUT"
+
+# $OUTPUT (the combined .xlsx) is only written when at least one sheet's
+# answers actually landed in it -- a sheet that exported as its own
+# individual Sheets-report PDF instead needs nothing added there, and if
+# every sheet in this run did, $OUTPUT is never created at all. Opening a
+# path that doesn't exist would fail the whole script here (and did,
+# surfaced as a generic Automator crash dialog instead of the summary
+# above) -- the summary already says where the actual report(s) went.
+if [ -e "$OUTPUT" ]; then
+  open "$OUTPUT"
+fi
