@@ -21,7 +21,15 @@ from typing import Callable, List, Optional
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from .google_sheets_export import CellWrite, copy_template, delete_file, export_pdf, export_xlsx, write_cells
+from .google_sheets_export import (
+    FillResult,
+    copy_template,
+    delete_file,
+    export_pdf,
+    export_xlsx,
+    hide_columns,
+    write_cells,
+)
 from .template_lookup import find_template_file, resolve_template_folder
 
 
@@ -43,7 +51,7 @@ def export_filled_report(
     category_path: List[str],
     test_code: str,
     output_name: str,
-    fill_fn: Callable[[str | Path], List[CellWrite]],
+    fill_fn: Callable[[str | Path], FillResult],
     temp_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
 ) -> bytes:
@@ -54,14 +62,20 @@ def export_filled_report(
     template_lookup.find_template_file does (e.g. "25MC1"). `fill_fn`
     receives a local, read-only path to the duplicated template (already
     downloaded as .xlsx, purely so `fill_fn` can figure out where things
-    go) and must return the list of individual cell writes needed -- the
-    caller-specific part of this (score_report_writer.fill_score_report
-    or sat_score_report_writer.fill_sat_score_report, each pre-bound with
-    the rest of their own arguments via e.g. functools.partial). Those
-    writes are pushed directly into the live Sheet via the Sheets API
-    (google_sheets_export.write_cells) -- nothing else about the
+    go) and must return a FillResult -- the caller-specific part of this
+    (score_report_writer.fill_score_report or
+    sat_score_report_writer.fill_sat_score_report, each pre-bound with
+    the rest of their own arguments via e.g. functools.partial). Its
+    `cell_writes` are pushed directly into the live Sheet via the Sheets
+    API (google_sheets_export.write_cells) -- nothing else about the
     workbook is ever touched or re-converted through .xlsx (see
-    google_sheets_export.py's own module docstring for why that matters).
+    google_sheets_export.py's own module docstring for why that
+    matters). Its `hidden_column_ranges`, if any, are then applied via
+    google_sheets_export.hide_columns before the PDF is exported -- SAT's
+    fill_fn uses this so the report only shows the Module 2 variant that
+    was actually administered (see
+    sat_score_report_writer.inactive_block_column_ranges); ACT's leaves
+    it empty and this step is skipped entirely.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -103,8 +117,9 @@ def export_filled_report(
         try:
             with open(tmp_path, "wb") as f:
                 f.write(export_xlsx(drive, copy_id))
-            cell_writes = fill_fn(tmp_path)
-            write_cells(sheets, copy_id, cell_writes)
+            result = fill_fn(tmp_path)
+            write_cells(sheets, copy_id, result.cell_writes)
+            hide_columns(sheets, copy_id, result.hidden_column_ranges)
             pdf_bytes = export_pdf(drive, copy_id)
         except Exception:
             try:

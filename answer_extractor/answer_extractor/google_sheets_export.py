@@ -55,7 +55,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import io
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from googleapiclient.discovery import Resource, build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
@@ -79,6 +79,25 @@ class CellWrite:
     row: int
     column: int
     value: CellValue
+
+
+@dataclasses.dataclass(frozen=True)
+class FillResult:
+    """What a fill_fn (score_report_writer.fill_score_report,
+    sat_score_report_writer.fill_sat_score_report) returns to
+    google_report_export_common.export_filled_report: the individual
+    cell writes needed, plus any column ranges that should be hidden
+    from the exported PDF once those writes land. `hidden_column_ranges`
+    is empty for every fill_fn except SAT's -- it uses this to hide
+    whichever Module 2 block variant (and duplicate/twin block) wasn't
+    actually administered, so the report only shows the modules that
+    were actually filled in; see
+    sat_score_report_writer.inactive_block_column_ranges. Each entry is
+    (sheet_name, 0-indexed start column, 0-indexed end column,
+    exclusive) -- the shape hide_columns' Sheets API request needs."""
+
+    cell_writes: List[CellWrite]
+    hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -240,6 +259,44 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
         spreadsheetId=spreadsheet_id,
         body={"valueInputOption": "USER_ENTERED", "data": data},
     ).execute()
+
+
+def hide_columns(
+    sheets: Resource, spreadsheet_id: str, column_ranges: Sequence[Tuple[str, int, int]]
+) -> None:
+    """Hide `column_ranges` -- each (sheet_name, 0-indexed start, 0-indexed
+    end (exclusive)), the shape FillResult.hidden_column_ranges carries --
+    on the live Sheet at `spreadsheet_id`, via one Sheets API `batchUpdate`
+    setting each range's own `hiddenByUser` directly (a per-report,
+    per-copy layout change, unrelated to hide_gridlines' template-wide
+    metadata fix above). One `get` call resolves every sheet name to its
+    numeric sheetId first, since the batchUpdate request itself only
+    accepts that, not a name. A no-op (no API call at all) if
+    `column_ranges` is empty. Raises ValueError if a range names a sheet
+    this spreadsheet doesn't have."""
+    if not column_ranges:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, start, end in column_ranges:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "dimension": "COLUMNS",
+                        "startIndex": start,
+                        "endIndex": end,
+                    },
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
 
 def hide_gridlines(sheets: Resource, spreadsheet_id: str) -> None:

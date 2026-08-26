@@ -316,7 +316,21 @@ worked, or to look around the folder tree while debugging.
    the rest of that glue). Cancelling a prompt, or a Module 2 whose
    difficulty couldn't be confidently identified, falls that report back
    to the combined `.xlsx` the same as any other export failure.
-5. **Where files land, and how they're named.** PDFs (and any flagged
+5. **A SAT/DSAT report only shows the Module 2 variant actually
+   administered.** The template ships with two same-difficulty pairs of
+   Module 2 blocks per subject (Higher x2, Lower x2 -- see
+   `sat_score_report_writer.py`'s own module docstring on why), but a
+   given student only ever sat one difficulty; `fill_sat_score_report`
+   hides the other three block-groups (via
+   `sat_score_report_writer.inactive_block_column_ranges` and
+   `google_sheets_export.hide_columns`) rather than leave them showing on
+   the report with empty "Your Answer" columns. This is a whole-sheet,
+   column-position decision, not evaluated per subject -- a subject's
+   block columns are reused by position across every other subject
+   stacked underneath it (the same fact that makes the shared flag-cell
+   row work at all), so a column only gets hidden if *no* subject's
+   active variant uses it.
+6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
    report's own filename (and the kept Google Sheet working copy behind

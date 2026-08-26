@@ -70,7 +70,7 @@ def test_fill_score_report_writes_name_date_and_answers(tmp_path):
         student_name="Jane Student",
         test_date=dt.date(2026, 3, 4),
     )
-    cells = _by_cell(writes)
+    cells = _by_cell(writes.cell_writes)
 
     assert cells[("ScoreSheet", 1, 4)] == "Jane Student"  # D1
     assert cells[("ScoreSheet", 2, 4)] == "2026-03-04"  # D2, ISO-formatted for the Sheets API
@@ -79,6 +79,7 @@ def test_fill_score_report_writes_name_date_and_answers(tmp_path):
     assert cells[("ScoreSheet", 8, 3)] is None  # C8, omitted
     assert cells[("ScoreSheet", 6, 10)] == "F"  # J6
     assert cells[("ScoreSheet", 7, 10)] == "H"  # J7
+    assert writes.hidden_column_ranges == ()  # nothing conditionally-administered to hide, unlike SAT
 
 
 def test_fill_score_report_never_writes_cells_it_should_leave_alone(tmp_path):
@@ -97,7 +98,7 @@ def test_fill_score_report_never_writes_cells_it_should_leave_alone(tmp_path):
         student_name="Jane Student",
         test_date=dt.date(2026, 3, 4),
     )
-    cells = _by_cell(writes)
+    cells = _by_cell(writes.cell_writes)
 
     assert ("ScoreSheet", 8, 4) not in cells  # D8, the match formula
     assert ("ScoreSheet", 6, 2) not in cells  # B6, a correct answer
@@ -156,6 +157,6 @@ def test_fill_score_report_passes_through_a_string_test_date_unchanged(tmp_path)
     writes = fill_score_report(
         path, answers={}, student_name="Jane Student", test_date="January 2026"
     )
-    cells = _by_cell(writes)
+    cells = _by_cell(writes.cell_writes)
 
     assert cells[("ScoreSheet", 2, 4)] == "January 2026"

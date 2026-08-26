@@ -1,21 +1,24 @@
 import datetime as dt
 from pathlib import Path
-from typing import List
 
 import openpyxl
 import pytest
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
-from answer_extractor.google_sheets_export import CellWrite
-from answer_extractor.sat_score_report_writer import fill_sat_score_report, locate_sat_blocks
+from answer_extractor.google_sheets_export import CellWrite, FillResult
+from answer_extractor.sat_score_report_writer import (
+    fill_sat_score_report,
+    inactive_block_column_ranges,
+    locate_sat_blocks,
+)
 
 _MISSING = object()  # distinguishes "never written" from an explicitly-written None (an omitted answer)
 
 
-def _at(writes: List[CellWrite], a1: str, sheet: str = "Student Responses"):
+def _at(result: FillResult, a1: str, sheet: str = "Student Responses"):
     col_letter, row = coordinate_from_string(a1)
     col = column_index_from_string(col_letter)
-    for w in writes:
+    for w in result.cell_writes:
         if w.sheet == sheet and w.row == row and w.column == col:
             return w.value
     return _MISSING
@@ -137,6 +140,63 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # Easier -- not active, left untouched, flag never written (stays whatever the template had).
     assert _at(writes, "M6") is _MISSING
     assert _at(writes, "K5") is _MISSING
+    # The report should only show the filled-in module -- every other Module 2
+    # block (both the inactive Easier pair and the Harder duplicate) hidden.
+    assert writes.hidden_column_ranges == [
+        ("Student Responses", 10, 14),  # K -- Easier, canonical
+        ("Student Responses", 15, 19),  # P -- Harder, duplicate
+        ("Student Responses", 20, 24),  # U -- Easier, duplicate
+    ]
+
+
+def test_inactive_block_column_ranges_hides_every_module_2_block_but_the_active_one(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    # Easier is active -- its canonical (K) column stays visible; Higher's
+    # canonical (F) is hidden along with both duplicates (P, U).
+    ranges = inactive_block_column_ranges(ws, {"reading and writing": "easier"})
+
+    assert ranges == [(5, 9), (15, 19), (20, 24)]  # F, P, U
+
+
+def test_inactive_block_column_ranges_keeps_a_column_visible_if_any_subject_uses_it(tmp_path):
+    """Module 2 block columns are reused by position across every subject
+    stacked underneath them (see module docstring): if Reading & Writing's
+    active variant is Higher (column F) and Math's is Lower (column K),
+    both columns must stay visible even though each is 'inactive' for the
+    other subject sharing those same columns."""
+    path = tmp_path / "template.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+    ws["F4"] = "R & W Module 2 - Higher Difficulty"
+    ws["F5"] = False
+    ws["H5"] = "Your Answer"
+    ws["K4"] = "R & W Module 2 - Lower Difficulty"
+    ws["K5"] = False
+    ws["M5"] = "Your Answer"
+    ws["F20"] = "Math Module 2 - Higher Difficulty"
+    ws["H21"] = "Your Answer"
+    ws["K20"] = "Math Module 2 - Lower Difficulty"
+    ws["M21"] = "Your Answer"
+    wb.save(str(path))
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    ranges = inactive_block_column_ranges(ws, {"reading and writing": "harder", "math": "easier"})
+
+    assert ranges == []  # both F (R&W's pick) and K (Math's pick) stay visible
+
+
+def test_inactive_block_column_ranges_hides_every_module_2_block_when_nothing_is_active(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    ranges = inactive_block_column_ranges(ws, {})
+
+    assert ranges == [(5, 9), (10, 14), (15, 19), (20, 24)]  # F, K, P, U -- nothing administered
 
 
 def test_fill_sat_score_report_leaves_a_missing_answer_blank(tmp_path):

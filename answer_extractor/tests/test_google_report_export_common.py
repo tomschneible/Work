@@ -15,7 +15,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from answer_extractor.google_report_export_common import export_filled_report
-from answer_extractor.google_sheets_export import CellWrite
+from answer_extractor.google_sheets_export import CellWrite, FillResult
 
 _MODULE = "answer_extractor.google_report_export_common"
 
@@ -31,6 +31,7 @@ def _patch_all(**overrides):
         copy_template=MagicMock(return_value="COPY_ID"),
         export_xlsx=MagicMock(return_value=b"raw xlsx bytes"),
         write_cells=MagicMock(),
+        hide_columns=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
     )
@@ -49,7 +50,8 @@ def _stop_all(patchers):
 def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks, patchers = _patch_all()
     fake_writes = [CellWrite(sheet="ScoreSheet", row=1, column=1, value="Jane Student")]
-    fill_fn = MagicMock(return_value=fake_writes)
+    fake_hidden_ranges = [("Student Responses", 4, 8)]
+    fill_fn = MagicMock(return_value=FillResult(cell_writes=fake_writes, hidden_column_ranges=fake_hidden_ranges))
     try:
         result = export_filled_report(
             drive=MagicMock(),
@@ -83,6 +85,10 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     assert mocks["write_cells"].call_args[0][1] == "COPY_ID"
     assert mocks["write_cells"].call_args[0][2] == fake_writes
 
+    mocks["hide_columns"].assert_called_once()
+    assert mocks["hide_columns"].call_args[0][1] == "COPY_ID"
+    assert mocks["hide_columns"].call_args[0][2] == fake_hidden_ranges
+
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][1] == "COPY_ID"
 
@@ -98,7 +104,7 @@ def test_export_filled_report_passes_the_sheets_service_to_write_cells():
             category_path=["ACT", "Enhanced"],
             test_code="25MC1",
             output_name="report",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
         )
     finally:
         _stop_all(patchers)
@@ -120,7 +126,7 @@ def test_export_filled_report_keeps_the_working_copy_on_success_by_default():
             category_path=["ACT", "Enhanced"],
             test_code="25MC1",
             output_name="Jane Student",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
         )
     finally:
         _stop_all(patchers)
@@ -138,7 +144,7 @@ def test_export_filled_report_deletes_the_working_copy_on_success_if_asked_not_t
             category_path=["ACT", "Enhanced"],
             test_code="25MC1",
             output_name="Jane Student",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             keep_working_copy=False,
         )
     finally:
@@ -158,7 +164,7 @@ def test_export_filled_report_places_the_working_copy_in_the_given_temp_folder()
             category_path=["SAT"],
             test_code="8",
             output_name="report",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             temp_folder_id="TEMP_FOLDER_ID",
         )
     finally:
@@ -178,7 +184,7 @@ def test_export_filled_report_deletes_the_working_copy_even_if_a_later_step_fail
                 category_path=["SAT"],
                 test_code="1234",
                 output_name="report",
-                fill_fn=MagicMock(return_value=[]),
+                fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             )
     finally:
         _stop_all(patchers)
@@ -204,7 +210,7 @@ def test_export_filled_report_returns_the_pdf_even_if_cleanup_afterward_fails(ca
             category_path=["SAT"],
             test_code="1234",
             output_name="Jane Student",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             keep_working_copy=False,
         )
     finally:
@@ -228,7 +234,7 @@ def test_export_filled_report_returns_the_pdf_silently_if_the_copy_is_already_go
             category_path=["SAT"],
             test_code="1234",
             output_name="Jane Student",
-            fill_fn=MagicMock(return_value=[]),
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             keep_working_copy=False,
         )
     finally:
@@ -257,7 +263,7 @@ def test_export_filled_report_preserves_the_real_error_when_cleanup_also_fails()
                 category_path=["SAT"],
                 test_code="1234",
                 output_name="report",
-                fill_fn=MagicMock(return_value=[]),
+                fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             )
     finally:
         _stop_all(patchers)
@@ -284,7 +290,7 @@ def test_export_filled_report_cleans_up_the_local_temp_file():
                 category_path=["SAT"],
                 test_code="1234",
                 output_name="report",
-                fill_fn=MagicMock(return_value=[]),
+                fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
             )
     finally:
         _stop_all(patchers)
