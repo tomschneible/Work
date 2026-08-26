@@ -11,6 +11,7 @@ the one thing callers supply, via `fill_fn`.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -47,10 +48,19 @@ def export_filled_report(
     templates root) instead of Drive's copy default (the same folder as
     the template it was copied from) -- keeps a working copy from ever
     sitting amid the real templates, even for the moment before it's
-    deleted. That deletion always happens before this returns -- including
-    when a later step raises -- since the copy exists only to be exported
-    as this PDF, never to be kept around. The local temp file used for the
-    same purpose is likewise always cleaned up.
+    deleted. Cleanup is always attempted before this returns (or raises)
+    -- but a cleanup failure never masks or is mistaken for the actual
+    result: if the fill/export sequence itself raised, that original
+    exception is always what propagates, even if the best-effort delete
+    attempted afterward *also* fails (a plain `finally: delete_file(...)`
+    doesn't have this property -- a delete failure there replaces
+    whatever real exception was already propagating, hiding it); if the
+    sequence succeeded, a delete failure is logged to stderr rather than
+    thrown away the PDF this already-successful call obtained -- worst
+    case is a stray copy left in `temp_folder_id` for someone to clean up
+    by hand, not a lost report. The local temp file used for the same
+    purpose is likewise always cleaned up (and can't mask anything the
+    same way, since nothing downstream of it depends on its content).
     """
     folder_id = resolve_template_folder(drive, templates_root_folder_id, category_path)
     template = find_template_file(drive, folder_id, test_code)
@@ -65,8 +75,21 @@ def export_filled_report(
             filled = fill_fn(tmp_path)
             filled.save(tmp_path)
             replace_content(drive, copy_id, tmp_path)
-            return export_pdf(drive, copy_id)
-        finally:
+            pdf_bytes = export_pdf(drive, copy_id)
+        except Exception:
+            try:
+                delete_file(drive, copy_id)
+            except Exception:
+                pass  # the original exception below is the one that matters
+            raise
+        try:
             delete_file(drive, copy_id)
+        except Exception as exc:
+            print(
+                f"Warning: {output_name}'s report exported fine, but couldn't clean up its "
+                f"working Drive copy (id {copy_id}): {exc}",
+                file=sys.stderr,
+            )
+        return pdf_bytes
     finally:
         os.unlink(tmp_path)

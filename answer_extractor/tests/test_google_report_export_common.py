@@ -114,6 +114,54 @@ def test_export_filled_report_deletes_the_working_copy_even_if_a_later_step_fail
     assert mocks["delete_file"].call_args[0][1] == "COPY_ID"
 
 
+def test_export_filled_report_returns_the_pdf_even_if_cleanup_afterward_fails(capsys):
+    """The fill/export sequence itself fully succeeded -- a delete failure
+    on the now-unneeded working copy must not throw away that already-
+    obtained PDF (previously it did: a plain `finally: delete_file(...)`
+    raising there replaced the successful return entirely)."""
+    mocks, patchers = _patch_all(delete_file=MagicMock(side_effect=RuntimeError("404 not found")))
+    try:
+        result = export_filled_report(
+            drive=MagicMock(),
+            templates_root_folder_id="ROOT",
+            category_path=["SAT"],
+            test_code="1234",
+            output_name="Jane Student",
+            fill_fn=MagicMock(return_value=MagicMock()),
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert result == b"%PDF-final"
+    assert "couldn't clean up" in capsys.readouterr().err
+
+
+def test_export_filled_report_preserves_the_real_error_when_cleanup_also_fails():
+    """The fill/export sequence raised for its own reason -- a *second*,
+    unrelated failure from the best-effort delete attempted afterward must
+    not replace that original exception (previously it did: a plain
+    `finally: delete_file(...)` that itself raises discards whatever was
+    already propagating out of the try block)."""
+    mocks, patchers = _patch_all(
+        export_pdf=MagicMock(side_effect=RuntimeError("boom")),
+        delete_file=MagicMock(side_effect=RuntimeError("404 not found")),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            export_filled_report(
+                drive=MagicMock(),
+                templates_root_folder_id="ROOT",
+                category_path=["SAT"],
+                test_code="1234",
+                output_name="report",
+                fill_fn=MagicMock(return_value=MagicMock()),
+            )
+    finally:
+        _stop_all(patchers)
+
+    mocks["delete_file"].assert_called_once()
+
+
 def test_export_filled_report_cleans_up_the_local_temp_file():
     written_paths = []
     real_open = open
