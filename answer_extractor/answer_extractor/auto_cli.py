@@ -65,8 +65,9 @@ from .template import Template
 # overridable for a different Drive layout without a code change.
 _DEFAULT_TEMPLATES_ROOT_FOLDER_ID = "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"
 # "Temporary Files", the sibling folder the org already set aside for
-# exactly this -- a working Sheet copy is parked there while it's being
-# filled in, rather than in the same folder as the real templates.
+# exactly this -- each report's filled-in Sheet copy is kept there
+# (by default -- see export_filled_report's keep_working_copy), rather
+# than in the same folder as the real templates.
 _DEFAULT_TEMP_FOLDER_ID = "1eUp4nToItX0_xtDe4Dt3VDlfCQU3ba_y"
 
 
@@ -182,9 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--temp-folder-id",
         default=None,
-        help="Drive folder id to park a working Sheet copy in while it's being filled in, instead of "
-        "the same folder as the real template it was copied from -- defaults to this org's "
-        "\"Temporary Files\" folder, or $ANSWER_EXTRACTOR_TEMP_FOLDER_ID if set",
+        help="Drive folder id to place each report's filled-in Sheet copy in (kept there, not deleted "
+        "-- see export_filled_report's keep_working_copy), instead of the same folder as the real "
+        "template it was copied from -- defaults to this org's \"Temporary Files\" folder, or "
+        "$ANSWER_EXTRACTOR_TEMP_FOLDER_ID if set",
     )
     return parser
 

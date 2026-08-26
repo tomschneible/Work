@@ -1,12 +1,12 @@
 """The Drive-orchestration sequence shared by every score-report export
 path (currently ACT's google_score_report_export.py and SAT's
 google_sat_score_report_export.py): find the right template, duplicate
-it, fill it in, export the result as a PDF, and clean up the working
-copy. The only thing that differs between formats is *how* a local copy
-gets filled in -- everything else (finding the template, the
+it, fill it in, and export the result as a PDF. The only thing that
+differs between formats is *how* a local copy gets filled in --
+everything else (finding the template, the
 export-as-xlsx/edit-locally/push-back-in round trip google_sheets_export's
-module docstring explains, cleanup) is identical, so that difference is
-the one thing callers supply, via `fill_fn`.
+module docstring explains) is identical, so that difference is the one
+thing callers supply, via `fill_fn`.
 """
 from __future__ import annotations
 
@@ -75,6 +75,7 @@ def export_filled_report(
     output_name: str,
     fill_fn: Callable[[str | Path], Workbook],
     temp_folder_id: Optional[str] = None,
+    keep_working_copy: bool = True,
 ) -> bytes:
     """Return the filled report's PDF bytes. `category_path` is the
     sequence of Drive subfolder names to walk from the templates root to
@@ -93,19 +94,28 @@ def export_filled_report(
     (e.g. the org's "Temporary Files" folder, alongside the real
     templates root) instead of Drive's copy default (the same folder as
     the template it was copied from) -- keeps a working copy from ever
-    sitting amid the real templates, even for the moment before it's
-    deleted. Cleanup is always attempted before this returns (or raises)
-    -- but a cleanup failure never masks or is mistaken for the actual
-    result: if the fill/export sequence itself raised, that original
+    sitting amid the real templates.
+
+    `keep_working_copy` (default True, this org's own choice): whether
+    that working Sheet copy is left in place once its PDF has been
+    exported, rather than deleted -- kept by default since having the
+    actual live Sheet behind each generated report is useful both for
+    manual review/editing and for debugging one that came out wrong. A
+    *failed* attempt is always cleaned up regardless of this flag -- it
+    didn't produce a report worth keeping evidence of, and leaving every
+    failed/retried attempt behind would just accumulate clutter in
+    `temp_folder_id`. That cleanup is best-effort and can never mask or
+    be mistaken for the actual failure: the fill/export sequence's own
     exception is always what propagates, even if the best-effort delete
-    attempted afterward *also* fails (a plain `finally: delete_file(...)`
+    that follows it *also* fails (a plain `finally: delete_file(...)`
     doesn't have this property -- a delete failure there replaces
-    whatever real exception was already propagating, hiding it); if the
-    sequence succeeded, a delete failure is logged to stderr rather than
-    thrown away the PDF this already-successful call obtained -- unless
-    it's a 404, which means the file's already gone (by something else --
-    a retention policy on `temp_folder_id`, or occasional Shared Drive
-    eventual consistency) and there's nothing left to warn about (see
+    whatever real exception was already propagating, hiding it). If
+    `keep_working_copy` is False and the sequence succeeded, a delete
+    failure is logged to stderr rather than thrown away the PDF this
+    already-successful call obtained -- unless it's a 404, which means
+    the file's already gone (by something else -- a retention policy on
+    `temp_folder_id`, or occasional Shared Drive eventual consistency)
+    and there's nothing left to warn about (see
     _cleanup_delete_is_actionable). The local temp file used for the same
     purpose is likewise always cleaned up (and can't mask anything the
     same way, since nothing downstream of it depends on its content).
@@ -131,6 +141,8 @@ def export_filled_report(
             except Exception:
                 pass  # the original exception below is the one that matters
             raise
+        if keep_working_copy:
+            return pdf_bytes
         try:
             delete_file(drive, copy_id)
         except Exception as exc:

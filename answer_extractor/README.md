@@ -248,8 +248,17 @@ worked, or to look around the folder tree while debugging.
    they're different enough not to share one implementation) edits it
    exactly like any other `.xlsx`, and `replace_content` pushes the
    filled file back in (Drive converts it back to native Sheets format on
-   upload). `export_pdf` then renders the final PDF, and the working
-   Sheet copy is deleted -- the whole sequence lives once in
+   upload). Every sheet in the result also gets an explicit print area
+   and gridlines turned off before that push (`_tighten_print_areas`) --
+   Google Sheets' own print-range setting turned out not to reliably
+   persist through its UI, so this is baked into every export instead of
+   depending on a template's own saved print settings. `export_pdf` then
+   renders the final PDF. The filled working Sheet copy is *kept*, not
+   deleted, by default (this org's own choice -- having the live Sheet
+   behind each generated report is useful for review/editing and for
+   debugging one that came out wrong); pass `keep_working_copy=False` to
+   `export_filled_report` to restore the old delete-after-export
+   behavior for a given call. The whole sequence lives once in
    `google_report_export_common.export_filled_report`, shared by both
    formats' own thin wrapper (`google_score_report_export.export_score_report`,
    `google_sat_score_report_export.export_sat_score_report`).
