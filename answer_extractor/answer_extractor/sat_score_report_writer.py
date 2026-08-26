@@ -43,7 +43,11 @@ template and its filled counterpart:
     no way to set a *different* subject-specific flag safely anyway.
     Consolidating means only the canonical column's own flag is ever set
     True; every other Module 2 occurrence is left untouched here and
-    cleared instead (see blocks_to_clear). Module 1 has no flag cell at
+    cleared and hidden instead (see blocks_to_clear and columns_to_hide
+    -- both are needed, not just clearing: a cleared-but-not-hidden
+    occurrence's blank columns still count toward the exported PDF's
+    print area, forcing its "fit to page" scale down far more than the
+    content actually left needs). Module 1 has no flag cell at
     all (everyone takes it, nothing to disambiguate). Flag cells are
     located here via one sheet-wide scan for boolean-valued cells, keyed
     by column -- not by searching near any one block's own header row,
@@ -220,6 +224,19 @@ def _canonical_module2_col(ws: Worksheet) -> Optional[int]:
     return min(cols) if cols else None
 
 
+def _non_canonical_module2_cols(ws: Worksheet) -> List[int]:
+    """Every Module 2 title column found anywhere on `ws` (1-indexed)
+    except _canonical_module2_col -- shared by blocks_to_clear and
+    columns_to_hide, since both need to act on exactly the same set of
+    occurrences (see columns_to_hide's own docstring for why a cleared
+    occurrence's columns also need hiding, not just clearing)."""
+    canonical_col = _canonical_module2_col(ws)
+    return sorted(
+        {col for _row, col, _subject, module_slot in _scan_raw_titles(ws) if module_slot != "module1"}
+        - {canonical_col}
+    )
+
+
 def blocks_to_clear(ws: Worksheet) -> List[Tuple[int, int, int, int]]:
     """0-indexed (start_row, end_row, start_col, end_col) rectangles (end
     exclusive -- the shape a Sheets API GridRange needs) covering every
@@ -253,12 +270,39 @@ def blocks_to_clear(ws: Worksheet) -> List[Tuple[int, int, int, int]]:
     duplicated, so its own column is always canonical-equivalent (nothing
     else there needs to be canonicalized in the first place).
     """
-    canonical_col = _canonical_module2_col(ws)
-    non_canonical_cols = sorted(
-        {col for _row, col, _subject, module_slot in _scan_raw_titles(ws) if module_slot != "module1"}
-        - {canonical_col}
-    )
+    non_canonical_cols = _non_canonical_module2_cols(ws)
     return [(0, ws.max_row, col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in non_canonical_cols]
+
+
+def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
+    """0-indexed (start_col, end_col) column ranges (end exclusive --
+    the shape a Sheets API dimension range needs) covering the exact
+    same non-canonical Module 2 columns blocks_to_clear clears -- one
+    range per occurrence, each _CLEAR_BLOCK_WIDTH columns wide.
+
+    Needed *in addition to* blocks_to_clear, not instead of it:
+    clearing removes an occurrence's own cell values, but its columns
+    are still fully present -- and still full width -- in the sheet's
+    print area, since clearing never touches column width or
+    visibility. Confirmed live against a real export: with every
+    non-canonical occurrence cleared but not hidden, the exported PDF's
+    "fit to page" scale was still being computed against a print area
+    almost four times as wide as the one Module 2 block per subject
+    that's actually left with content, forcing that scale down far more
+    than the real content needed and leaving it squeezed into a small
+    corner of the page with a large blank margin around it. Hiding
+    these same columns removes them from the print area entirely, so
+    "fit to page" scales to what's actually left to show.
+
+    Safe to do unconditionally (every non-canonical column, for every
+    subject) for the same reason blocks_to_clear now is: since
+    fill_sat_score_report consolidates every subject's real answers
+    into _canonical_module2_col, nothing real is ever left in any other
+    Module 2 column position for any subject -- see hide_columns' own
+    docstring for why this wasn't true, and this approach wasn't safe,
+    before that consolidation existed.
+    """
+    return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
 
 
 def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
@@ -318,11 +362,13 @@ def fill_sat_score_report(
     """Return every cell write needed to fill `template_path`'s
     `sheet_name` tab in with the student's name, test date, every answer
     in `answers`, and (if given) each subject's scaled section score --
-    plus, in the same FillResult, the rectangles to clear for every
-    Module 2 block occurrence that isn't the one column every subject's
-    real answers get consolidated into (see blocks_to_clear), so the
-    exported report only shows the modules that were actually filled in
-    rather than every duplicate/twin block the template ships with.
+    plus, in the same FillResult, the rectangles to clear and the whole
+    columns to hide for every Module 2 block occurrence that isn't the
+    one column every subject's real answers get consolidated into (see
+    blocks_to_clear and columns_to_hide), so the exported report only
+    shows the modules that were actually filled in -- both in content
+    and in the exported PDF's own sizing -- rather than every
+    duplicate/twin block the template ships with.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
@@ -338,7 +384,8 @@ def fill_sat_score_report(
     that column's own single flag cell is the only one this ever sets
     True. Every other Module 2 occurrence -- a subject's own non-matching
     difficulty, and every duplicate/twin -- is left completely untouched
-    here and cleared instead (see FillResult.cleared_ranges).
+    here and cleared and hidden instead (see FillResult.cleared_ranges
+    and .hidden_column_ranges).
 
     This exists because Reading & Writing and Math share the exact same
     four column positions for their own Module 2 blocks (see this
@@ -468,4 +515,5 @@ def fill_sat_score_report(
         raise ValueError(f"{template_path}!{sheet_name} has no answer block for: {unmatched}")
 
     cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
-    return FillResult(cell_writes=writes, cleared_ranges=cleared_ranges)
+    hidden_column_ranges = [(sheet_name, left, right) for left, right in columns_to_hide(ws)]
+    return FillResult(cell_writes=writes, cleared_ranges=cleared_ranges, hidden_column_ranges=hidden_column_ranges)

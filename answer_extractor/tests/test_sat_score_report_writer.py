@@ -8,6 +8,7 @@ from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from answer_extractor.google_sheets_export import CellWrite, FillResult
 from answer_extractor.sat_score_report_writer import (
     blocks_to_clear,
+    columns_to_hide,
     fill_sat_score_report,
     locate_sat_blocks,
 )
@@ -148,12 +149,20 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # column (Easier's canonical block, plus both duplicates), title through
     # Domain/Skill, cleared for the sheet's entire height (see
     # test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one for
-    # these same rectangles' own column-letter breakdown).
+    # these same rectangles' own column-letter breakdown) -- and the same
+    # columns hidden outright too, so their now-blank width doesn't still
+    # count toward the exported PDF's own print-area sizing (see
+    # test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one).
     max_row = 12  # this fixture's own last row (the "AN12" score label)
     assert writes.cleared_ranges == [
         ("Student Responses", 0, max_row, 14, 20),
         ("Student Responses", 0, max_row, 21, 27),
         ("Student Responses", 0, max_row, 28, 34),
+    ]
+    assert writes.hidden_column_ranges == [
+        ("Student Responses", 14, 20),
+        ("Student Responses", 21, 27),
+        ("Student Responses", 28, 34),
     ]
 
 
@@ -174,6 +183,23 @@ def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_pa
         (0, max_row, 14, 20),  # O -- Lower, canonical
         (0, max_row, 21, 27),  # V -- Higher, duplicate
         (0, max_row, 28, 34),  # AC -- Lower, duplicate
+    ]
+
+
+def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_path):
+    """The exact same non-canonical columns blocks_to_clear clears, but as
+    whole-column (no row bounds) ranges -- see columns_to_hide's own
+    docstring for why clearing alone isn't enough."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    ranges = columns_to_hide(ws)
+
+    assert ranges == [
+        (14, 20),  # O -- Lower, canonical
+        (21, 27),  # V -- Higher, duplicate
+        (28, 34),  # AC -- Lower, duplicate
     ]
 
 

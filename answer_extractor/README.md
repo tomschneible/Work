@@ -341,10 +341,13 @@ worked, or to look around the folder tree while debugging.
    those same values are copied in from wherever that subject's real
    block actually sits. Every other Module 2 occurrence -- a subject's
    own non-matching difficulty, and every duplicate/twin -- is left
-   completely untouched and cleared instead (value and border formatting
-   both, via `sat_score_report_writer.blocks_to_clear` and
-   `google_sheets_export.clear_cells`), so the report only ever shows one
-   Module 2 table per subject.
+   completely untouched and cleared and hidden instead (value, border
+   formatting, and data validation cleared via
+   `sat_score_report_writer.blocks_to_clear` +
+   `google_sheets_export.clear_cells`; the same columns hidden outright
+   via `sat_score_report_writer.columns_to_hide` +
+   `google_sheets_export.hide_columns`), so the report only ever shows
+   one Module 2 table per subject.
 
    Consolidating into one column, rather than just clearing whichever
    columns a subject didn't use in place (an earlier version of this
@@ -380,6 +383,32 @@ worked, or to look around the folder tree while debugging.
    silently left behind, occupying enough of the sheet to force the
    exported PDF to scale down and overflow onto an extra page trying to
    fit them in.
+
+   Clearing a non-canonical column's *values* alone still wasn't enough,
+   though -- confirmed live against a fully manual "File > Download >
+   PDF" export using "Fit to Page" scale (ruling out the export
+   mechanism itself as the cause): a cleared-but-still-present column is
+   blank, but it's still full width and still counted in the sheet's
+   print area, so "fit to page" was scaling down to fit roughly four
+   times the width the one Module 2 table per subject that's actually
+   left with content needs -- squeezing the real tables into a small
+   corner of the page with a large blank margin around them, both to the
+   right (the extra column width) and below (the same scale factor
+   applied uniformly to row height too). `columns_to_hide` hides the
+   exact same non-canonical columns `blocks_to_clear` clears, via
+   `google_sheets_export.hide_columns` (a Sheets API
+   `updateDimensionProperties` request, the same metadata change Sheets'
+   own right-click "Hide column" makes) -- removing them from the print
+   area entirely so "fit to page" scales to what's actually left to
+   show. This is safe unconditionally now for the same reason clearing
+   is: an earlier version of this codebase tried hiding columns keyed
+   only by which difficulty was "active," and abandoned it, because
+   Reading & Writing and Math share the same four column positions --
+   hiding one difficulty's columns for one subject could hide a
+   *different* subject's real answers. Now that every subject's real
+   answers always land in the same canonical column first, nothing real
+   is ever left in a non-canonical column for anyone, so hiding it is
+   never at risk of hiding real data.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

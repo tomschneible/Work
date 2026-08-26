@@ -93,19 +93,28 @@ class FillResult:
     google_report_export_common.export_filled_report: the individual
     cell writes needed, plus any rectangles that should be cleared
     (value and border formatting both) from the exported PDF once those
-    writes land. `cleared_ranges` is empty for every fill_fn except
-    SAT's -- it uses this to clear whichever Module 2 block occurrence
-    (a subject's other difficulty, or a duplicate/twin) wasn't actually
-    administered, so the report only shows the modules that were
-    actually filled in; see sat_score_report_writer.blocks_to_clear for
-    why this has to be scoped to one occurrence's own row range rather
-    than hiding a whole column. Each entry is (sheet_name, 0-indexed
-    start row, 0-indexed end row, 0-indexed start column, 0-indexed end
-    column) -- all ends exclusive, the shape clear_cells' Sheets API
-    request needs."""
+    writes land, plus any whole columns that should be hidden outright.
+    Both are empty for every fill_fn except SAT's -- it uses these to
+    remove whichever Module 2 block occurrence (a subject's other
+    difficulty, or a duplicate/twin) wasn't actually administered, so
+    the report only shows the modules that were actually filled in; see
+    sat_score_report_writer.blocks_to_clear for why *both* are needed
+    (clearing alone leaves an occurrence's columns blank but still
+    taking up print-area width, which forces the exported PDF's own
+    "fit to page" scale down far more than the actually-visible content
+    needs -- confirmed live, see hide_columns' own docstring).
+
+    `cleared_ranges` entries are (sheet_name, 0-indexed start row,
+    0-indexed end row, 0-indexed start column, 0-indexed end column) --
+    all ends exclusive, the shape clear_cells' Sheets API request needs.
+    `hidden_column_ranges` entries are (sheet_name, 0-indexed start
+    column, 0-indexed end column) -- end exclusive, the shape
+    hide_columns' Sheets API request needs; whole-column, so no row
+    bounds."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
+    hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -340,6 +349,68 @@ def clear_cells(
                     },
                     "cell": {},
                     "fields": "userEnteredValue,userEnteredFormat.borders,dataValidation",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
+    """Hide every whole column in each of `ranges` -- (sheet_name,
+    0-indexed start column, 0-indexed end column), end exclusive, the
+    shape FillResult.hidden_column_ranges carries -- via one Sheets API
+    `batchUpdate` `updateDimensionProperties` request per range, the same
+    metadata change Sheets' own right-click "Hide column" sets
+    (`hiddenByUser`).
+
+    Used alongside clear_cells, not instead of it: clearing a Module 2
+    occurrence's cells removes its *content* but leaves its columns
+    still fully present (and still full width) in the sheet's print
+    area -- confirmed live against a real export, a cleared-but-not-
+    hidden occurrence's blank columns were still being counted when
+    "fit to page" computed its scale, forcing that scale down far below
+    what the actually-visible content needed and leaving the exported
+    PDF's real tables squeezed into a fraction of the page with a large
+    blank margin around them. Hiding the same columns this clears
+    removes them from the print area entirely, letting "fit to page"
+    scale to the content that's actually left.
+
+    This used to be how a Module 2 occurrence was hidden at all, before
+    fill_sat_score_report started consolidating every subject's real
+    answers into one shared column (_canonical_module2_col) -- back then
+    hiding was keyed only by which difficulty was "active," which broke
+    the moment two subjects administered *different* difficulties (each
+    needing a *different* column hidden, but Reading & Writing and Math
+    share the same four column positions -- see sat_score_report_writer's
+    own module docstring). Now that every subject's real answers always
+    land in the same canonical column and every other occurrence is
+    always cleared regardless of subject, the same non-canonical columns
+    are always the ones being hidden too -- safe again, since nothing
+    real is ever left there for *any* subject to lose.
+
+    One `get` call resolves every sheet name to its numeric sheetId
+    first, since the batchUpdate request itself only accepts that, not a
+    name. A no-op (no API call at all) if `ranges` is empty. Raises
+    ValueError if a range names a sheet this spreadsheet doesn't have."""
+    if not ranges:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, start_col, end_col in ranges:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "dimension": "COLUMNS",
+                        "startIndex": start_col,
+                        "endIndex": end_col,
+                    },
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser",
                 }
             }
         )
