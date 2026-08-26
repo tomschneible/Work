@@ -11,7 +11,9 @@ import httplib2
 import pytest
 from googleapiclient.errors import HttpError
 
-from answer_extractor.google_report_export_common import export_filled_report
+from openpyxl import Workbook, load_workbook
+
+from answer_extractor.google_report_export_common import _tighten_print_areas, export_filled_report
 
 _MODULE = "answer_extractor.google_report_export_common"
 
@@ -190,6 +192,73 @@ def test_export_filled_report_preserves_the_real_error_when_cleanup_also_fails()
         _stop_all(patchers)
 
     mocks["delete_file"].assert_called_once()
+
+
+def test_tighten_print_areas_bounds_an_untouched_sheet_to_its_real_content():
+    """The bug confirmed live: a sheet whose real content is a small,
+    bounded range (like this org's own "Cover Page" tab) but which
+    carries stray row-height formatting out to row 1000 and no print
+    area of its own exports with all ~1000 rows -- mostly blank,
+    gridline-covered space below the real content."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cover Page"
+    ws["B7"] = "NAME:"
+    ws["C7"] = "Jane Student"
+    for row in range(1, 1000):
+        ws.row_dimensions[row].height = 15.75  # the stray formatting itself
+
+    _tighten_print_areas(wb)
+
+    assert ws.print_area == "'Cover Page'!$B$7:$C$7"
+    assert ws.sheet_view.showGridLines is False
+
+
+def test_tighten_print_areas_leaves_a_sheet_with_its_own_print_area_alone():
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "content"
+    ws.print_area = "A1:Z50"  # deliberately configured some other way
+    configured = ws.print_area  # openpyxl normalizes this on assignment
+
+    _tighten_print_areas(wb)
+
+    assert ws.print_area == configured
+
+
+def test_export_filled_report_tightens_print_areas_before_uploading():
+    """End to end through export_filled_report: the Workbook fill_fn hands
+    back gets its print areas tightened before being saved and pushed
+    back to Drive -- checked by inspecting the actual local file
+    replace_content is handed, since that's the last point before the
+    local temp file is cleaned up."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cover Page"
+    ws["B1"] = "untouched by fill_fn, but still on the sheet fill_fn returns"
+
+    captured_path = {}
+
+    def _capture_replace_content(drive, file_id, local_path):
+        captured_path["path"] = local_path
+        loaded = load_workbook(local_path)
+        assert loaded["Cover Page"].print_area == "'Cover Page'!$B$1"
+        assert loaded["Cover Page"].sheet_view.showGridLines is False
+
+    mocks, patchers = _patch_all(replace_content=MagicMock(side_effect=_capture_replace_content))
+    try:
+        export_filled_report(
+            drive=MagicMock(),
+            templates_root_folder_id="ROOT",
+            category_path=["ACT", "Enhanced"],
+            test_code="25MC1",
+            output_name="report",
+            fill_fn=MagicMock(return_value=wb),
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert captured_path  # the assertions inside _capture_replace_content actually ran
 
 
 def test_export_filled_report_cleans_up_the_local_temp_file():

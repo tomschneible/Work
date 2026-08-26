@@ -25,6 +25,37 @@ from .google_sheets_export import copy_template, delete_file, export_pdf, export
 from .template_lookup import find_template_file, resolve_template_folder
 
 
+def _tighten_print_areas(wb: Workbook) -> None:
+    """Give every sheet in `wb` that doesn't already have one an explicit
+    print area matching its own real content (openpyxl's own
+    `dimensions`, unaffected by stray explicit row-height formatting some
+    tabs carry out to row 1000 even though their actual content ends far
+    short of that) and turn off its gridlines.
+
+    A sheet with no print area set exports (both a manual Download-as-PDF
+    and this pipeline's own export_pdf go through the same underlying
+    conversion) with everything up to its highest-numbered row that
+    carries any formatting at all -- for a tab like this org's own "Cover
+    Page", whose real content is a few dozen rows but whose row-height
+    formatting extends to row 1000, that's most of a page of blank,
+    gridline-covered space below the actual header block. Confirmed live
+    against a real template.
+
+    This is applied every export rather than relying on the template's
+    own saved print settings, which turned out not to reliably persist
+    through Google Sheets' own Print-settings UI -- baking the fix into
+    every generated report is more robust than depending on that. A sheet
+    that already has its own print area is left alone, so a template
+    that's been deliberately configured some other way isn't
+    second-guessed.
+    """
+    for ws in wb.worksheets:
+        if ws.print_area:
+            continue
+        ws.print_area = ws.dimensions
+        ws.sheet_view.showGridLines = False
+
+
 def _cleanup_delete_is_actionable(exc: Exception) -> bool:
     """False for a delete failure that means there's nothing left to warn
     about: a 404 says Drive no longer has this file at all (already
@@ -54,7 +85,9 @@ def export_filled_report(
     as .xlsx) and must return the filled-in Workbook -- the caller-specific
     part of this (score_report_writer.fill_score_report or
     sat_score_report_writer.fill_sat_score_report, each pre-bound with
-    the rest of their own arguments via e.g. functools.partial).
+    the rest of their own arguments via e.g. functools.partial). Every
+    sheet in the result then gets its print area tightened (see
+    _tighten_print_areas) before it's pushed back to Drive and exported.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -88,6 +121,7 @@ def export_filled_report(
             with open(tmp_path, "wb") as f:
                 f.write(export_xlsx(drive, copy_id))
             filled = fill_fn(tmp_path)
+            _tighten_print_areas(filled)
             filled.save(tmp_path)
             replace_content(drive, copy_id, tmp_path)
             pdf_bytes = export_pdf(drive, copy_id)
