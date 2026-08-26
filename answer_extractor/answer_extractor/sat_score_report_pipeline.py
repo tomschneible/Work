@@ -112,6 +112,7 @@ def _prompt_for_section_score(
 
 def export_sat_report(
     drive: Resource,
+    sheets: Resource,
     templates_root_folder_id: str,
     rows: List[ScoreReportRow],
     output_dir: str | Path,
@@ -161,6 +162,7 @@ def export_sat_report(
 
     pdf_bytes = export_sat_score_report(
         drive=drive,
+        sheets=sheets,
         templates_root_folder_id=templates_root_folder_id,
         test_code=scan.test_code,
         answers=answers,

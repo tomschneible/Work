@@ -23,6 +23,7 @@ from .score_report_writer import QuestionKey, fill_score_report
 
 def export_score_report(
     drive: Resource,
+    sheets: Resource,
     templates_root_folder_id: str,
     category_path: List[str],
     test_code: str,
@@ -38,6 +39,7 @@ def export_score_report(
     this just binds the ACT-specific fill step to it."""
     return export_filled_report(
         drive,
+        sheets,
         templates_root_folder_id,
         category_path,
         test_code,

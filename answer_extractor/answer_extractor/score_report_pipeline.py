@@ -69,6 +69,7 @@ class ExportOutcome:
 
 def export_sheet_report(
     drive: Resource,
+    sheets: Resource,
     templates_root_folder_id: str,
     result: SheetResult,
     output_dir: str | Path,
@@ -101,6 +102,7 @@ def export_sheet_report(
 
     pdf_bytes = export_score_report(
         drive=drive,
+        sheets=sheets,
         templates_root_folder_id=templates_root_folder_id,
         category_path=category_path,
         test_code=scan.test_code,

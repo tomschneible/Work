@@ -1,16 +1,24 @@
-"""Pure logic tests for google_sheets_export's Drive API call-shaping --
-a mocked `drive` service throughout, checking that each function builds
-the request Drive actually needs (Shared Drive support flags, correct
-body/ids) rather than exercising any real network call."""
+"""Pure logic tests for google_sheets_export's Drive/Sheets API
+call-shaping -- a mocked `drive`/`sheets` service throughout, checking
+that each function builds the request Drive/Sheets actually needs
+(Shared Drive support flags, correct body/ids) rather than exercising any
+real network call."""
+import datetime as dt
 from unittest.mock import MagicMock, patch
 
+from openpyxl import Workbook
+
 from answer_extractor.google_sheets_export import (
+    CellWrite,
     copy_template,
     delete_file,
     export_pdf,
     export_xlsx,
+    format_date_for_sheets,
     list_folder,
     replace_content,
+    tighten_print_areas,
+    write_cells,
 )
 
 
@@ -149,3 +157,81 @@ def test_delete_file_requests_shared_drive_support():
     delete_file(drive, "FILE_ID")
 
     drive.files.return_value.delete.assert_called_once_with(fileId="FILE_ID", supportsAllDrives=True)
+
+
+def test_format_date_for_sheets_uses_iso_format_for_a_real_date():
+    assert format_date_for_sheets(dt.date(2026, 1, 17)) == "2026-01-17"
+
+
+def test_format_date_for_sheets_passes_a_string_through_unchanged():
+    assert format_date_for_sheets("January 2026") == "January 2026"
+
+
+def test_write_cells_batches_every_cell_as_its_own_single_cell_range():
+    sheets = MagicMock()
+    cells = [
+        CellWrite(sheet="ScoreSheet", row=5, column=3, value="C"),
+        CellWrite(sheet="ScoreSheet", row=6, column=1, value=42),
+        CellWrite(sheet="Student Responses", row=2, column=2, value=True),
+    ]
+
+    write_cells(sheets, "SPREADSHEET_ID", cells)
+
+    sheets.spreadsheets.return_value.values.return_value.batchUpdate.assert_called_once()
+    _, kwargs = sheets.spreadsheets.return_value.values.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    body = kwargs["body"]
+    assert body["valueInputOption"] == "USER_ENTERED"
+    assert body["data"] == [
+        {"range": "'ScoreSheet'!C5", "values": [["C"]]},
+        {"range": "'ScoreSheet'!A6", "values": [[42]]},
+        {"range": "'Student Responses'!B2", "values": [[True]]},
+    ]
+    sheets.spreadsheets.return_value.values.return_value.batchUpdate.return_value.execute.assert_called_once()
+
+
+def test_write_cells_turns_a_none_value_into_an_empty_string():
+    sheets = MagicMock()
+    write_cells(sheets, "SPREADSHEET_ID", [CellWrite(sheet="ScoreSheet", row=1, column=1, value=None)])
+
+    _, kwargs = sheets.spreadsheets.return_value.values.return_value.batchUpdate.call_args
+    assert kwargs["body"]["data"] == [{"range": "'ScoreSheet'!A1", "values": [[""]]}]
+
+
+def test_write_cells_is_a_no_op_for_an_empty_list():
+    sheets = MagicMock()
+    write_cells(sheets, "SPREADSHEET_ID", [])
+
+    sheets.spreadsheets.assert_not_called()
+
+
+def test_tighten_print_areas_bounds_an_untouched_sheet_to_its_real_content():
+    """The bug confirmed live: a sheet whose real content is a small,
+    bounded range (like this org's own "Cover Page" tab) but which
+    carries stray row-height formatting out to row 1000 and no print
+    area of its own exports with all ~1000 rows -- mostly blank,
+    gridline-covered space below the real content."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cover Page"
+    ws["B7"] = "NAME:"
+    ws["C7"] = "Jane Student"
+    for row in range(1, 1000):
+        ws.row_dimensions[row].height = 15.75  # the stray formatting itself
+
+    tighten_print_areas(wb)
+
+    assert ws.print_area == "'Cover Page'!$B$7:$C$7"
+    assert ws.sheet_view.showGridLines is False
+
+
+def test_tighten_print_areas_leaves_a_sheet_with_its_own_print_area_alone():
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "content"
+    ws.print_area = "A1:Z50"  # deliberately configured some other way
+    configured = ws.print_area  # openpyxl normalizes this on assignment
+
+    tighten_print_areas(wb)
+
+    assert ws.print_area == configured

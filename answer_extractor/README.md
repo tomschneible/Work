@@ -146,12 +146,14 @@ For an ACT scan whose auto-detected bubble-sheet template is one of the
 wired formats, or a SAT/DSAT score-report PDF that answer-key
 identification can confidently place, results get written into a copy of
 the matching Google Sheets template found automatically in your Drive,
-then exported as a PDF and cleaned up -- so the final artifact looks
-exactly like the score reports you already produce by hand from that
-template, honoring whatever print setup (page range, layout) is already
-saved on it. Anything not wired to this path (an unidentified/unrecognized
-input, or any bubble sheet when `--template` forces a fixed one) still
-goes into the combined `.xlsx`, same as always.
+then exported as a PDF -- so the final artifact looks exactly like the
+score reports you already produce by hand from that template, honoring
+whatever print setup (page range, layout) is already saved on the
+template (see "The template is filled in" below for how a template's own
+print area gets fixed once, directly, if it needs it). Anything not wired
+to this path (an unidentified/unrecognized input, or any bubble sheet
+when `--template` forces a fixed one) still goes into the combined
+`.xlsx`, same as always.
 
 ### Identity: a dedicated org account, not a personal one
 
@@ -235,33 +237,61 @@ worked, or to look around the folder tree while debugging.
    for those fields; an input dropped in without being renamed to this
    convention first fails to export (with a clear error) and falls back
    to the combined `.xlsx` instead.
-3. **The template is filled in.** Since the templates are live Google
-   Sheets, not uploaded `.xlsx` files, `google_sheets_export.py`
-   round-trips through a local file: `copy_template` duplicates it --
+3. **The template is filled in via the Sheets API, not by re-uploading a
+   whole workbook.** `copy_template` duplicates the live template --
    into the org's "Temporary Files" folder by default (override with
    `--temp-folder-id` or `$ANSWER_EXTRACTOR_TEMP_FOLDER_ID`), not the same
    folder as the real template, so a working copy never sits amid them --
-   `export_xlsx` pulls the copy down locally, the format-specific writer
-   (`score_report_writer.fill_score_report` for ACT,
-   `sat_score_report_writer.fill_sat_score_report` for SAT -- see either
-   module's own docstring for what does and doesn't get touched, and why
-   they're different enough not to share one implementation) edits it
-   exactly like any other `.xlsx`, and `replace_content` pushes the
-   filled file back in (Drive converts it back to native Sheets format on
-   upload). Every sheet in the result also gets an explicit print area
-   and gridlines turned off before that push (`_tighten_print_areas`) --
-   Google Sheets' own print-range setting turned out not to reliably
-   persist through its UI, so this is baked into every export instead of
-   depending on a template's own saved print settings. `export_pdf` then
-   renders the final PDF. The filled working Sheet copy is *kept*, not
-   deleted, by default (this org's own choice -- having the live Sheet
-   behind each generated report is useful for review/editing and for
-   debugging one that came out wrong); pass `keep_working_copy=False` to
-   `export_filled_report` to restore the old delete-after-export
-   behavior for a given call. The whole sequence lives once in
-   `google_report_export_common.export_filled_report`, shared by both
-   formats' own thin wrapper (`google_score_report_export.export_score_report`,
+   `export_xlsx` pulls that copy down locally, *read-only*, purely so the
+   format-specific writer (`score_report_writer.fill_score_report` for
+   ACT, `sat_score_report_writer.fill_sat_score_report` for SAT -- see
+   either module's own docstring for what does and doesn't get touched,
+   and why they're different enough not to share one implementation) can
+   figure out where each field goes; it returns the list of individual
+   cell writes needed rather than an edited workbook. Those writes are
+   pushed straight into the live Sheet with one `write_cells` call (the
+   Sheets API's `values().batchUpdate`) -- an earlier version of this
+   round-tripped the *entire* workbook through `.xlsx` (download, edit
+   locally, re-upload, letting Drive convert it back to native Sheets
+   format), which turned out not to be safe: confirmed live, re-importing
+   an openpyxl-authored `.xlsx` didn't reconstruct a merged, centered
+   title cell on a tab this pipeline never even touches (the org's own
+   "Cover Page") with full fidelity to how Google's own native
+   export/import round-trip would -- its text stopped filling its cell,
+   even though the underlying value was intact. Writing only the specific
+   cells that actually need to change means nothing else on the file is
+   ever re-converted through `.xlsx` at all any more, so nothing about a
+   tab's own formatting is at risk from this pipeline, no matter what
+   Drive's `.xlsx` import does or doesn't preserve faithfully.
+   `export_pdf` then renders the final PDF. The filled working Sheet copy
+   is *kept*, not deleted, by default (this org's own choice -- having
+   the live Sheet behind each generated report is useful for
+   review/editing and for debugging one that came out wrong); pass
+   `keep_working_copy=False` to `export_filled_report` to restore the old
+   delete-after-export behavior for a given call. The whole sequence
+   lives once in `google_report_export_common.export_filled_report`,
+   shared by both formats' own thin wrapper
+   (`google_score_report_export.export_score_report`,
    `google_sat_score_report_export.export_sat_score_report`).
+
+   A template's own gridlines-showing / undersized-print-area problem
+   (a tab whose real content is a few dozen rows but whose row-height
+   formatting extends to row 1000 with no print area set exports with
+   mostly blank, gridline-covered space below the real content) is a
+   property of the template file itself, not something a per-report fill
+   introduces or can silently fix any more, now that per-report filling
+   never re-uploads a workbook -- fix it directly, once, with:
+
+   ```bash
+   python -m answer_extractor.google_sheets_cli tighten-print-area --file-id <template file id>
+   ```
+
+   which downloads that one file, tightens every sheet's print area and
+   turns off gridlines (`google_sheets_export.tighten_print_areas`), and
+   pushes the fix back onto the *same* file id (never a copy). Run it
+   once per already-duplicated template that needs it, and once more
+   against a master template before duplicating it for a new test code so
+   every future duplicate inherits the fix.
 4. **What ACT flags, SAT prompts for.** A blank or MULTIPLE-marked bubble
    always comes through as blank on an ACT report -- never a guessed
    answer. If the sheet has any review items at all (blank/MULTIPLE/

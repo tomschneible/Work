@@ -78,7 +78,7 @@ def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path)
     prompt_fn = MagicMock(side_effect=["620", "590"])
 
     with patch(f"{_MODULE}.export_sat_score_report", return_value=b"%PDF-fake") as export_mock:
-        pdf_path = export_sat_report(MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+        pdf_path = export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
     assert pdf_path == tmp_path / "Jane Student - March 8, 2026.pdf"
     assert pdf_path.read_bytes() == b"%PDF-fake"
@@ -96,7 +96,7 @@ def test_export_sat_report_reprompts_on_invalid_input_before_succeeding(tmp_path
     prompt_fn = MagicMock(side_effect=["not a number", "9999", "620"])
 
     with patch(f"{_MODULE}.export_sat_score_report", return_value=b"%PDF-fake"):
-        export_sat_report(MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+        export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
     assert prompt_fn.call_count == 3
 
@@ -107,7 +107,7 @@ def test_export_sat_report_raises_when_a_prompt_is_cancelled(tmp_path):
 
     with patch(f"{_MODULE}.export_sat_score_report"):
         with pytest.raises(ValueError, match="cancelled"):
-            export_sat_report(MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+            export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
 
 def test_export_sat_report_raises_for_a_non_sat_filename(tmp_path):
@@ -123,9 +123,9 @@ def test_export_sat_report_raises_for_a_non_sat_filename(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="SAT/DSAT"):
-        export_sat_report(MagicMock(), "ROOT", rows, tmp_path, prompt_fn=MagicMock())
+        export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=MagicMock())
 
 
 def test_export_sat_report_raises_on_empty_rows(tmp_path):
     with pytest.raises(ValueError, match="No rows"):
-        export_sat_report(MagicMock(), "ROOT", [], tmp_path, prompt_fn=MagicMock())
+        export_sat_report(MagicMock(), MagicMock(), "ROOT", [], tmp_path, prompt_fn=MagicMock())

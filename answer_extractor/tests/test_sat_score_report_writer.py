@@ -1,10 +1,24 @@
 import datetime as dt
 from pathlib import Path
+from typing import List
 
 import openpyxl
 import pytest
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
+from answer_extractor.google_sheets_export import CellWrite
 from answer_extractor.sat_score_report_writer import fill_sat_score_report, locate_sat_blocks
+
+_MISSING = object()  # distinguishes "never written" from an explicitly-written None (an omitted answer)
+
+
+def _at(writes: List[CellWrite], a1: str, sheet: str = "Student Responses"):
+    col_letter, row = coordinate_from_string(a1)
+    col = column_index_from_string(col_letter)
+    for w in writes:
+        if w.sheet == sheet and w.row == row and w.column == col:
+            return w.value
+    return _MISSING
 
 
 def _write_template(path: Path) -> None:
@@ -94,7 +108,7 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_sat_score_report(
+    writes = fill_sat_score_report(
         path,
         answers={
             ("reading and writing", "module1", 1): "A",
@@ -104,43 +118,41 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         },
         active_variants={"reading and writing": "harder"},
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 8),
+        test_date=dt.date(2026, 3, 8),
     )
-    ws = wb["Student Responses"]
 
-    assert ws["A1"].value == "Jane Student"
-    assert ws["A2"].value == dt.datetime(2026, 3, 8)
+    assert _at(writes, "A1") == "Jane Student"
+    assert _at(writes, "A2") == "2026-03-08"  # ISO-formatted for the Sheets API
     # Module 1 (always active).
-    assert ws["C6"].value == "A"
-    assert ws["C7"].value == "B"
+    assert _at(writes, "C6") == "A"
+    assert _at(writes, "C7") == "B"
     # Harder, canonical (F) copy -- filled.
-    assert ws["H6"].value == "C"
-    assert ws["H7"].value == "D"
-    assert ws["F5"].value is True
-    # Harder, duplicate (P) copy -- left completely untouched.
-    assert ws["R6"].value is None
-    assert ws["R7"].value is None
-    assert ws["P5"].value is False
-    # Easier -- not active, left untouched, flag stays False.
-    assert ws["M6"].value is None
-    assert ws["K5"].value is False
+    assert _at(writes, "H6") == "C"
+    assert _at(writes, "H7") == "D"
+    assert _at(writes, "F5") is True
+    # Harder, duplicate (P) copy -- left completely untouched (not even a blank write).
+    assert _at(writes, "R6") is _MISSING
+    assert _at(writes, "R7") is _MISSING
+    assert _at(writes, "P5") is _MISSING
+    # Easier -- not active, left untouched, flag never written (stays whatever the template had).
+    assert _at(writes, "M6") is _MISSING
+    assert _at(writes, "K5") is _MISSING
 
 
 def test_fill_sat_score_report_leaves_a_missing_answer_blank(tmp_path):
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_sat_score_report(
+    writes = fill_sat_score_report(
         path,
         answers={("reading and writing", "module1", 1): "A"},  # question 2 omitted
         active_variants={},
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 8),
+        test_date=dt.date(2026, 3, 8),
     )
-    ws = wb["Student Responses"]
 
-    assert ws["C6"].value == "A"
-    assert ws["C7"].value is None
+    assert _at(writes, "C6") == "A"
+    assert _at(writes, "C7") is None  # explicitly blanked, not just absent
 
 
 def test_fill_sat_score_report_raises_for_an_answer_in_the_inactive_variant(tmp_path):
@@ -153,7 +165,7 @@ def test_fill_sat_score_report_raises_for_an_answer_in_the_inactive_variant(tmp_
             answers={("reading and writing", "easier", 1): "F"},  # but harder is active
             active_variants={"reading and writing": "harder"},
             student_name="Jane Student",
-            test_date=dt.datetime(2026, 3, 8),
+            test_date=dt.date(2026, 3, 8),
         )
 
 
@@ -167,7 +179,7 @@ def test_fill_sat_score_report_raises_on_unmatched_answer_key(tmp_path):
             answers={("math", "module1", 1): "A"},  # no Math block in this fixture
             active_variants={},
             student_name="Jane Student",
-            test_date=dt.datetime(2026, 3, 8),
+            test_date=dt.date(2026, 3, 8),
         )
 
 
@@ -189,33 +201,32 @@ def test_fill_sat_score_report_writes_a_given_section_score(tmp_path):
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_sat_score_report(
+    writes = fill_sat_score_report(
         path,
         answers={},
         active_variants={},
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 8),
+        test_date=dt.date(2026, 3, 8),
         section_scores={"reading and writing": 590},
     )
-    ws = wb["Student Responses"]
 
-    assert ws["Z10"].value == 590
+    assert _at(writes, "Z10") == 590
 
 
 def test_fill_sat_score_report_leaves_score_cell_alone_when_not_given(tmp_path):
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_sat_score_report(
+    writes = fill_sat_score_report(
         path,
         answers={},
         active_variants={},
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 8),
+        test_date=dt.date(2026, 3, 8),
         # section_scores omitted entirely
     )
 
-    assert wb["Student Responses"]["Z10"].value == 200  # untouched template default
+    assert _at(writes, "Z10") is _MISSING  # never written -- template's own default (200) stands
 
 
 def test_fill_sat_score_report_raises_for_an_unrecognized_score_subject(tmp_path):
@@ -228,6 +239,6 @@ def test_fill_sat_score_report_raises_for_an_unrecognized_score_subject(tmp_path
             answers={},
             active_variants={},
             student_name="Jane Student",
-            test_date=dt.datetime(2026, 3, 8),
+            test_date=dt.date(2026, 3, 8),
             section_scores={"science": 500},
         )

@@ -46,6 +46,13 @@ something this module figures out -- that identification already exists
 in answer_keys.annotate_rows, matching a score report's own "Correct
 Answer" column against a reference key. Callers pass the result in via
 `active_variants`.
+
+Like score_report_writer.py's ACT counterpart, this scans a *local,
+read-only* copy of the template purely to find where things go and
+returns the list of individual CellWrite values a caller pushes into the
+live Sheet via google_sheets_export.write_cells -- it no longer edits or
+returns a Workbook to be saved and re-uploaded wholesale (see
+google_sheets_export.py's own module docstring for why).
 """
 from __future__ import annotations
 
@@ -56,8 +63,9 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
 import openpyxl
-from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
+
+from .google_sheets_export import CellWrite, format_date_for_sheets
 
 SatKey = Tuple[str, str, int]  # (subject, module_slot, question)
 
@@ -223,10 +231,10 @@ def fill_sat_score_report(
     test_date: dt.date | str,
     section_scores: Optional[Mapping[str, int]] = None,
     sheet_name: str = "Student Responses",
-) -> Workbook:
-    """Load a fresh copy of `template_path` and return it with the
-    student's name, test date, every answer in `answers`, and (if given)
-    each subject's scaled section score filled in.
+) -> List[CellWrite]:
+    """Return every cell write needed to fill `template_path`'s
+    `sheet_name` tab in with the student's name, test date, every answer
+    in `answers`, and (if given) each subject's scaled section score.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
@@ -255,14 +263,17 @@ def fill_sat_score_report(
                 f"is {active_variants.get(subject)!r}"
             )
 
-    wb_out = openpyxl.load_workbook(template_path, data_only=False)
-    if sheet_name not in wb_out.sheetnames:
-        raise ValueError(f"No {sheet_name!r} tab in {template_path} (tabs: {wb_out.sheetnames})")
-    ws = wb_out[sheet_name]
+    wb = openpyxl.load_workbook(template_path, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f"No {sheet_name!r} tab in {template_path} (tabs: {wb.sheetnames})")
+    ws = wb[sheet_name]
 
     name_row, name_col = _find_name_cell(ws)
-    ws.cell(row=name_row, column=name_col).value = student_name
-    ws.cell(row=name_row + 1, column=name_col).value = test_date  # date sits directly below name
+    writes = [
+        CellWrite(sheet_name, name_row, name_col, student_name),
+        # date sits directly below name
+        CellWrite(sheet_name, name_row + 1, name_col, format_date_for_sheets(test_date)),
+    ]
 
     if section_scores:
         score_cells = _find_score_value_cells(ws)
@@ -273,14 +284,14 @@ def fill_sat_score_report(
                     f"(found score cells for: {sorted(score_cells)})"
                 )
             row, col = score_cells[subject]
-            ws.cell(row=row, column=col).value = score
+            writes.append(CellWrite(sheet_name, row, col, score))
 
     remaining = dict(answers)
     for block in locate_sat_blocks(ws):
         is_active = block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
         if is_active and block.flag_cell is not None:
             frow, fcol = block.flag_cell
-            ws.cell(row=frow, column=fcol).value = True
+            writes.append(CellWrite(sheet_name, frow, fcol, True))
 
         if not is_active:
             continue  # the inactive twin of an active pair -- leave completely untouched
@@ -290,11 +301,11 @@ def fill_sat_score_report(
             if question is None:
                 break
             key = (block.subject, block.module_slot, int(question))
-            ws.cell(row=r, column=block.answer_col).value = remaining.pop(key, None)
+            writes.append(CellWrite(sheet_name, r, block.answer_col, remaining.pop(key, None)))
             r += 1
 
     if remaining:
         unmatched = ", ".join(f"{subject} {slot} {question}" for subject, slot, question in sorted(remaining))
         raise ValueError(f"{template_path}!{sheet_name} has no answer block for: {unmatched}")
 
-    return wb_out
+    return writes

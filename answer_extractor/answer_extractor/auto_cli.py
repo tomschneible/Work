@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     templates_root_folder_id = None
     if to_export or sat_row_groups:
         try:
-            drive, _sheets = build_services()
+            drive, sheets = build_services()
         except Exception as exc:
             print(
                 f"Warning: couldn't set up Google Sheets access ({exc}); "
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             for r in to_export:
                 try:
                     exported.append(
-                        export_sheet_report(drive, templates_root_folder_id, r, output_dir, temp_folder_id)
+                        export_sheet_report(drive, sheets, templates_root_folder_id, r, output_dir, temp_folder_id)
                     )
                 except Exception as exc:
                     print(
@@ -296,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     exported_sat_paths.append(
                         export_sat_report(
-                            drive, templates_root_folder_id, group, output_dir, temp_folder_id=temp_folder_id
+                            drive, sheets, templates_root_folder_id, group, output_dir, temp_folder_id=temp_folder_id
                         )
                     )
                 except Exception as exc:

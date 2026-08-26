@@ -12,6 +12,7 @@ def test_export_sat_score_report_delegates_to_export_filled_report_with_the_sat_
     with patch(f"{_MODULE}.export_filled_report", return_value=b"%PDF-final") as export_mock:
         result = export_sat_score_report(
             drive=MagicMock(),
+            sheets=MagicMock(),
             templates_root_folder_id="ROOT",
             test_code="8",
             answers={("math", "module1", 1): "A"},
@@ -24,16 +25,17 @@ def test_export_sat_score_report_delegates_to_export_filled_report_with_the_sat_
 
     assert result == b"%PDF-final"
     kwargs = export_mock.call_args
-    assert kwargs[0][1] == "ROOT"
-    assert kwargs[0][2] == ["SAT"]
-    assert kwargs[0][3] == "8"
-    assert kwargs[0][4] == "Jane Student - 2026-03-08"
+    assert kwargs[0][2] == "ROOT"
+    assert kwargs[0][3] == ["SAT"]
+    assert kwargs[0][4] == "8"
+    assert kwargs[0][5] == "Jane Student - 2026-03-08"
 
 
 def test_export_sat_score_report_fill_fn_calls_fill_sat_score_report_with_its_bound_arguments():
     with patch(f"{_MODULE}.export_filled_report") as export_mock:
         export_sat_score_report(
             drive=MagicMock(),
+            sheets=MagicMock(),
             templates_root_folder_id="ROOT",
             test_code="8",
             answers={("math", "module1", 1): "A"},

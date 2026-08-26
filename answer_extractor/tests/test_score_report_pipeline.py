@@ -59,7 +59,7 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
-        outcome = export_sheet_report(MagicMock(), "ROOT", result, tmp_path)
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
 
     assert outcome.pdf_path == tmp_path / "Jane Student - January 17, 2026.pdf"
     assert outcome.pdf_path.read_bytes() == b"%PDF-fake"
@@ -80,7 +80,7 @@ def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_rev
     assert result.has_review_items
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
-        outcome = export_sheet_report(MagicMock(), "ROOT", result, tmp_path)
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
 
     assert outcome.pdf_path.name == "Jane Student - January 17, 2026 FLAG.pdf"
     assert outcome.xlsx_path is not None
@@ -93,7 +93,7 @@ def test_export_sheet_report_passes_a_formatted_string_when_the_day_is_unknown(t
     result = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions)  # no day
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
-        export_sheet_report(MagicMock(), "ROOT", result, tmp_path)
+        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
 
     assert export_mock.call_args.kwargs["test_date"] == "January 2026"
 
@@ -103,4 +103,4 @@ def test_export_sheet_report_raises_a_clear_error_for_an_unrecognized_template(t
     result = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions, template_name="default_template")
 
     with pytest.raises(ValueError, match="isn't wired to"):
-        export_sheet_report(MagicMock(), "ROOT", result, tmp_path)
+        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)

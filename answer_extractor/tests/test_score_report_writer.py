@@ -1,9 +1,11 @@
 import datetime as dt
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 import openpyxl
 import pytest
 
+from answer_extractor.google_sheets_export import CellWrite
 from answer_extractor.score_report_writer import fill_score_report
 
 
@@ -48,11 +50,15 @@ def _write_template(path: Path) -> None:
     wb.save(str(path))
 
 
+def _by_cell(writes: List[CellWrite]) -> Dict[Tuple[str, int, int], object]:
+    return {(w.sheet, w.row, w.column): w.value for w in writes}
+
+
 def test_fill_score_report_writes_name_date_and_answers(tmp_path):
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_score_report(
+    writes = fill_score_report(
         path,
         answers={
             ("english", 1): "A",
@@ -62,38 +68,40 @@ def test_fill_score_report_writes_name_date_and_answers(tmp_path):
             ("mathematics", 2): "H",
         },
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 4),
+        test_date=dt.date(2026, 3, 4),
     )
-    ws = wb["ScoreSheet"]
+    cells = _by_cell(writes)
 
-    assert ws["D1"].value == "Jane Student"
-    assert ws["D2"].value == dt.datetime(2026, 3, 4)
-    assert ws["C6"].value == "A"
-    assert ws["C7"].value == "C"
-    assert ws["C8"].value is None  # omitted
-    assert ws["J6"].value == "F"
-    assert ws["J7"].value == "H"
+    assert cells[("ScoreSheet", 1, 4)] == "Jane Student"  # D1
+    assert cells[("ScoreSheet", 2, 4)] == "2026-03-04"  # D2, ISO-formatted for the Sheets API
+    assert cells[("ScoreSheet", 6, 3)] == "A"  # C6
+    assert cells[("ScoreSheet", 7, 3)] == "C"  # C7
+    assert cells[("ScoreSheet", 8, 3)] is None  # C8, omitted
+    assert cells[("ScoreSheet", 6, 10)] == "F"  # J6
+    assert cells[("ScoreSheet", 7, 10)] == "H"  # J7
 
 
-def test_fill_score_report_preserves_formulas_and_correct_answers(tmp_path):
+def test_fill_score_report_never_writes_cells_it_should_leave_alone(tmp_path):
+    """Only the name/date placeholders and each block's own answer_col
+    cells are ever written -- not the unrelated scoring formula or the
+    pre-baked correct-answer key, both on the same sheet."""
     path = tmp_path / "template.xlsx"
     _write_template(path)
 
-    wb = fill_score_report(
+    writes = fill_score_report(
         path,
-        answers={("english", 1): "A", ("english", 2): "B", ("english", 3): "C",
-                  ("mathematics", 1): "F", ("mathematics", 2): "G"},
+        answers={
+            ("english", 1): "A", ("english", 2): "B", ("english", 3): "C",
+            ("mathematics", 1): "F", ("mathematics", 2): "G",
+        },
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 4),
+        test_date=dt.date(2026, 3, 4),
     )
-    ws = wb["ScoreSheet"]
+    cells = _by_cell(writes)
 
-    # The unrelated match formula is untouched -- the writer only ever
-    # sets answer_col cells.
-    assert ws["D8"].value == '=IF(B8=C8,"match","no")'
-    # Pre-baked correct answers (the answer key) are untouched too.
-    assert ws["B6"].value == "A"
-    assert ws["B7"].value == "B"
+    assert ("ScoreSheet", 8, 4) not in cells  # D8, the match formula
+    assert ("ScoreSheet", 6, 2) not in cells  # B6, a correct answer
+    assert ("ScoreSheet", 7, 2) not in cells  # B7, a correct answer
 
 
 def test_fill_score_report_raises_on_unmatched_answer_key(tmp_path):
@@ -105,7 +113,7 @@ def test_fill_score_report_raises_on_unmatched_answer_key(tmp_path):
             path,
             answers={("english", 1): "A", ("reading", 1): "A"},  # no Reading block in this template
             student_name="Jane Student",
-            test_date=dt.datetime(2026, 3, 4),
+            test_date=dt.date(2026, 3, 4),
         )
 
 
@@ -117,7 +125,7 @@ def test_fill_score_report_raises_when_name_placeholder_missing(tmp_path):
     wb.save(path)
 
     with pytest.raises(ValueError, match="enter name"):
-        fill_score_report(path, answers={}, student_name="Jane Student", test_date=dt.datetime(2026, 3, 4))
+        fill_score_report(path, answers={}, student_name="Jane Student", test_date=dt.date(2026, 3, 4))
 
 
 def test_fill_score_report_does_not_mutate_the_template_file(tmp_path):
@@ -127,10 +135,27 @@ def test_fill_score_report_does_not_mutate_the_template_file(tmp_path):
 
     fill_score_report(
         path,
-        answers={("english", 1): "A", ("english", 2): "B", ("english", 3): "C",
-                  ("mathematics", 1): "F", ("mathematics", 2): "G"},
+        answers={
+            ("english", 1): "A", ("english", 2): "B", ("english", 3): "C",
+            ("mathematics", 1): "F", ("mathematics", 2): "G",
+        },
         student_name="Jane Student",
-        test_date=dt.datetime(2026, 3, 4),
+        test_date=dt.date(2026, 3, 4),
     )
 
     assert path.read_bytes() == before
+
+
+def test_fill_score_report_passes_through_a_string_test_date_unchanged(tmp_path):
+    """No day known (see scan_filename.ScanFilename.day_known) -- the
+    caller passes a plain formatted string instead of a date, which must
+    reach the write as-is, not run through ISO formatting."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+
+    writes = fill_score_report(
+        path, answers={}, student_name="Jane Student", test_date="January 2026"
+    )
+    cells = _by_cell(writes)
+
+    assert cells[("ScoreSheet", 2, 4)] == "January 2026"

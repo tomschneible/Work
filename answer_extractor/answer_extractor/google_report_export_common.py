@@ -1,12 +1,14 @@
 """The Drive-orchestration sequence shared by every score-report export
 path (currently ACT's google_score_report_export.py and SAT's
 google_sat_score_report_export.py): find the right template, duplicate
-it, fill it in, and export the result as a PDF. The only thing that
-differs between formats is *how* a local copy gets filled in --
-everything else (finding the template, the
-export-as-xlsx/edit-locally/push-back-in round trip google_sheets_export's
-module docstring explains) is identical, so that difference is the one
-thing callers supply, via `fill_fn`.
+it, fill it in via direct Sheets API cell writes, and export the result
+as a PDF. The only thing that differs between formats is *how* a local
+copy gets scanned to figure out what to write -- everything else
+(finding the template, downloading a read-only local copy to locate
+cells, writing them into the live Sheet, exporting the PDF -- see
+google_sheets_export.py's own module docstring for why this no longer
+edits/re-uploads the whole workbook) is identical, so that difference is
+the one thing callers supply, via `fill_fn`.
 """
 from __future__ import annotations
 
@@ -16,44 +18,11 @@ import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from openpyxl.workbook import Workbook
 from googleapiclient.discovery import Resource
-
 from googleapiclient.errors import HttpError
 
-from .google_sheets_export import copy_template, delete_file, export_pdf, export_xlsx, replace_content
+from .google_sheets_export import CellWrite, copy_template, delete_file, export_pdf, export_xlsx, write_cells
 from .template_lookup import find_template_file, resolve_template_folder
-
-
-def _tighten_print_areas(wb: Workbook) -> None:
-    """Give every sheet in `wb` that doesn't already have one an explicit
-    print area matching its own real content (openpyxl's own
-    `dimensions`, unaffected by stray explicit row-height formatting some
-    tabs carry out to row 1000 even though their actual content ends far
-    short of that) and turn off its gridlines.
-
-    A sheet with no print area set exports (both a manual Download-as-PDF
-    and this pipeline's own export_pdf go through the same underlying
-    conversion) with everything up to its highest-numbered row that
-    carries any formatting at all -- for a tab like this org's own "Cover
-    Page", whose real content is a few dozen rows but whose row-height
-    formatting extends to row 1000, that's most of a page of blank,
-    gridline-covered space below the actual header block. Confirmed live
-    against a real template.
-
-    This is applied every export rather than relying on the template's
-    own saved print settings, which turned out not to reliably persist
-    through Google Sheets' own Print-settings UI -- baking the fix into
-    every generated report is more robust than depending on that. A sheet
-    that already has its own print area is left alone, so a template
-    that's been deliberately configured some other way isn't
-    second-guessed.
-    """
-    for ws in wb.worksheets:
-        if ws.print_area:
-            continue
-        ws.print_area = ws.dimensions
-        ws.sheet_view.showGridLines = False
 
 
 def _cleanup_delete_is_actionable(exc: Exception) -> bool:
@@ -69,11 +38,12 @@ def _cleanup_delete_is_actionable(exc: Exception) -> bool:
 
 def export_filled_report(
     drive: Resource,
+    sheets: Resource,
     templates_root_folder_id: str,
     category_path: List[str],
     test_code: str,
     output_name: str,
-    fill_fn: Callable[[str | Path], Workbook],
+    fill_fn: Callable[[str | Path], List[CellWrite]],
     temp_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
 ) -> bytes:
@@ -82,13 +52,16 @@ def export_filled_report(
     reach the right template file, e.g. ["ACT", "Enhanced"] or ["SAT"];
     `test_code` is matched against template filenames the same way
     template_lookup.find_template_file does (e.g. "25MC1"). `fill_fn`
-    receives a local path to the duplicated template (already downloaded
-    as .xlsx) and must return the filled-in Workbook -- the caller-specific
-    part of this (score_report_writer.fill_score_report or
-    sat_score_report_writer.fill_sat_score_report, each pre-bound with
-    the rest of their own arguments via e.g. functools.partial). Every
-    sheet in the result then gets its print area tightened (see
-    _tighten_print_areas) before it's pushed back to Drive and exported.
+    receives a local, read-only path to the duplicated template (already
+    downloaded as .xlsx, purely so `fill_fn` can figure out where things
+    go) and must return the list of individual cell writes needed -- the
+    caller-specific part of this (score_report_writer.fill_score_report
+    or sat_score_report_writer.fill_sat_score_report, each pre-bound with
+    the rest of their own arguments via e.g. functools.partial). Those
+    writes are pushed directly into the live Sheet via the Sheets API
+    (google_sheets_export.write_cells) -- nothing else about the
+    workbook is ever touched or re-converted through .xlsx (see
+    google_sheets_export.py's own module docstring for why that matters).
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -130,10 +103,8 @@ def export_filled_report(
         try:
             with open(tmp_path, "wb") as f:
                 f.write(export_xlsx(drive, copy_id))
-            filled = fill_fn(tmp_path)
-            _tighten_print_areas(filled)
-            filled.save(tmp_path)
-            replace_content(drive, copy_id, tmp_path)
+            cell_writes = fill_fn(tmp_path)
+            write_cells(sheets, copy_id, cell_writes)
             pdf_bytes = export_pdf(drive, copy_id)
         except Exception:
             try:

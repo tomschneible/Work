@@ -1,11 +1,12 @@
-"""Fill a per-test score-report template's "ScoreSheet" tab with one
-student's name, test date, and answers.
+"""Figure out which cells of a per-test score-report template's
+"ScoreSheet" tab need one student's name, test date, and answers -- and
+exactly what to write into them.
 
 The templates themselves (Enhanced ACT, Legacy ACT, SAT -- one file per
 specific test administration, e.g. "25MC1") live in the org's Drive and
 are duplicated per report rather than edited in place; this module only
-knows how to fill in an already-duplicated copy. It never touches the
-correct answers, categories, or any of the template's scoring formulas
+figures out where a copy's fields go. It never touches the correct
+answers, categories, or any of the template's scoring formulas
 (ScoreReport tab's VLOOKUPs, the per-row "match" formulas, etc.) -- those
 are already baked into each per-test template and are computed by
 whatever eventually opens the sheet (Excel, Google Sheets), not by us.
@@ -21,17 +22,29 @@ program needing to know about any of them individually:
   - Each question's "Your Answer" cell, located via scoresheet_grid's
     generic block scan -- the same one scoresheet_check.py's reader uses,
     just writing instead of reading.
+
+This scans a *local, read-only* copy of the template (downloaded once via
+google_sheets_export.export_xlsx) purely to find where things go --
+unlike an earlier version of this module, it no longer edits or returns a
+Workbook to be saved and re-uploaded wholesale. See
+google_sheets_export.py's own module docstring for why: re-importing an
+openpyxl-authored .xlsx turned out not to reconstruct some of a
+template's own formatting (a merged, centered title cell on a tab this
+module never even touches) with full fidelity. fill_score_report instead
+returns the list of individual CellWrite values a caller pushes into the
+live Sheet via google_sheets_export.write_cells, touching nothing else on
+the file at all.
 """
 from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Mapping
+from typing import List, Mapping
 
 import openpyxl
-from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .google_sheets_export import CellWrite, format_date_for_sheets
 from .scoresheet_grid import QuestionKey, iter_block_questions, locate_answer_blocks
 
 _NAME_PLACEHOLDER_PREFIX = "enter name"
@@ -57,12 +70,13 @@ def fill_score_report(
     student_name: str,
     test_date: dt.date | str,
     sheet_name: str = "ScoreSheet",
-) -> Workbook:
-    """Load a fresh copy of `template_path` and return it with the
-    student's name, test date, and every answer in `answers` filled in.
-    `answers` maps (normalized_section, question_number) -> answer letter
-    ("" for omitted), the same shape scoresheet_check.parse_reference_scoresheet
-    and .scoresheet_grid.normalize_section produce -- feed it this
+) -> List[CellWrite]:
+    """Return every cell write needed to fill `template_path`'s
+    `sheet_name` tab in with the student's name, test date, and every
+    answer in `answers`. `answers` maps (normalized_section,
+    question_number) -> answer letter ("" for omitted), the same shape
+    scoresheet_check.parse_reference_scoresheet and
+    .scoresheet_grid.normalize_section produce -- feed it this
     pipeline's own per-question results run through the same section
     normalization.
 
@@ -71,7 +85,9 @@ def fill_score_report(
     (see scan_filename.ScanFilename.day_known), pass its
     formatted_test_date string ("January 2026") instead of manufacturing
     a specific day nothing in the input confirmed -- a real `date` object
-    is for when the day is genuinely known.
+    is for when the day is genuinely known. Either way, see
+    google_sheets_export.format_date_for_sheets for how it becomes a
+    single cell value.
 
     A template question with no entry in `answers` is left blank (an
     omitted bubble is a legitimate outcome). An `answers` entry for a
@@ -79,36 +95,24 @@ def fill_score_report(
     mismatch worth failing loudly over -- most likely the wrong template
     was picked for this scan -- so this raises ValueError listing exactly
     which keys went unmatched, rather than silently dropping them.
-
-    The returned workbook is not saved anywhere; callers write it out
-    (locally, or -- for the eventual Drive-backed path -- push its values
-    into the live Sheet) themselves.
     """
-    # Two loads of the same file: `wb_values` (data_only=True) resolves
-    # formula-driven question-number cells like '=A64+1' to their cached
-    # computed number; `wb_out` (data_only=False, the one we mutate and
-    # return) keeps every other formula on the sheet intact. Loading with
-    # data_only=True and then saving would silently replace all of those
-    # formulas with their last-cached values instead.
-    wb_values = openpyxl.load_workbook(template_path, data_only=True)
-    wb_out = openpyxl.load_workbook(template_path, data_only=False)
-    for wb, label in ((wb_values, "value"), (wb_out, "output")):
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"No {sheet_name!r} tab in {template_path} (tabs: {wb.sheetnames})")
+    wb = openpyxl.load_workbook(template_path, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f"No {sheet_name!r} tab in {template_path} (tabs: {wb.sheetnames})")
+    ws = wb[sheet_name]
 
-    ws_values = wb_values[sheet_name]
-    ws_out = wb_out[sheet_name]
-
-    name_row, name_col = _find_placeholder_cell(ws_out, _NAME_PLACEHOLDER_PREFIX)
-    date_row, date_col = _find_placeholder_cell(ws_out, _DATE_PLACEHOLDER_PREFIX)
-    ws_out.cell(row=name_row, column=name_col).value = student_name
-    ws_out.cell(row=date_row, column=date_col).value = test_date
+    name_row, name_col = _find_placeholder_cell(ws, _NAME_PLACEHOLDER_PREFIX)
+    date_row, date_col = _find_placeholder_cell(ws, _DATE_PLACEHOLDER_PREFIX)
+    writes = [
+        CellWrite(sheet_name, name_row, name_col, student_name),
+        CellWrite(sheet_name, date_row, date_col, format_date_for_sheets(test_date)),
+    ]
 
     remaining = dict(answers)
-    for block in locate_answer_blocks(ws_out):
-        for r, question in iter_block_questions(ws_values, block):
+    for block in locate_answer_blocks(ws):
+        for r, question in iter_block_questions(ws, block):
             key = (block.section, question)
-            ws_out.cell(row=r, column=block.answer_col).value = remaining.pop(key, None)
+            writes.append(CellWrite(sheet_name, r, block.answer_col, remaining.pop(key, None)))
 
     if remaining:
         unmatched = ", ".join(f"{section} {question}" for section, question in sorted(remaining))
@@ -117,4 +121,4 @@ def fill_score_report(
             "likely the wrong template for this scan."
         )
 
-    return wb_out
+    return writes

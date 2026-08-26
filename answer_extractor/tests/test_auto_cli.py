@@ -195,8 +195,8 @@ def test_auto_cli_exports_an_act_sheet_to_a_report_instead_of_the_combined_xlsx(
     assert exit_code == 0
     assert not output_path.exists()  # nothing left to combine -- no .xlsx written at all
     export_mock.assert_called_once()
-    assert export_mock.call_args[0][1] == "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"  # default templates root
-    assert export_mock.call_args[0][3] == report_dir
+    assert export_mock.call_args[0][2] == "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"  # default templates root
+    assert export_mock.call_args[0][4] == report_dir
 
 
 def test_auto_cli_respects_a_custom_templates_root_folder_id(tmp_path):
@@ -215,7 +215,7 @@ def test_auto_cli_respects_a_custom_templates_root_folder_id(tmp_path):
             ]
         )
 
-    assert export_mock.call_args[0][1] == "CUSTOM_ROOT"
+    assert export_mock.call_args[0][2] == "CUSTOM_ROOT"
 
 
 def test_auto_cli_still_combines_act_sheets_when_a_fixed_template_is_given(tmp_path):
@@ -293,7 +293,7 @@ def test_auto_cli_mixes_exported_and_combined_sheets_in_one_run(tmp_path):
 
     assert exit_code == 0
     export_mock.assert_called_once()
-    assert export_mock.call_args[0][2] is exported_result
+    assert export_mock.call_args[0][3] is exported_result
     wb = load_workbook(output_path)
     assert wb.sheetnames == ["Smith, John 2026 SAT 1234 March"]  # truncated to 31 chars
 
@@ -325,8 +325,8 @@ def test_auto_cli_exports_identified_sat_rows_to_a_report_instead_of_the_combine
     assert exit_code == 0
     assert not output_path.exists()  # nothing left to combine
     export_mock.assert_called_once()
-    assert export_mock.call_args[0][2] == sat_rows
-    assert export_mock.call_args[0][3] == report_dir
+    assert export_mock.call_args[0][3] == sat_rows
+    assert export_mock.call_args[0][4] == report_dir
 
 
 def test_auto_cli_falls_back_to_the_combined_xlsx_for_a_sat_report_that_fails_to_export(tmp_path):

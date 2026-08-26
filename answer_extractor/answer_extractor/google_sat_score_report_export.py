@@ -20,6 +20,7 @@ from .sat_score_report_writer import SatKey, fill_sat_score_report
 
 def export_sat_score_report(
     drive: Resource,
+    sheets: Resource,
     templates_root_folder_id: str,
     test_code: str,
     answers: Mapping[SatKey, str],
@@ -38,6 +39,7 @@ def export_sat_score_report(
     shared orchestration and fixes category_path to ["SAT"]."""
     return export_filled_report(
         drive,
+        sheets,
         templates_root_folder_id,
         ["SAT"],
         test_code,
