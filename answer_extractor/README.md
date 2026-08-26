@@ -366,35 +366,46 @@ export ANSWER_EXTRACTOR_TEMPLATE=~/Work/answer_extractor/templates/default_templ
 ## macOS drag-and-drop app (with a reference check)
 
 A second droplet for when you already have an independently-scored
-reference spreadsheet for a student (e.g. exported from a test-prep
-vendor's own scoring system) and want to check this tool's read against
-it. It auto-detects which of two things you're doing from what you drop:
+reference report for a student (a vendor's scoring spreadsheet, or a
+rendered ScoreSheet-style PDF -- including this pipeline's own PDF export)
+and want to check this tool's read against it. It auto-detects which of
+three things you're doing from what you drop:
 
-- **Scan + compare**: drop the scanned bubble sheet *and* the reference
-  spreadsheet together. Scans as normal, then adds a color-coded
+- **Scan + compare**: drop the scanned bubble sheet *and* a reference
+  (spreadsheet or PDF) together. Scans as normal, then adds a color-coded
   "Comparison" tab.
 - **Compare only**: drop a spreadsheet this tool *already* exported
-  (e.g. from an earlier run of the plain droplet above) together with the
-  reference spreadsheet. No re-scanning -- it just appends the
-  "Comparison" tab to a copy of that file's existing answers. Use this
-  when you already ran the plain scan and only got the reference
-  spreadsheet afterward.
+  (e.g. from an earlier run of the plain droplet above) together with a
+  reference. No re-scanning -- it just appends the "Comparison" tab to a
+  copy of that file's existing answers. Use this when you already ran the
+  plain scan and only got the reference afterward.
+- **Direct comparison**: drop two already-finished score reports and
+  nothing else -- e.g. this pipeline's own generated PDF report and a
+  report you already had for that student -- to check them against each
+  other with no scanning at all. Works with any mix of PDF/PDF,
+  PDF/spreadsheet, or (as in compare-only above) an existing export
+  alongside either. With two PDFs and nothing else to break the tie, the
+  first one dropped is treated as "ours" and the second as "reference" --
+  the success notification always names which file played which role.
 
-The reference spreadsheet must have a tab named `ScoreSheet` (the vendor
+A reference **spreadsheet** must have a tab named `ScoreSheet` (the vendor
 export this was built against uses that name) containing repeated
 `Question | Correct Answer | Your Answer | (mark) | Category` column
 blocks, one section title (`English`/`Math`/`Reading`/`Science`) above
 each group of blocks -- see `answer_extractor/scoresheet_check.py`'s
 module docstring for the exact shape expected. If your vendor's tab is
 named something else, add `--reference-tab "Whatever It's Called"` to the
-script invocation in the Automator step below.
+script invocation in the Automator step below. A reference **PDF** needs
+no special tab or filename -- any rendered report using that same
+column-group layout (this pipeline's own export included) is recognized
+automatically; see `answer_extractor/score_report_pdf_reader.py`.
 
-This droplet is for the common case of **one scan (or one pre-existing
-output) plus one reference at a time** -- drop more than one of either, or
-mix a pre-existing output with something to actually scan, and it either
-skips the comparison (writing the scan(s) anyway, with a clear note as to
-why) or fails outright with a GUI alert explaining the ambiguity, rather
-than guessing which files go together.
+This droplet is for the common case of **one scan (or one pre-existing/
+finished report) plus one reference at a time** -- drop more comparable
+candidates than that, or mix a ready-to-compare pair with something to
+actually scan, and it either skips the comparison (writing the scan(s)
+anyway, with a clear note as to why) or fails outright with a GUI alert
+explaining the ambiguity, rather than guessing which files go together.
 
 **Setup** is the same one-time Python environment as the plain droplet
 above (skip it if you already did that), plus:
@@ -417,15 +428,17 @@ different script and name):
 4. **File → Save**, name it `Answer Extractor - Compare`, save as an
    **Application**.
 
-**To use it:** drag either (a) the scanned bubble sheet and the reference
-spreadsheet, or (b) a spreadsheet this tool already exported and the
-reference spreadsheet, onto the app's icon together (order doesn't
-matter -- the output is always named after whichever dropped file isn't
-the reference). It writes and opens the spreadsheet the same way the
-plain droplet does, and the success notification includes a one-line
-summary (e.g. "171 questions compared: 171 match, 0 flagged mismatch, 0
-silent miss") so you know at a glance whether anything needs a second
-look before you even open the file.
+**To use it:** drag any pair from the three modes above -- (a) the scanned
+bubble sheet and a reference, (b) a spreadsheet this tool already exported
+and a reference, or (c) two already-finished reports (PDF and/or
+spreadsheet) to compare directly -- onto the app's icon together. The
+output is named after whichever dropped file isn't a spreadsheet with the
+reference tab (so for two PDFs, it's named after whichever one you dropped
+first). It writes and opens the spreadsheet the same way the plain droplet
+does, and the success notification includes a one-line summary (e.g. "171
+questions compared: 171 match, 0 flagged mismatch, 0 silent miss") so you
+know at a glance whether anything needs a second look before you even open
+the file.
 
 ## Comparing two score reports directly (`compare_cli`)
 

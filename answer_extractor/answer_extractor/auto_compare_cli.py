@@ -1,31 +1,52 @@
 """Combined entry point for the "scan + compare" macOS droplet
-(scripts/mac_droplet_compare.sh). Two ways to use it, auto-detected from
+(scripts/mac_droplet_compare.sh). Three ways to use it, auto-detected from
 whatever you drop:
 
 1. Scan + compare: a scanned bubble sheet (and/or a text-based
-   score-report PDF) together with a reference spreadsheet that has an
-   independently-scored "ScoreSheet" tab. Scans the sheet as normal, then
-   adds a "Comparison" tab checking the answers against the reference.
+   score-report PDF) together with a reference report that has an
+   independently-scored answer key -- either a spreadsheet with a
+   "ScoreSheet" tab, or a rendered ScoreSheet-style PDF (see #3 below).
+   Scans the sheet as normal, then adds a "Comparison" tab checking the
+   answers against the reference.
 
 2. Compare only: a spreadsheet this tool *already* exported (e.g. from an
-   earlier run of the plain scan droplet) together with a reference
-   spreadsheet -- no re-scanning, since the answers are already sitting in
-   that file. Just appends the "Comparison" tab to a copy of it.
+   earlier run of the plain scan droplet) together with a reference report
+   -- no re-scanning, since the answers are already sitting in that file.
+   Just appends the "Comparison" tab to a copy of it.
 
-    python -m answer_extractor.auto_compare_cli \
+3. Direct comparison: two already-finished score reports, checked directly
+   against each other with nothing to scan at all -- e.g. this pipeline's
+   own generated PDF report against a report you already had for that
+   student. Each side can independently be a rendered ScoreSheet-style PDF
+   (this pipeline's own export, or any other report using the same
+   repeated Question/Correct Answer/Your Answer/Category column-group
+   layout -- see score_report_pdf_reader.py) or a spreadsheet with a
+   "ScoreSheet" tab; a spreadsheet always plays the reference role (same
+   as modes 1-2), a PDF plays whichever role isn't already taken by a
+   spreadsheet, and with two PDFs and nothing else to disambiguate, the
+   first one given on the command line (leftmost on the Automator drop,
+   in whatever order Finder passes dropped files) is treated as "ours" and
+   the second as "reference" -- the printed summary always names which
+   file played which role, so it's never a silent guess.
+
+    python -m answer_extractor.auto_compare_cli \\
         --input sheet.pdf reference.xlsx --template ... --output out.xlsx
-    python -m answer_extractor.auto_compare_cli \
+    python -m answer_extractor.auto_compare_cli \\
         --input previous_answers.xlsx reference.xlsx --output out.xlsx
+    python -m answer_extractor.auto_compare_cli \\
+        --input our_report.pdf their_report.pdf --output out.xlsx
 
 Whichever dropped .xlsx/.xlsm file contains the reference tab (default
 "ScoreSheet") is treated as the reference; any *other* .xlsx/.xlsm is
-treated as a pre-existing output to compare without scanning; everything
-else is routed the same way answer_extractor.auto_cli routes it
-(images/PDFs auto-detected as bubble sheets vs. score reports). This is
-meant for the common one-student-at-a-time case, not batch comparison --
-more than one candidate reference, more than one pre-existing output, or
-mixing a pre-existing output with something to actually scan, is a clear
-error rather than a guess at which files pair up.
+treated as a pre-existing output to compare without scanning; a .pdf that
+parses as a ScoreSheet-shaped grid (score_report_pdf_reader.py) is a
+comparable report in its own right (see mode 3); everything else is
+routed the same way answer_extractor.auto_cli routes it (images/PDFs
+auto-detected as bubble sheets vs. text-based score reports to scan).
+This is meant for the common one-student-at-a-time case, not batch
+comparison -- more comparable candidates than a mode above can pair up,
+or mixing a comparison pair with something to actually scan, is a clear
+error rather than a guess at which files go together.
 """
 from __future__ import annotations
 
@@ -42,58 +63,122 @@ from .auto_cli import classify_inputs, scan_bubble_sheets, template_breakdown
 from .export import add_bubble_sheet_answers_sheet
 from .pipeline import SheetResult
 from .score_report_export import add_score_report_answers_sheet
+from .score_report_pdf_reader import parse_scoresheet_pdf
 from .scoresheet_check import (
     add_comparison_sheet,
     compare,
+    load_our_answers,
+    load_reference_answers,
     ours_from_results,
-    parse_program_output,
-    parse_reference_scoresheet,
     summarize,
 )
 
 _XLSX_SUFFIXES = {".xlsx", ".xlsm"}
 
 
-def _classify_xlsx(
+def _is_scoresheet_pdf(path: Path) -> bool:
+    """Whether `path` is a rendered ScoreSheet-style report (this
+    pipeline's own PDF export, or any other report using the same
+    column-group layout) -- as opposed to a text-based score-report PDF
+    meant to be scanned (e.g. a raw "Score Details" PDF, handled by
+    auto_cli.classify_inputs instead), or not a PDF this tool understands
+    at all."""
+    if path.suffix.lower() != ".pdf":
+        return False
+    try:
+        parse_scoresheet_pdf(path)
+        return True
+    except Exception:
+        return False
+
+
+def _classify_report_sources(
     paths: List[Path], reference_tab: str
-) -> Tuple[Optional[Path], List[Path], List[Path]]:
-    """Split `paths` into (the one file with `reference_tab` -- the
-    reference to compare against, or None if none of them have it, every
-    *other* .xlsx/.xlsm -- a pre-existing output of this tool's own, to be
-    compared without re-scanning, and everything else (images/PDFs/etc.,
-    handled by auto_cli.classify_inputs downstream)."""
-    references: List[Path] = []
+) -> Tuple[Optional[Path], List[Path], List[Path], List[Path]]:
+    """Split `paths` into:
+
+      - the one .xlsx/.xlsm with `reference_tab` (or None) -- always plays
+        the reference role (modes 1-3);
+      - every .pdf that parses as a ScoreSheet-shaped grid -- a comparable
+        report in its own right (mode 3), playing whichever role (ours or
+        reference) isn't already taken -- see _assign_comparison_roles;
+      - every *other* .xlsx/.xlsm -- a pre-existing output of this tool's
+        own, always plays the ours role (modes 1-2);
+      - everything else (images, text-based score-report PDFs, etc.),
+        handled by auto_cli.classify_inputs downstream.
+
+    Raises ValueError if more than one file has `reference_tab` -- that's
+    always ambiguous, regardless of what else was dropped.
+    """
+    tagged_references: List[Path] = []
+    scoresheet_pdfs: List[Path] = []
     existing_outputs: List[Path] = []
     rest: List[Path] = []
     for p in paths:
-        if p.suffix.lower() not in _XLSX_SUFFIXES:
-            rest.append(p)
-            continue
-        try:
-            wb = openpyxl.load_workbook(p, read_only=True)
-        except Exception:
-            rest.append(p)  # not a spreadsheet we can actually read -- let it fall through unchanged
-            continue
-        if reference_tab in wb.sheetnames:
-            references.append(p)
+        if p.suffix.lower() in _XLSX_SUFFIXES:
+            try:
+                wb = openpyxl.load_workbook(p, read_only=True)
+            except Exception:
+                rest.append(p)  # not a spreadsheet we can actually read -- let it fall through unchanged
+                continue
+            if reference_tab in wb.sheetnames:
+                tagged_references.append(p)
+            else:
+                existing_outputs.append(p)
+        elif _is_scoresheet_pdf(p):
+            scoresheet_pdfs.append(p)
         else:
-            existing_outputs.append(p)
+            rest.append(p)
 
-    if len(references) > 1:
+    if len(tagged_references) > 1:
         raise ValueError(
-            f"Found {len(references)} spreadsheets with a {reference_tab!r} tab "
-            f"({', '.join(p.name for p in references)}) -- drop one reference at a time."
+            f"Found {len(tagged_references)} spreadsheets with a {reference_tab!r} tab "
+            f"({', '.join(p.name for p in tagged_references)}) -- drop one reference at a time."
         )
-    reference = references[0] if references else None
-    return reference, existing_outputs, rest
+    reference = tagged_references[0] if tagged_references else None
+    return reference, scoresheet_pdfs, existing_outputs, rest
+
+
+def _assign_comparison_roles(
+    tagged_reference: Optional[Path], scoresheet_pdfs: List[Path], existing_outputs: List[Path]
+) -> Optional[Tuple[Path, Path]]:
+    """Decide which two files (if any) form a direct ours/reference pair
+    that needs no scanning at all -- returns (ours_path, reference_path),
+    or None if there isn't exactly one such pair. A spreadsheet's role is
+    fixed by which bucket it's already in (a `reference_tab` spreadsheet
+    is always the reference, any other spreadsheet is always ours -- same
+    convention modes 1-2 have always used); a ScoreSheet-shaped PDF takes
+    whichever role isn't already spoken for. Raises ValueError if there
+    are more comparable candidates than a single pair can resolve (e.g.
+    two PDFs *and* a tagged reference spreadsheet)."""
+    candidates = ([tagged_reference] if tagged_reference else []) + scoresheet_pdfs + existing_outputs
+    if len(candidates) > 2:
+        raise ValueError(
+            f"Found {len(candidates)} comparable score reports among the dropped files "
+            f"({', '.join(p.name for p in candidates)}) -- drop at most two (an \"ours\" side "
+            "and a reference) at a time, so it's clear which two go together."
+        )
+    if len(candidates) < 2:
+        return None
+
+    if tagged_reference and existing_outputs:
+        return existing_outputs[0], tagged_reference
+    if tagged_reference and scoresheet_pdfs:
+        return scoresheet_pdfs[0], tagged_reference
+    if existing_outputs and scoresheet_pdfs:
+        return existing_outputs[0], scoresheet_pdfs[0]
+    # Only remaining way to reach exactly 2 candidates: two ScoreSheet PDFs
+    # and nothing else -- order given on the command line decides, and the
+    # caller always prints which file played which role.
+    return scoresheet_pdfs[0], scoresheet_pdfs[1]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Extract answers from a scanned bubble sheet and/or score-report PDFs (or reuse a "
-            "spreadsheet this tool already exported), and if a reference spreadsheet was dropped "
-            "too, compare the bubble-sheet answers against it."
+            "spreadsheet this tool already exported), and if a reference report was dropped too "
+            "(a spreadsheet or a rendered ScoreSheet-style PDF), compare the answers against it."
         )
     )
     parser.add_argument(
@@ -136,13 +221,53 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        reference_path, existing_output_paths, remaining_paths = _classify_xlsx(
+        reference_path, scoresheet_pdf_paths, existing_output_paths, remaining_paths = _classify_report_sources(
             input_paths, args.reference_tab
         )
+        direct_pair = _assign_comparison_roles(reference_path, scoresheet_pdf_paths, existing_output_paths)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     bubble_paths, score_rows = classify_inputs(remaining_paths)
+
+    if direct_pair and (bubble_paths or score_rows):
+        ours_name, reference_name = direct_pair[0].name, direct_pair[1].name
+        print(
+            f"Found both something to scan and a ready-to-compare pair ({ours_name} vs "
+            f"{reference_name}) among the dropped files -- drop one or the other, not both, "
+            "so it's clear whether to scan or just compare.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if direct_pair:
+        # Mode 2/3: nothing to scan -- both sides are already-finished
+        # reports (spreadsheets and/or ScoreSheet-shaped PDFs), compared
+        # directly. load_our_answers/load_reference_answers each pick the
+        # right parser by file extension (scoresheet_check.py).
+        ours_path, reference_path_final = direct_pair
+        reference = load_reference_answers(reference_path_final, sheet_name=args.reference_tab)
+        ours = load_our_answers(ours_path)
+        rows = compare(reference, ours)
+
+        if ours_path.suffix.lower() in _XLSX_SUFFIXES:
+            # Mode 2: the "ours" side is a pre-existing export of this
+            # tool's own -- append the Comparison tab to a copy of it, so
+            # its own answer tab(s) are carried over untouched.
+            wb = openpyxl.load_workbook(ours_path)
+        else:
+            # Mode 3: the "ours" side is a PDF, with no answer tab of its
+            # own to carry over -- the output is just the Comparison tab.
+            wb = Workbook()
+            del wb["Sheet"]
+        add_comparison_sheet(wb, rows)
+        wb.save(args.output)
+        print(
+            f"Wrote {args.output}: compared {ours_path.name} (ours) against "
+            f"{reference_path_final.name} (reference)."
+        )
+        print(summarize(rows))
+        return 0
 
     if existing_output_paths and (bubble_paths or score_rows):
         print(
@@ -154,35 +279,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if existing_output_paths:
-        if len(existing_output_paths) > 1:
-            print(
-                f"Found {len(existing_output_paths)} spreadsheets that aren't the reference "
-                f"({', '.join(p.name for p in existing_output_paths)}) -- drop just one previously "
-                "exported results file at a time.",
-                file=sys.stderr,
-            )
-            return 1
-        if reference_path is None:
-            print(
-                f"Found {existing_output_paths[0].name} but no reference spreadsheet (a "
-                f"{args.reference_tab!r} tab) to compare it against.",
-                file=sys.stderr,
-            )
-            return 1
+        print(
+            f"Found {existing_output_paths[0].name} but no reference report (a spreadsheet with a "
+            f"{args.reference_tab!r} tab, or a ScoreSheet-shaped PDF) to compare it against.",
+            file=sys.stderr,
+        )
+        return 1
 
-        # Compare-only mode: the answers are already sitting in this file
-        # from an earlier scan -- reuse its own tab(s) as-is (no
-        # re-scanning) and just append a Comparison tab to a copy of it.
-        existing_path = existing_output_paths[0]
-        wb = openpyxl.load_workbook(existing_path)
-        ours = parse_program_output(existing_path)
-        reference = parse_reference_scoresheet(reference_path, sheet_name=args.reference_tab)
-        rows = compare(reference, ours)
-        add_comparison_sheet(wb, rows)
-        wb.save(args.output)
-        print(f"Wrote {args.output}: compared {existing_path.name} against {reference_path.name}.")
-        print(summarize(rows))
-        return 0
+    if scoresheet_pdf_paths and not (bubble_paths or score_rows):
+        names = ", ".join(p.name for p in scoresheet_pdf_paths)
+        print(
+            f"Found a ScoreSheet-shaped PDF ({names}) but nothing to compare it against.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not bubble_paths and not score_rows:
         print(
@@ -216,23 +326,26 @@ def main(argv: list[str] | None = None) -> int:
         print("No answers could be extracted from the given input.", file=sys.stderr)
         return 1
 
+    # Mode 1: scan + compare -- reference_path (a tagged spreadsheet) or a
+    # lone ScoreSheet-shaped PDF can each serve as the reference here.
+    reference_side = reference_path or (scoresheet_pdf_paths[0] if scoresheet_pdf_paths else None)
     comparison_summary = None
-    if reference_path is not None:
+    if reference_side is not None:
         if len(bubble_results) != 1:
             print(
-                f"Found a reference spreadsheet ({reference_path.name}) but "
+                f"Found a reference report ({reference_side.name}) but "
                 f"{len(bubble_results)} scanned bubble sheet(s) -- drop exactly one bubble "
                 "sheet alongside a reference so the pairing isn't ambiguous. Wrote the scan(s) "
                 "without a comparison.",
                 file=sys.stderr,
             )
         else:
-            reference = parse_reference_scoresheet(reference_path, sheet_name=args.reference_tab)
+            reference = load_reference_answers(reference_side, sheet_name=args.reference_tab)
             ours = ours_from_results(bubble_results[0].questions)
             rows = compare(reference, ours)
             add_comparison_sheet(wb, rows)
             comparison_summary = summarize(rows)
-            summary_parts.append(f"compared against {reference_path.name}")
+            summary_parts.append(f"compared against {reference_side.name}")
 
     wb.save(args.output)
     print(f"Wrote {args.output}: {'; '.join(summary_parts)}.")

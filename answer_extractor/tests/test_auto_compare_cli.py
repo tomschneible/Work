@@ -1,5 +1,8 @@
+import os
+
 import cv2
 import openpyxl
+import pytest
 from openpyxl import load_workbook
 
 from answer_extractor.auto_compare_cli import main
@@ -7,7 +10,13 @@ from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
 from answer_extractor.template import Template
+from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Block, Row, write_scoresheet_pdf
 from tests.synth import render_sheet
+
+pdf_pytestmark = pytest.mark.skipif(
+    not os.path.exists(MARK_FONT_PATH),
+    reason=f"synthetic PDF fixtures need a Unicode-capable font at {MARK_FONT_PATH} (fonts-dejavu-core)",
+)
 
 _TEMPLATE_YAML = """
 page:
@@ -247,6 +256,173 @@ def test_existing_output_without_a_reference_is_an_error(tmp_path):
 
     output_path = tmp_path / "out.xlsx"
     exit_code = main(["--input", str(existing_path), "--output", str(output_path)])
+
+    assert exit_code == 1
+    assert not output_path.exists()
+
+
+def _write_scoresheet_pdf(path, english_rows):
+    """english_rows: list of (question, correct, your_answer) tuples."""
+    write_scoresheet_pdf(
+        path,
+        [
+            Block("English", "Math", [
+                [Row(q, correct, yours) for q, correct, yours in english_rows],
+                [Row(1, "F", "F")],
+            ]),
+        ],
+    )
+
+
+@pdf_pytestmark
+def test_two_scoresheet_pdfs_compare_directly_first_as_ours(tmp_path):
+    """No spreadsheet at all -- the two PDFs pair up directly, first given
+    on the command line as "ours", second as "reference"."""
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "their_report.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F"), (2, "A", "B")])  # Q2: silent miss if B differs
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F"), (2, "A", "A")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Comparison"]  # no scan tab -- neither side was scanned
+    by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_key[("English", 1)][4] == "✔"
+    assert by_key[("English", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_existing_output_plus_scoresheet_pdf_compares_without_rescanning(tmp_path):
+    """A pre-existing export (always "ours" -- same convention as the
+    xlsx-vs-xlsx compare-only mode) paired with a lone ScoreSheet PDF,
+    which then plays the reference role by elimination."""
+    existing_path = tmp_path / "prior_scan_answers.xlsx"
+    _write_existing_output(existing_path)  # English 1=F, 2=A, 3=blank
+
+    reference_path = tmp_path / "reference.pdf"
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F"), (2, "A", "B"), (3, "C", None)])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(existing_path), str(reference_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert "Comparison" in wb.sheetnames
+    assert "prior_scan" in wb.sheetnames  # the original tab is carried over untouched
+    by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_key[("English", 1)][4] == "✔"
+    assert by_key[("English", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_tagged_reference_xlsx_plus_scoresheet_pdf_uses_the_pdf_as_ours(tmp_path):
+    """The tagged spreadsheet always plays reference; a lone PDF alongside
+    it plays ours by elimination -- no scanning involved."""
+    ours_path = tmp_path / "our_report.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F"), (2, "A", "B")])
+
+    reference_path = tmp_path / "reference.xlsx"
+    write_reference(reference_path, [(1, "F", "F", "✔"), (2, "A", "A", "✔")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_key[("English", 1)][4] == "✔"
+    assert by_key[("English", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_scan_plus_scoresheet_pdf_reference_adds_a_comparison_tab(tmp_path):
+    """A lone ScoreSheet-shaped PDF can serve as the reference for an
+    actual scan too, same as a tagged spreadsheet always could."""
+    template_path = make_template_yaml(tmp_path)
+    template = Template.from_yaml(template_path)
+    image_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(image_path), render_sheet(template, {1: ["F"], 2: ["A"], 3: []}))
+
+    reference_path = tmp_path / "reference.pdf"
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F"), (2, "A", "B"), (3, "C", None)])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(
+        [
+            "--input",
+            str(image_path),
+            str(reference_path),
+            "--template",
+            str(template_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert "Comparison" in wb.sheetnames
+    assert "sheet" in wb.sheetnames
+
+
+@pdf_pytestmark
+def test_too_many_comparable_candidates_is_an_error(tmp_path):
+    pdf_a = tmp_path / "a.pdf"
+    pdf_b = tmp_path / "b.pdf"
+    _write_scoresheet_pdf(pdf_a, [(1, "F", "F")])
+    _write_scoresheet_pdf(pdf_b, [(1, "F", "F")])
+    reference_path = tmp_path / "reference.xlsx"
+    write_reference(reference_path, [(1, "F", "F", "✔")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(
+        ["--input", str(pdf_a), str(pdf_b), str(reference_path), "--output", str(output_path)]
+    )
+
+    assert exit_code == 1
+    assert not output_path.exists()
+
+
+@pdf_pytestmark
+def test_lone_scoresheet_pdf_with_nothing_else_is_an_error(tmp_path):
+    pdf_path = tmp_path / "reference.pdf"
+    _write_scoresheet_pdf(pdf_path, [(1, "F", "F")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(pdf_path), "--output", str(output_path)])
+
+    assert exit_code == 1
+    assert not output_path.exists()
+
+
+@pdf_pytestmark
+def test_comparison_pair_plus_something_to_scan_is_ambiguous(tmp_path):
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "their_report.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+
+    template_path = make_template_yaml(tmp_path)
+    template = Template.from_yaml(template_path)
+    image_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(image_path), render_sheet(template, {1: ["F"]}))
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(
+        [
+            "--input",
+            str(ours_path),
+            str(reference_path),
+            str(image_path),
+            "--template",
+            str(template_path),
+            "--output",
+            str(output_path),
+        ]
+    )
 
     assert exit_code == 1
     assert not output_path.exists()
