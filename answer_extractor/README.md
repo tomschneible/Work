@@ -281,23 +281,28 @@ worked, or to look around the folder tree while debugging.
 
    ```bash
    python -m answer_extractor.google_sheets_cli hide-gridlines --file-id <template file id>
+   # or several at once, rather than editing and re-running this per file:
+   python -m answer_extractor.google_sheets_cli hide-gridlines --file-id <id one> <id two> <id three>
    ```
 
    which turns off every sheet's gridlines via one Sheets API metadata
-   change (`google_sheets_export.hide_gridlines`) -- no file conversion
-   involved at all, and nothing else about the file is touched. An
-   earlier version of this command instead downloaded the template as
-   `.xlsx`, edited it locally, and re-uploaded the whole thing (the same
-   round-trip step 3 above moved away from) -- confirmed live that doing
-   this to a *template* file directly is exactly as unsafe as it was for
-   a per-report copy: it corrupted the org's own live "ACT 25MC1"
-   template the one time it was tried, recovered only via Sheets' own
-   version history (File → Version history → See version history →
-   restore the version from just before). `hide-gridlines` never touches
-   `.xlsx` at all, so that failure mode doesn't apply to it. Run it once
-   per already-duplicated template that needs it, and once more against a
-   master template before duplicating it for a new test code so every
-   future duplicate inherits the fix.
+   change per file (`google_sheets_export.hide_gridlines`) -- no file
+   conversion involved at all, and nothing else about the file is
+   touched. An earlier version of this command instead downloaded the
+   template as `.xlsx`, edited it locally, and re-uploaded the whole
+   thing (the same round-trip step 3 above moved away from) -- confirmed
+   live that doing this to a *template* file directly is exactly as
+   unsafe as it was for a per-report copy: it corrupted the org's own
+   live "ACT 25MC1" template the one time it was tried, recovered only
+   via Sheets' own version history (File → Version history → See version
+   history → restore the version from just before). `hide-gridlines`
+   never touches `.xlsx` at all, so that failure mode doesn't apply to
+   it. Run it once per already-duplicated template that needs it, and
+   once more against a master template before duplicating it for a new
+   test code so every future duplicate inherits the fix. Given several
+   ids at once, one file's failure is reported and skipped rather than
+   stopping the rest -- check the output for any "Warning: couldn't hide
+   gridlines on ..." lines.
 4. **What ACT flags, SAT prompts for.** A blank or MULTIPLE-marked bubble
    always comes through as blank on an ACT report -- never a guessed
    answer. If the sheet has any review items at all (blank/MULTIPLE/

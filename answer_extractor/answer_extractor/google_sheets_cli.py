@@ -29,9 +29,13 @@ jobs, deliberately combined into one command you run locally:
      template that needs it -- and once more against a master template
      before duplicating it for a new test code, so every future
      duplicate inherits the fix; an already-duplicated template still
-     needs its own run.
+     needs its own run. Takes one or more --file-id values so a whole
+     batch of templates can be fixed in one command instead of editing
+     and re-running this once per file; one file's failure (e.g. a typo'd
+     id) is reported and skipped rather than stopping the rest.
 
     python -m answer_extractor.google_sheets_cli hide-gridlines --file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
+    python -m answer_extractor.google_sheets_cli hide-gridlines --file-id ID_ONE ID_TWO ID_THREE
 
 The folder/file id is the long token in a Drive URL:
 https://drive.google.com/drive/folders/<this part>?usp=drive_link
@@ -58,7 +62,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Turn off a template file's gridlines directly, via a Sheets API metadata change only",
     )
     hide_gridlines_parser.add_argument(
-        "--file-id", required=True, help="Drive file id of the template to fix directly (not a copy)"
+        "--file-id",
+        required=True,
+        nargs="+",
+        help="One or more Drive file ids of the templates to fix directly (not copies)",
     )
 
     args = parser.parse_args(argv)
@@ -75,9 +82,18 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "hide-gridlines":
         _drive, sheets = build_services()
-        hide_gridlines(sheets, args.file_id)
-        print(f"Hid gridlines on every sheet of {args.file_id}.")
-        return 0
+        failures = 0
+        for file_id in args.file_id:
+            try:
+                hide_gridlines(sheets, file_id)
+            except Exception as exc:
+                failures += 1
+                print(f"Warning: couldn't hide gridlines on {file_id}: {exc}", file=sys.stderr)
+            else:
+                print(f"Hid gridlines on every sheet of {file_id}.")
+        if len(args.file_id) > 1:
+            print(f"{len(args.file_id) - failures}/{len(args.file_id)} succeeded.")
+        return 1 if failures else 0
 
     return 1
 
