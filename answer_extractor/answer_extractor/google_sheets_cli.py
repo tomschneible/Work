@@ -16,20 +16,22 @@ jobs, deliberately combined into one command you run locally:
 
     python -m answer_extractor.google_sheets_cli list-folder --folder-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
 
-  3. Fix a template file's own print settings directly (gridlines
-     showing, and/or a blank/gridline-covered page below a tab's real
-     content when exported to PDF -- see
-     google_sheets_export.tighten_print_areas) -- a rare, deliberate
-     one-time maintenance operation on the template itself, not
-     something the per-report export pipeline does any more (see
-     google_sheets_export.py's own module docstring for why editing and
-     re-uploading a whole workbook turned out to be unsafe for per-report
-     generation). Run this once per template that needs it -- and once
-     more against a master template before duplicating it for a new test
-     code, so every future duplicate inherits the fix; an
-     already-duplicated template still needs its own run.
+  3. Turn off a template file's own gridlines directly, via
+     google_sheets_export.hide_gridlines -- a pure Sheets API metadata
+     change (no file conversion, nothing else on the file touched at
+     all) -- a rare, deliberate one-time maintenance operation on the
+     template itself, not something the per-report export pipeline does
+     any more. An earlier version of this command instead downloaded the
+     template as .xlsx, edited it locally, and re-uploaded the whole
+     thing -- confirmed live that this corrupted the one real template it
+     was tried against (recovered only via Sheets' own version history)
+     -- so this never touches .xlsx at all any more. Run this once per
+     template that needs it -- and once more against a master template
+     before duplicating it for a new test code, so every future
+     duplicate inherits the fix; an already-duplicated template still
+     needs its own run.
 
-    python -m answer_extractor.google_sheets_cli tighten-print-area --file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
+    python -m answer_extractor.google_sheets_cli hide-gridlines --file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
 
 The folder/file id is the long token in a Drive URL:
 https://drive.google.com/drive/folders/<this part>?usp=drive_link
@@ -38,14 +40,10 @@ https://docs.google.com/spreadsheets/d/<this part>/edit
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-import tempfile
 from typing import List, Optional
 
-import openpyxl
-
-from .google_sheets_export import build_services, export_xlsx, list_folder, replace_content, tighten_print_areas
+from .google_sheets_export import build_services, hide_gridlines, list_folder
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -55,11 +53,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     list_parser = subparsers.add_parser("list-folder", help="List every file in a Drive folder")
     list_parser.add_argument("--folder-id", required=True, help="Drive folder id, from its URL")
 
-    tighten_parser = subparsers.add_parser(
-        "tighten-print-area",
-        help="Fix a template file's own print area/gridlines directly (see tighten_print_areas)",
+    hide_gridlines_parser = subparsers.add_parser(
+        "hide-gridlines",
+        help="Turn off a template file's gridlines directly, via a Sheets API metadata change only",
     )
-    tighten_parser.add_argument(
+    hide_gridlines_parser.add_argument(
         "--file-id", required=True, help="Drive file id of the template to fix directly (not a copy)"
     )
 
@@ -75,20 +73,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"{f['id']}  {f['mimeType']:<45}  {f['name']}")
         return 0
 
-    if args.command == "tighten-print-area":
-        drive, _sheets = build_services()
-        fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
-        os.close(fd)
-        try:
-            with open(tmp_path, "wb") as f:
-                f.write(export_xlsx(drive, args.file_id))
-            wb = openpyxl.load_workbook(tmp_path)
-            tighten_print_areas(wb)
-            wb.save(tmp_path)
-            replace_content(drive, args.file_id, tmp_path)
-        finally:
-            os.unlink(tmp_path)
-        print(f"Tightened print areas on {args.file_id} and pushed the fix back.")
+    if args.command == "hide-gridlines":
+        _drive, sheets = build_services()
+        hide_gridlines(sheets, args.file_id)
+        print(f"Hid gridlines on every sheet of {args.file_id}.")
         return 0
 
     return 1

@@ -29,11 +29,18 @@ values().batchUpdate -- every other tab (Cover Page, Student Report,
 Content, ...), most of which are populated by formulas referencing the
 answer tab anyway, is never re-converted through .xlsx at all, so nothing
 about their own formatting is ever at risk from this pipeline again.
-replace_content is kept for the one thing that still needs a full-file
-overwrite: fixing a template's own cover-tab print settings directly
-(see google_sheets_cli's `tighten-print-area` command), a rare,
-deliberate one-time maintenance operation on the template itself rather
-than something done for every generated report.
+
+replace_content itself is kept here only as a thin, generically correct
+wrapper -- nothing in this codebase calls it any more. A template's own
+gridlines get turned off via hide_gridlines instead (a direct Sheets API
+metadata change, no file conversion involved at all): confirmed live the
+hard way that pointing the xlsx round-trip at a *template* file directly
+(via replace_content) is exactly as unsafe as it was for a per-report
+copy -- it corrupted the org's own live "ACT 25MC1" template's Cover Page
+the one time it was tried, recovered only via Sheets' own version
+history. Don't reach for replace_content to fix a template's formatting;
+extend hide_gridlines's approach (a targeted batchUpdate request) instead
+of reintroducing an xlsx round-trip anywhere in this codebase.
 
 Deliberately thin wrappers around the official googleapiclient calls
 rather than a bigger abstraction: there's no meaningful behavior to
@@ -53,7 +60,6 @@ from typing import Dict, List, Optional, Sequence, Union
 from googleapiclient.discovery import Resource, build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from openpyxl.utils import get_column_letter
-from openpyxl.workbook import Workbook
 
 from .google_auth import get_credentials
 
@@ -181,10 +187,14 @@ def replace_content(drive: Resource, file_id: str, local_xlsx_path: str) -> None
     """Overwrite the Sheets file at `file_id` with the contents of a local
     .xlsx -- Drive converts it to native Sheets format on upload, the same
     conversion Google Sheets' own File > Import > Replace spreadsheet
-    does. Not used for per-report generation any more (see this module's
-    own docstring) -- kept for the rare, deliberate case of overwriting a
-    template file itself (e.g. google_sheets_cli's `tighten-print-area`
-    command)."""
+    does. Nothing in this codebase calls this any more (see this
+    module's own docstring): confirmed live that pointing it at a
+    template file directly doesn't reconstruct that file's own
+    formatting with full fidelity, corrupting a real template the one
+    time this was tried for template maintenance. Kept only as a thin,
+    correct wrapper -- don't reach for this to fix a template's
+    formatting; use a targeted Sheets API batchUpdate (see
+    hide_gridlines) instead."""
     media = MediaFileUpload(local_xlsx_path, mimetype=_XLSX_MIME_TYPE)
     drive.files().update(fileId=file_id, media_body=media, supportsAllDrives=True).execute()
 
@@ -232,34 +242,38 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
     ).execute()
 
 
-def tighten_print_areas(wb: Workbook) -> None:
-    """Give every sheet in `wb` that doesn't already have one an explicit
-    print area matching its own real content (openpyxl's own
-    `dimensions`, unaffected by stray explicit row-height formatting some
-    tabs carry out to row 1000 even though their actual content ends far
-    short of that) and turn off its gridlines.
+def hide_gridlines(sheets: Resource, spreadsheet_id: str) -> None:
+    """Turn off gridlines on every sheet of `spreadsheet_id` that doesn't
+    already have them off, via one Sheets API `batchUpdate` setting each
+    sheet's own `gridProperties.hideGridlines` directly -- a pure
+    metadata change, no file conversion involved at all (see this
+    module's own docstring on why an xlsx round-trip -- download, edit,
+    re-upload -- was tried for this instead and confirmed live to
+    corrupt a template it was pointed at directly, the same failure mode
+    already ruled out for per-report generation).
 
-    A sheet with no print area set exports (both a manual Download-as-PDF
-    and export_pdf go through the same underlying conversion) with
-    everything up to its highest-numbered row that carries any
-    formatting at all -- for a tab like this org's own "Cover Page",
-    whose real content is a few dozen rows but whose row-height
-    formatting extends to row 1000, that's most of a page of blank,
-    gridline-covered space below the actual header block. Confirmed live
-    against a real template.
-
-    Not used for per-report generation (see this module's own docstring
-    on why editing/re-uploading a whole workbook turned out to be unsafe)
-    -- meant for a rare, deliberate one-time fix applied directly to a
-    template file itself, via google_sheets_cli's `tighten-print-area`
-    command: download the template as .xlsx, call this, then
-    replace_content it back onto the *same* file id (never a copy). A
-    sheet that already has its own print area is left alone, so a
-    template that's been deliberately configured some other way isn't
-    second-guessed.
+    Meant for a deliberate one-time fix applied directly to a template
+    file itself, via google_sheets_cli's `hide-gridlines` command -- not
+    used by per-report generation. A no-op (no API call at all) if every
+    sheet already has gridlines hidden.
     """
-    for ws in wb.worksheets:
-        if ws.print_area:
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    requests = []
+    for sheet in meta.get("sheets", []):
+        properties = sheet["properties"]
+        if properties.get("gridProperties", {}).get("hideGridlines"):
             continue
-        ws.print_area = ws.dimensions
-        ws.sheet_view.showGridLines = False
+        requests.append(
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": properties["sheetId"],
+                        "gridProperties": {"hideGridlines": True},
+                    },
+                    "fields": "gridProperties.hideGridlines",
+                }
+            }
+        )
+    if not requests:
+        return
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()

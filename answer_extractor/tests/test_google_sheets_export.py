@@ -6,8 +6,6 @@ real network call."""
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
-from openpyxl import Workbook
-
 from answer_extractor.google_sheets_export import (
     CellWrite,
     copy_template,
@@ -15,9 +13,9 @@ from answer_extractor.google_sheets_export import (
     export_pdf,
     export_xlsx,
     format_date_for_sheets,
+    hide_gridlines,
     list_folder,
     replace_content,
-    tighten_print_areas,
     write_cells,
 )
 
@@ -205,33 +203,61 @@ def test_write_cells_is_a_no_op_for_an_empty_list():
     sheets.spreadsheets.assert_not_called()
 
 
-def test_tighten_print_areas_bounds_an_untouched_sheet_to_its_real_content():
-    """The bug confirmed live: a sheet whose real content is a small,
-    bounded range (like this org's own "Cover Page" tab) but which
-    carries stray row-height formatting out to row 1000 and no print
-    area of its own exports with all ~1000 rows -- mostly blank,
-    gridline-covered space below the real content."""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Cover Page"
-    ws["B7"] = "NAME:"
-    ws["C7"] = "Jane Student"
-    for row in range(1, 1000):
-        ws.row_dimensions[row].height = 15.75  # the stray formatting itself
+def test_hide_gridlines_updates_every_sheet_that_still_has_them_showing():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 111, "title": "Cover Page", "gridProperties": {}}},
+            {"properties": {"sheetId": 222, "title": "ScoreSheet", "gridProperties": {"hideGridlines": False}}},
+        ]
+    }
 
-    tighten_print_areas(wb)
+    hide_gridlines(sheets, "SPREADSHEET_ID")
 
-    assert ws.print_area == "'Cover Page'!$B$7:$C$7"
-    assert ws.sheet_view.showGridLines is False
+    sheets.spreadsheets.return_value.get.assert_called_once_with(
+        spreadsheetId="SPREADSHEET_ID", fields="sheets.properties"
+    )
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert kwargs["body"]["requests"] == [
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": 111, "gridProperties": {"hideGridlines": True}},
+                "fields": "gridProperties.hideGridlines",
+            }
+        },
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": 222, "gridProperties": {"hideGridlines": True}},
+                "fields": "gridProperties.hideGridlines",
+            }
+        },
+    ]
+    sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
 
 
-def test_tighten_print_areas_leaves_a_sheet_with_its_own_print_area_alone():
-    wb = Workbook()
-    ws = wb.active
-    ws["A1"] = "content"
-    ws.print_area = "A1:Z50"  # deliberately configured some other way
-    configured = ws.print_area  # openpyxl normalizes this on assignment
+def test_hide_gridlines_skips_a_sheet_that_already_has_them_hidden():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "gridProperties": {"hideGridlines": True}}}]
+    }
 
-    tighten_print_areas(wb)
+    hide_gridlines(sheets, "SPREADSHEET_ID")
 
-    assert ws.print_area == configured
+    sheets.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
+def test_hide_gridlines_makes_no_batch_update_call_when_nothing_needs_changing():
+    """Every sheet already has gridlines hidden -- a no-op, not even an
+    empty batchUpdate request."""
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 111, "gridProperties": {"hideGridlines": True}}},
+            {"properties": {"sheetId": 222, "gridProperties": {"hideGridlines": True}}},
+        ]
+    }
+
+    hide_gridlines(sheets, "SPREADSHEET_ID")
+
+    assert not sheets.spreadsheets.return_value.batchUpdate.called

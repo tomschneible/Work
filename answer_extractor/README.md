@@ -150,7 +150,7 @@ then exported as a PDF -- so the final artifact looks exactly like the
 score reports you already produce by hand from that template, honoring
 whatever print setup (page range, layout) is already saved on the
 template (see "The template is filled in" below for how a template's own
-print area gets fixed once, directly, if it needs it). Anything not wired
+gridlines get fixed once, directly, if it needs it). Anything not wired
 to this path (an unidentified/unrecognized input, or any bubble sheet
 when `--template` forces a fixed one) still goes into the combined
 `.xlsx`, same as always.
@@ -274,24 +274,30 @@ worked, or to look around the folder tree while debugging.
    (`google_score_report_export.export_score_report`,
    `google_sat_score_report_export.export_sat_score_report`).
 
-   A template's own gridlines-showing / undersized-print-area problem
-   (a tab whose real content is a few dozen rows but whose row-height
-   formatting extends to row 1000 with no print area set exports with
-   mostly blank, gridline-covered space below the real content) is a
+   A template's own gridlines showing up in its exported PDF is a
    property of the template file itself, not something a per-report fill
    introduces or can silently fix any more, now that per-report filling
    never re-uploads a workbook -- fix it directly, once, with:
 
    ```bash
-   python -m answer_extractor.google_sheets_cli tighten-print-area --file-id <template file id>
+   python -m answer_extractor.google_sheets_cli hide-gridlines --file-id <template file id>
    ```
 
-   which downloads that one file, tightens every sheet's print area and
-   turns off gridlines (`google_sheets_export.tighten_print_areas`), and
-   pushes the fix back onto the *same* file id (never a copy). Run it
-   once per already-duplicated template that needs it, and once more
-   against a master template before duplicating it for a new test code so
-   every future duplicate inherits the fix.
+   which turns off every sheet's gridlines via one Sheets API metadata
+   change (`google_sheets_export.hide_gridlines`) -- no file conversion
+   involved at all, and nothing else about the file is touched. An
+   earlier version of this command instead downloaded the template as
+   `.xlsx`, edited it locally, and re-uploaded the whole thing (the same
+   round-trip step 3 above moved away from) -- confirmed live that doing
+   this to a *template* file directly is exactly as unsafe as it was for
+   a per-report copy: it corrupted the org's own live "ACT 25MC1"
+   template the one time it was tried, recovered only via Sheets' own
+   version history (File → Version history → See version history →
+   restore the version from just before). `hide-gridlines` never touches
+   `.xlsx` at all, so that failure mode doesn't apply to it. Run it once
+   per already-duplicated template that needs it, and once more against a
+   master template before duplicating it for a new test code so every
+   future duplicate inherits the fix.
 4. **What ACT flags, SAT prompts for.** A blank or MULTIPLE-marked bubble
    always comes through as blank on an ACT report -- never a guessed
    answer. If the sheet has any review items at all (blank/MULTIPLE/
