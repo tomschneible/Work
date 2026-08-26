@@ -19,8 +19,21 @@ from typing import Callable, List, Optional
 from openpyxl.workbook import Workbook
 from googleapiclient.discovery import Resource
 
+from googleapiclient.errors import HttpError
+
 from .google_sheets_export import copy_template, delete_file, export_pdf, export_xlsx, replace_content
 from .template_lookup import find_template_file, resolve_template_folder
+
+
+def _cleanup_delete_is_actionable(exc: Exception) -> bool:
+    """False for a delete failure that means there's nothing left to warn
+    about: a 404 says Drive no longer has this file at all (already
+    deleted -- by something else, a retention policy on the org's
+    "Temporary Files" folder, or occasional Shared Drive eventual
+    consistency -- not "still there and this call couldn't remove it").
+    True for anything else (e.g. a permission error), where the working
+    copy plausibly *is* still sitting there and a person should know."""
+    return not (isinstance(exc, HttpError) and exc.status_code == 404)
 
 
 def export_filled_report(
@@ -56,9 +69,11 @@ def export_filled_report(
     doesn't have this property -- a delete failure there replaces
     whatever real exception was already propagating, hiding it); if the
     sequence succeeded, a delete failure is logged to stderr rather than
-    thrown away the PDF this already-successful call obtained -- worst
-    case is a stray copy left in `temp_folder_id` for someone to clean up
-    by hand, not a lost report. The local temp file used for the same
+    thrown away the PDF this already-successful call obtained -- unless
+    it's a 404, which means the file's already gone (by something else --
+    a retention policy on `temp_folder_id`, or occasional Shared Drive
+    eventual consistency) and there's nothing left to warn about (see
+    _cleanup_delete_is_actionable). The local temp file used for the same
     purpose is likewise always cleaned up (and can't mask anything the
     same way, since nothing downstream of it depends on its content).
     """
@@ -85,11 +100,13 @@ def export_filled_report(
         try:
             delete_file(drive, copy_id)
         except Exception as exc:
-            print(
-                f"Warning: {output_name}'s report exported fine, but couldn't clean up its "
-                f"working Drive copy (id {copy_id}): {exc}",
-                file=sys.stderr,
-            )
+            if _cleanup_delete_is_actionable(exc):
+                print(
+                    f"Warning: {output_name}'s report exported fine, but couldn't clean up its "
+                    f"working Drive copy (id {copy_id}): {exc}",
+                    file=sys.stderr,
+                )
+            # else: already gone -- nothing left to clean up, nothing to warn about.
         return pdf_bytes
     finally:
         os.unlink(tmp_path)

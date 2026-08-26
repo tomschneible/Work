@@ -7,11 +7,17 @@ the downloaded local path, and always cleans up the working Drive copy
 and local temp file -- including when a later step fails."""
 from unittest.mock import MagicMock, patch
 
+import httplib2
 import pytest
+from googleapiclient.errors import HttpError
 
 from answer_extractor.google_report_export_common import export_filled_report
 
 _MODULE = "answer_extractor.google_report_export_common"
+
+
+def _http_error(status: int) -> HttpError:
+    return HttpError(httplib2.Response({"status": str(status)}), b'{"error": {"message": "nope"}}')
 
 
 def _patch_all(**overrides):
@@ -118,8 +124,10 @@ def test_export_filled_report_returns_the_pdf_even_if_cleanup_afterward_fails(ca
     """The fill/export sequence itself fully succeeded -- a delete failure
     on the now-unneeded working copy must not throw away that already-
     obtained PDF (previously it did: a plain `finally: delete_file(...)`
-    raising there replaced the successful return entirely)."""
-    mocks, patchers = _patch_all(delete_file=MagicMock(side_effect=RuntimeError("404 not found")))
+    raising there replaced the successful return entirely). A non-404
+    delete failure (here, a permission error) plausibly means the copy is
+    still sitting there, so it's still worth a warning."""
+    mocks, patchers = _patch_all(delete_file=MagicMock(side_effect=_http_error(403)))
     try:
         result = export_filled_report(
             drive=MagicMock(),
@@ -134,6 +142,28 @@ def test_export_filled_report_returns_the_pdf_even_if_cleanup_afterward_fails(ca
 
     assert result == b"%PDF-final"
     assert "couldn't clean up" in capsys.readouterr().err
+
+
+def test_export_filled_report_returns_the_pdf_silently_if_the_copy_is_already_gone(capsys):
+    """A 404 on the cleanup delete means Drive no longer has the working
+    copy at all -- already gone (by something else -- a retention policy,
+    Shared Drive eventual consistency, ...), nothing left to clean up or
+    warn about."""
+    mocks, patchers = _patch_all(delete_file=MagicMock(side_effect=_http_error(404)))
+    try:
+        result = export_filled_report(
+            drive=MagicMock(),
+            templates_root_folder_id="ROOT",
+            category_path=["SAT"],
+            test_code="1234",
+            output_name="Jane Student",
+            fill_fn=MagicMock(return_value=MagicMock()),
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert result == b"%PDF-final"
+    assert capsys.readouterr().err == ""
 
 
 def test_export_filled_report_preserves_the_real_error_when_cleanup_also_fails():
