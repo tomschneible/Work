@@ -129,9 +129,9 @@ class SatBlock:
 def _scan_raw_titles(ws: Worksheet) -> List[Tuple[int, int, str, str]]:
     """Every block title found anywhere on `ws`, as (row, col, subject,
     module_slot) -- *not* deduplicated (see locate_sat_blocks, which keeps
-    only the leftmost per (subject, module_slot); _scan_block_occurrences
-    needs every occurrence, including duplicates/twins, to know what to
-    clear). Raises ValueError if a Module 2 title is missing its
+    only the leftmost per (subject, module_slot); blocks_to_clear needs
+    every occurrence's own column, including duplicates/twins, to know
+    what to clear). Raises ValueError if a Module 2 title is missing its
     Higher/Lower difficulty."""
     raw_titles: List[Tuple[int, int, str, str]] = []
     for row in ws.iter_rows():
@@ -156,9 +156,9 @@ def _scan_raw_titles(ws: Worksheet) -> List[Tuple[int, int, str, str]]:
 
 def _find_header_row(ws: Worksheet, title_row: int, title_col: int) -> int:
     """The row within _HEADER_SEARCH_ROWS of `title_row` whose
-    `title_col + 2` cell reads "Your Answer" -- shared by locate_sat_blocks
-    and _scan_block_occurrences, both of which need to find one block
-    occurrence's own header row. Raises ValueError if it can't be found."""
+    `title_col + 2` cell reads "Your Answer" -- used by locate_sat_blocks
+    to find one block's own header row. Raises ValueError if it can't be
+    found."""
     for candidate_row in range(title_row, title_row + _HEADER_SEARCH_ROWS + 1):
         if ws.cell(row=candidate_row, column=title_col + 2).value == "Your Answer":
             return candidate_row
@@ -220,83 +220,45 @@ def _canonical_module2_col(ws: Worksheet) -> Optional[int]:
     return min(cols) if cols else None
 
 
-@dataclasses.dataclass(frozen=True)
-class _BlockOccurrence:
-    """One raw title occurrence's own full extent -- unlike SatBlock (one
-    already-deduplicated block per (subject, module_slot), used to know
-    *where to write*), this tracks every occurrence individually,
-    including duplicates/twins, each with its own row range -- used to
-    know *what to clear* (see blocks_to_clear)."""
-
-    subject: str
-    module_slot: str
-    title_row: int
-    title_col: int
-    header_row: int  # also where the shared flag cell lives, at (header_row, title_col) -- see blocks_to_clear
-    last_row: int  # the block's own last question row (inclusive)
-
-
-def _scan_block_occurrences(ws: Worksheet) -> List[_BlockOccurrence]:
-    occurrences = []
-    for title_row, title_col, subject, module_slot in _scan_raw_titles(ws):
-        header_row = _find_header_row(ws, title_row, title_col)
-        r = header_row + 1
-        while ws.cell(row=r, column=title_col).value is not None:
-            r += 1
-        occurrences.append(_BlockOccurrence(subject, module_slot, title_row, title_col, header_row, last_row=r - 1))
-    return occurrences
-
-
 def blocks_to_clear(ws: Worksheet) -> List[Tuple[int, int, int, int]]:
     """0-indexed (start_row, end_row, start_col, end_col) rectangles (end
     exclusive -- the shape a Sheets API GridRange needs) covering every
-    Module 2 block occurrence that isn't at _canonical_module2_col --
-    every subject's own non-canonical occurrence (its other difficulty's
-    canonical block, plus both duplicates/twins), regardless of which
-    difficulty that subject actually administered. Module 1 is never
-    included -- every student takes it, and it's never duplicated.
+    Module 2 column position that isn't _canonical_module2_col -- every
+    subject's own non-canonical difficulty, and every duplicate/twin --
+    for the sheet's *entire* height (row 0 through `ws.max_row`), not just
+    the rows a block occurrence's own questions happen to occupy.
 
-    Unconditional on `active_variants` on purpose (this function no
-    longer takes it): fill_sat_score_report now consolidates *every*
-    subject's real answers into the one canonical column regardless of
-    which difficulty was actually administered (see its own docstring for
-    why -- in short, a whole-column hide/clear keyed by which difficulty
-    is "active" can't make Reading & Writing's real pick and Math's real
-    pick land in the same visual column when they differ, which left the
-    report's two Module 2 tables offset from each other; confirmed
-    against the org's own reference example, which shows them at
-    identical column positions). Once every subject's real data always
-    ends up at the same column, that column's own rows never need
-    clearing (either they already held the right subject's own data, or
-    fill_sat_score_report's own consolidation writes overwrite them
-    directly) -- so clearing becomes a simple, uniform "not the canonical
-    column" rule, with no need to reason about per-subject activeness, or
-    to carve any cell out to protect a flag another subject might still
-    need (there is no other flag any subject still needs -- see this
-    module's own docstring on flag cells).
+    Whole-column, not per-occurrence, deliberately: an earlier version of
+    this scoped each rectangle to one occurrence's own row range, because
+    at the time a non-canonical column could still legitimately hold a
+    *different* subject's real answers (this was before
+    fill_sat_score_report consolidated every subject's real data into one
+    column -- see its own docstring). Now that nothing real is ever left
+    at a non-canonical column for *any* subject, there's nothing left to
+    protect by scoping to rows -- confirmed live against a real template:
+    a non-canonical column still held a handful of things outside any
+    block occurrence's own question rows entirely (a boolean-valued flag
+    cell, whose checkbox *widget* persisted even after its value was
+    cleared -- see google_sheets_export.clear_cells's own docstring on why
+    that needed a data-validation clear too; and a repeated "Page X of Y"
+    footer label sitting well below the last question row), both of which
+    a row-scoped rectangle silently left behind, still occupying enough
+    of the sheet to force the exported PDF to scale down to fit them.
+    Clearing the whole column removes all of it in one pass, whatever it
+    turns out to be, without needing to enumerate each kind by hand.
 
     Each rectangle spans the full 6-column block width (title, correct
-    answer, your answer, mark, Domain, Skill -- see _CLEAR_BLOCK_WIDTH)
-    and the occurrence's own full row range (title through its last
-    question row), since google_sheets_export.clear_cells (the only
-    caller of this) clears both value and border formatting for whatever
-    rectangle it's given -- leaving column or row slack would leave a
-    stray title, a half-cleared answer, or a leftover cell border.
+    answer, your answer, mark, Domain, Skill -- see _CLEAR_BLOCK_WIDTH).
+    Module 1 is never included -- every student takes it, and it's never
+    duplicated, so its own column is always canonical-equivalent (nothing
+    else there needs to be canonicalized in the first place).
     """
     canonical_col = _canonical_module2_col(ws)
-    rectangles = []
-    for occurrence in _scan_block_occurrences(ws):
-        if occurrence.module_slot == "module1" or occurrence.title_col == canonical_col:
-            continue
-        rectangles.append(
-            (
-                occurrence.title_row - 1,
-                occurrence.last_row,
-                occurrence.title_col - 1,
-                occurrence.title_col - 1 + _CLEAR_BLOCK_WIDTH,
-            )
-        )
-    return rectangles
+    non_canonical_cols = sorted(
+        {col for _row, col, _subject, module_slot in _scan_raw_titles(ws) if module_slot != "module1"}
+        - {canonical_col}
+    )
+    return [(0, ws.max_row, col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in non_canonical_cols]
 
 
 def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:

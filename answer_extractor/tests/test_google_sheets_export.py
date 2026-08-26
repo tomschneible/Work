@@ -297,7 +297,7 @@ def test_clear_cells_resolves_sheet_names_and_sends_one_batch_update():
                     "endColumnIndex": 14,
                 },
                 "cell": {},
-                "fields": "userEnteredValue,userEnteredFormat.borders",
+                "fields": "userEnteredValue,userEnteredFormat.borders,dataValidation",
             }
         },
         {
@@ -310,7 +310,7 @@ def test_clear_cells_resolves_sheet_names_and_sends_one_batch_update():
                     "endColumnIndex": 4,
                 },
                 "cell": {},
-                "fields": "userEnteredValue,userEnteredFormat.borders",
+                "fields": "userEnteredValue,userEnteredFormat.borders,dataValidation",
             }
         },
     ]

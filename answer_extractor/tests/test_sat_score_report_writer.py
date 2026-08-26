@@ -145,14 +145,15 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     assert _at(writes, "Q6") is _MISSING
     assert _at(writes, "O5") is _MISSING
     # The report should only show the filled-in module -- every other Module 2
-    # block occurrence (Easier's canonical block, plus both duplicates), title
-    # through Domain/Skill, cleared in full (see
+    # column (Easier's canonical block, plus both duplicates), title through
+    # Domain/Skill, cleared for the sheet's entire height (see
     # test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one for
     # these same rectangles' own column-letter breakdown).
+    max_row = 12  # this fixture's own last row (the "AN12" score label)
     assert writes.cleared_ranges == [
-        ("Student Responses", 3, 7, 14, 20),
-        ("Student Responses", 3, 7, 21, 27),
-        ("Student Responses", 3, 7, 28, 34),
+        ("Student Responses", 0, max_row, 14, 20),
+        ("Student Responses", 0, max_row, 21, 27),
+        ("Student Responses", 0, max_row, 28, 34),
     ]
 
 
@@ -164,13 +165,15 @@ def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_pa
     # Higher's canonical (H) is always the one column every subject's real
     # answers get consolidated into (see fill_sat_score_report), regardless
     # of active_variants -- blocks_to_clear no longer takes that mapping at
-    # all: it just clears every *other* Module 2 occurrence unconditionally.
+    # all: it just clears every *other* Module 2 column, for the sheet's
+    # entire height, unconditionally.
     ranges = blocks_to_clear(ws)
 
+    max_row = ws.max_row
     assert ranges == [
-        (3, 7, 14, 20),  # O -- Lower, canonical
-        (3, 7, 21, 27),  # V -- Higher, duplicate
-        (3, 7, 28, 34),  # AC -- Lower, duplicate
+        (0, max_row, 14, 20),  # O -- Lower, canonical
+        (0, max_row, 21, 27),  # V -- Higher, duplicate
+        (0, max_row, 28, 34),  # AC -- Lower, duplicate
     ]
 
 

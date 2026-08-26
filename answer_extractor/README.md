@@ -358,6 +358,21 @@ worked, or to look around the folder tree while debugging.
    column's own) ever needs to be true at a time, rather than a different
    subject-specific flag that formula was never actually built to
    distinguish between.
+
+   `blocks_to_clear` clears each non-canonical column's *entire* height,
+   not just the rows a block's own questions occupy: now that nothing
+   real is ever left at a non-canonical column for any subject, there's
+   nothing left to protect by scoping to rows the way an earlier version
+   did. That mattered live: a non-canonical column still held things
+   outside any block's own question rows -- a boolean flag cell (whose
+   checkbox *widget* persisted even after `clear_cells` cleared its
+   value, since a checkbox is a data-validation rule independent of the
+   cell's own value -- `clear_cells` now clears data validation too, not
+   just value and border) and a repeated "Page X of Y" footer label sitting
+   well below the last question row -- both of which a row-scoped clear
+   silently left behind, occupying enough of the sheet to force the
+   exported PDF to scale down and overflow onto an extra page trying to
+   fit them in.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

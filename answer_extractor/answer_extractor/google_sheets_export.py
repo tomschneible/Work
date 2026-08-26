@@ -267,24 +267,23 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
 def clear_cells(
     sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int, int, int]]
 ) -> None:
-    """Clear both the value and the border formatting of every cell in
-    each of `ranges` -- (sheet_name, 0-indexed start row, 0-indexed end
-    row, 0-indexed start column, 0-indexed end column), all ends
-    exclusive, the shape FillResult.cleared_ranges carries -- via one
+    """Clear the value, border formatting, *and* data validation of every
+    cell in each of `ranges` -- (sheet_name, 0-indexed start row,
+    0-indexed end row, 0-indexed start column, 0-indexed end column), all
+    ends exclusive, the shape FillResult.cleared_ranges carries -- via one
     Sheets API `batchUpdate` `repeatCell` request per range. A per-report,
     per-copy content change (unrelated to hide_gridlines' template-wide
     metadata fix above) -- used by sat_score_report_writer.
     fill_sat_score_report to remove a Module 2 block occurrence that
-    wasn't administered. Deliberately row-scoped rather than a whole-
-    column hide (an earlier version of this, hide_columns, worked that
-    way and got replaced -- see blocks_to_clear's own docstring for why a
-    whole-column hide isn't safe here): clearing only ever affects the
-    exact rows given, so it can't remove another subject's own real
-    answers sitting in the same columns but a different row range. One
-    `get` call resolves every sheet name to its numeric sheetId first,
-    since the batchUpdate request itself only accepts that, not a name.
-    A no-op (no API call at all) if `ranges` is empty. Raises ValueError
-    if a range names a sheet this spreadsheet doesn't have."""
+    wasn't administered. Data validation is cleared alongside value and
+    border deliberately: a boolean-type validation renders as a checkbox
+    *widget* independent of the cell's own value, so clearing only the
+    value left an empty, unchecked checkbox floating with nothing else
+    around it -- confirmed live. One `get` call resolves every sheet name
+    to its numeric sheetId first, since the batchUpdate request itself
+    only accepts that, not a name. A no-op (no API call at all) if
+    `ranges` is empty. Raises ValueError if a range names a sheet this
+    spreadsheet doesn't have."""
     if not ranges:
         return
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
@@ -304,7 +303,7 @@ def clear_cells(
                         "endColumnIndex": end_col,
                     },
                     "cell": {},
-                    "fields": "userEnteredValue,userEnteredFormat.borders",
+                    "fields": "userEnteredValue,userEnteredFormat.borders,dataValidation",
                 }
             }
         )
