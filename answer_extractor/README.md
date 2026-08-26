@@ -322,29 +322,42 @@ worked, or to look around the folder tree while debugging.
    difficulty couldn't be confidently identified, falls that report back
    to the combined `.xlsx` the same as any other export failure.
 5. **A SAT/DSAT report only shows the Module 2 variant actually
-   administered.** The template ships with two same-difficulty pairs of
-   Module 2 blocks per subject (Higher x2, Lower x2 -- see
-   `sat_score_report_writer.py`'s own module docstring on why), but a
-   given student only ever sat one difficulty; `fill_sat_score_report`
-   clears the value and border formatting of every other block occurrence
-   (via `sat_score_report_writer.blocks_to_clear` and
-   `google_sheets_export.clear_cells`) rather than leave them showing on
-   the report with empty "Your Answer" columns.
+   administered -- and always in the same place.** The template ships
+   with two same-difficulty pairs of Module 2 blocks per subject (Higher
+   x2, Lower x2 -- see `sat_score_report_writer.py`'s own module
+   docstring on why), but a given student only ever sat one difficulty
+   per subject. `fill_sat_score_report` consolidates every subject's real
+   answers -- title, correct-answer key, your answer, Domain, Skill --
+   into one fixed column (`sat_score_report_writer._canonical_module2_col`,
+   always Higher's own canonical block): if a subject's active variant
+   already lives there they're written in place as always, otherwise
+   those same values are copied in from wherever that subject's real
+   block actually sits. Every other Module 2 occurrence -- a subject's
+   own non-matching difficulty, and every duplicate/twin -- is left
+   completely untouched and cleared instead (value and border formatting
+   both, via `sat_score_report_writer.blocks_to_clear` and
+   `google_sheets_export.clear_cells`), so the report only ever shows one
+   Module 2 table per subject.
 
-   Deliberately scoped to one block *occurrence's own row range*, not a
-   whole-column hide (an earlier version of this worked that way, and got
-   replaced): a subject's block columns are reused by column *position*
-   across every other subject stacked underneath it (the same fact that
-   makes the shared flag-cell row work at all) -- confirmed live against a
-   real filled report where Reading & Writing's active variant (Higher)
-   and Math's (Lower) differed, which a whole-column hide can't represent
-   at all (whichever column you hide, some subject's real data lives in
-   it). Clearing each occurrence's own rows instead means Math's own
-   Higher-difficulty occurrence (which it didn't sit) gets cleared within
-   Math's own rows without touching Reading & Writing's separate
-   occurrence of the same columns elsewhere on the sheet -- each subject
-   ends up showing only its own real pick, regardless of what any other
-   subject picked.
+   Consolidating into one column, rather than just clearing whichever
+   columns a subject didn't use in place (an earlier version of this
+   worked that way, and got replaced): a subject's block columns are
+   reused by column *position* across every other subject stacked
+   underneath it (the same fact that makes the shared flag-cell row work
+   at all) -- confirmed live against a real filled report where Reading &
+   Writing's active variant (Higher) and Math's (Lower) differed, so each
+   subject's real answers naturally sat in *different* columns, leaving
+   their two Module 2 tables visibly offset from each other on the
+   exported report (confirmed against the org's own reference example,
+   where both sit at identical column positions instead). Clearing in
+   place can't fix an offset like that -- it only hides or shows content
+   where it already is, it never moves anything. Consolidating removes
+   the offset entirely, and -- since every subject's score-total formulas
+   read a fixed handful of cells by absolute address regardless of which
+   subject or difficulty -- also means only one flag (the canonical
+   column's own) ever needs to be true at a time, rather than a different
+   subject-specific flag that formula was never actually built to
+   distinguish between.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

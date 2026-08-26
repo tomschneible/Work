@@ -146,58 +146,51 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     assert _at(writes, "O5") is _MISSING
     # The report should only show the filled-in module -- every other Module 2
     # block occurrence (Easier's canonical block, plus both duplicates), title
-    # through Domain/Skill, cleared (see test_blocks_to_clear_hides_every_
-    # module_2_block_but_the_active_one for these same rectangles' own
-    # column-letter breakdown).
+    # through Domain/Skill, cleared in full (see
+    # test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one for
+    # these same rectangles' own column-letter breakdown).
     assert writes.cleared_ranges == [
-        ("Student Responses", 3, 7, 15, 20),
-        ("Student Responses", 3, 4, 14, 15),
-        ("Student Responses", 5, 7, 14, 15),
-        ("Student Responses", 3, 7, 22, 27),
-        ("Student Responses", 3, 4, 21, 22),
-        ("Student Responses", 5, 7, 21, 22),
-        ("Student Responses", 3, 7, 29, 34),
-        ("Student Responses", 3, 4, 28, 29),
-        ("Student Responses", 5, 7, 28, 29),
+        ("Student Responses", 3, 7, 14, 20),
+        ("Student Responses", 3, 7, 21, 27),
+        ("Student Responses", 3, 7, 28, 34),
     ]
 
 
-def test_blocks_to_clear_hides_every_module_2_block_but_the_active_one(tmp_path):
+def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_path):
     path = tmp_path / "template.xlsx"
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    # Easier is active -- its canonical (O) block stays untouched; Higher's
-    # canonical (H) is cleared along with both duplicates (V, AC). Each
-    # occurrence yields 3 rectangles: correct-through-skill for the full row
-    # range, plus the title/flag column split around the one flag cell (row
-    # 4, 0-indexed) another subject sharing these columns could still need.
-    ranges = blocks_to_clear(ws, {"reading and writing": "easier"})
+    # Higher's canonical (H) is always the one column every subject's real
+    # answers get consolidated into (see fill_sat_score_report), regardless
+    # of active_variants -- blocks_to_clear no longer takes that mapping at
+    # all: it just clears every *other* Module 2 occurrence unconditionally.
+    ranges = blocks_to_clear(ws)
 
     assert ranges == [
-        (3, 7, 8, 13), (3, 4, 7, 8), (5, 7, 7, 8),  # H -- Higher, canonical
-        (3, 7, 22, 27), (3, 4, 21, 22), (5, 7, 21, 22),  # V -- Higher, duplicate
-        (3, 7, 29, 34), (3, 4, 28, 29), (5, 7, 28, 29),  # AC -- Easier, duplicate
+        (3, 7, 14, 20),  # O -- Lower, canonical
+        (3, 7, 21, 27),  # V -- Higher, duplicate
+        (3, 7, 28, 34),  # AC -- Lower, duplicate
     ]
 
 
-def test_blocks_to_clear_is_scoped_to_one_subjects_own_row_range(tmp_path):
-    """Module 2 block columns are reused by position across every subject
-    stacked underneath them (see module docstring): Reading & Writing's
-    own occurrences sit at rows 4-7, Math's own occurrences of the exact
-    same two columns sit at rows 24-27. When R&W's active variant is
-    Higher and Math's is Lower, each subject's own *non-matching*
-    occurrence gets cleared independently -- R&W's own Lower (rows 4-7)
-    and Math's own Higher (rows 24-27) -- while each one's own *matching*
-    occurrence is untouched, without either subject's clearing reaching
-    into the other's row range even though they share the same columns.
-    This is exactly the case a whole-column hide can't represent at all
-    (there's no single column-visibility answer that's correct for both
-    subjects at once) -- see blocks_to_clear's own docstring."""
+def test_fill_sat_score_report_consolidates_a_non_canonical_active_variant(tmp_path):
+    """Reading & Writing's own occurrences sit at rows 4-7, Math's own
+    occurrences of the exact same columns sit at rows 24-27. R&W's active
+    variant (Higher) already lives at the canonical column (H) -- written
+    in place, same as always. Math's active variant (Lower) doesn't (O) --
+    its title, correct-answer key, your answer, and Domain/Skill all get
+    copied into Math's own rows at the *canonical* column (H) instead,
+    overwriting whatever Math's own Higher occurrence held there, so both
+    subjects' real Module 2 tables end up at the same column position
+    instead of visibly offset from each other (confirmed live against a
+    real filled report where this showed up as exactly that offset)."""
     path = tmp_path / "template.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Student Responses"
+    ws["A1"] = "Type name here, date below"
+    ws["A2"] = dt.datetime(2024, 1, 1)
     _block(ws, 8, "R & W Module 2 - Higher Difficulty", flagged=True, answers=[(1, "C"), (2, "D")])
     _block(ws, 15, "R & W Module 2 - Lower Difficulty", flagged=True, answers=[(1, "F"), (2, "G")])
     # Math's own occurrences of the same columns, well below R&W's -- no
@@ -205,32 +198,52 @@ def test_blocks_to_clear_is_scoped_to_one_subjects_own_row_range(tmp_path):
     # module docstring), which R&W's own blocks above already established.
     _block(ws, 8, "Math Module 2 - Higher Difficulty", flagged=False, answers=[(1, "A"), (2, "B")], title_row=24)
     _block(ws, 15, "Math Module 2 - Lower Difficulty", flagged=False, answers=[(1, "D"), (2, "C")], title_row=24)
+    # Domain/Skill values for Math's real (Lower, column O) pick -- what
+    # should get copied over to the canonical column.
+    ws["S26"], ws["T26"] = "PSD", "RPU"
+    ws["S27"], ws["T27"] = "ALG", "LE1"
     wb.save(str(path))
-    ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    ranges = blocks_to_clear(ws, {"reading and writing": "harder", "math": "easier"})
+    writes = fill_sat_score_report(
+        path,
+        answers={
+            ("reading and writing", "harder", 1): "C",
+            ("reading and writing", "harder", 2): "D",
+            ("math", "easier", 1): "D",
+            ("math", "easier", 2): "C",
+        },
+        active_variants={"reading and writing": "harder", "math": "easier"},
+        student_name="Jane Student",
+        test_date=dt.date(2026, 3, 8),
+    )
 
-    # R&W's own Higher (rows 4-7) and Math's own Lower (rows 24-27) -- each
-    # subject's real pick -- are absent entirely: never cleared.
-    assert ranges == [
-        (3, 7, 15, 20), (3, 4, 14, 15), (5, 7, 14, 15),  # R&W's own Lower (rows 4-7) -- not its pick
-        (23, 27, 8, 13), (23, 24, 7, 8), (25, 27, 7, 8),  # Math's own Higher (rows 24-27) -- not its pick
-    ]
+    # R&W's own pick was already canonical -- written in place as always.
+    assert _at(writes, "J6") == "C"
+    assert _at(writes, "J7") == "D"
+    assert _at(writes, "H5") is True
 
+    # Math's own pick (Lower, column O) gets copied into the canonical
+    # column (H) at Math's own rows (26-27), not left at its native column.
+    # Lower's own correct-answer key (from _block's answers=[(1,"D"),(2,"C")])
+    # is "D"/"C" -- coincidentally the same letters the student answered
+    # with, but at different destination columns (I = correct-answer, J =
+    # your-answer), so this still confirms both got copied independently.
+    assert _at(writes, "H24") == "Math Module 2 - Lower Difficulty"  # title moved too
+    assert _at(writes, "I26") == "D"  # correct-answer key, copied from Lower's own key
+    assert _at(writes, "J26") == "D"  # your answer
+    assert _at(writes, "L26") == "PSD"  # Domain
+    assert _at(writes, "M26") == "RPU"  # Skill
+    assert _at(writes, "I27") == "C"
+    assert _at(writes, "J27") == "C"
+    assert _at(writes, "L27") == "ALG"
+    assert _at(writes, "M27") == "LE1"
 
-def test_blocks_to_clear_hides_every_module_2_block_when_nothing_is_active(tmp_path):
-    path = tmp_path / "template.xlsx"
-    _write_template(path)
-    ws = openpyxl.load_workbook(path)["Student Responses"]
-
-    ranges = blocks_to_clear(ws, {})
-
-    assert ranges == [
-        (3, 7, 8, 13), (3, 4, 7, 8), (5, 7, 7, 8),  # H -- Higher, canonical
-        (3, 7, 15, 20), (3, 4, 14, 15), (5, 7, 14, 15),  # O -- Lower, canonical
-        (3, 7, 22, 27), (3, 4, 21, 22), (5, 7, 21, 22),  # V -- Higher, duplicate
-        (3, 7, 29, 34), (3, 4, 28, 29), (5, 7, 28, 29),  # AC -- Lower, duplicate
-    ]
+    # Math's own native Lower occurrence (O, rows 24-27) is never written to
+    # at all -- nothing in this whole run ever targets column O (15),
+    # including its own flag cell (there's no second, subject-specific flag
+    # to set -- see module docstring): it's left untouched for
+    # blocks_to_clear to remove entirely.
+    assert not any(w.column == 15 for w in writes.cell_writes)
 
 
 def test_fill_sat_score_report_leaves_a_missing_answer_blank(tmp_path):

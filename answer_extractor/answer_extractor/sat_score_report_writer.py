@@ -31,15 +31,23 @@ template and its filled counterpart:
     formulas reference the exact same handful of cells, e.g. Math's own
     "correct count" formula reads $O$8/$V$8/$AC$8/$AJ$8, not a
     Math-specific row), reused by column position across every subject
-    stacked underneath it. Harmless by construction, not something this
-    needs to special-case: an inactive block is always left with blank
-    "Your Answer" cells, and a blank cell's mark formula produces neither
-    "✔" nor "✘", so it never affects a count regardless of what its
-    shared flag happens to be set to. Module 1 has no flag cell at all
-    (everyone takes it, nothing to disambiguate). Located here via one
-    sheet-wide scan for boolean-valued cells, keyed by column -- not by
-    searching near any one block's own header row, which is what a
-    later-appearing subject's blocks actually need.
+    stacked underneath it. This is exactly why fill_sat_score_report
+    consolidates *every* subject's real answers into one single column
+    (_canonical_module2_col) rather than leaving each subject's own
+    difficulty wherever it naturally sits: confirmed live that when
+    Reading & Writing and Math administer *different* difficulties, their
+    real answers land in different columns, leaving the two subjects'
+    Module 2 tables visibly offset on the exported report -- and since
+    every subject's score-count formula reads the *same* four flag cells
+    by fixed address regardless of which subject or difficulty, there's
+    no way to set a *different* subject-specific flag safely anyway.
+    Consolidating means only the canonical column's own flag is ever set
+    True; every other Module 2 occurrence is left untouched here and
+    cleared instead (see blocks_to_clear). Module 1 has no flag cell at
+    all (everyone takes it, nothing to disambiguate). Flag cells are
+    located here via one sheet-wide scan for boolean-valued cells, keyed
+    by column -- not by searching near any one block's own header row,
+    which is what a later-appearing subject's blocks actually need.
 
 Which difficulty (easier/harder) was actually administered isn't
 something this module figures out -- that identification already exists
@@ -109,6 +117,7 @@ def normalize_subject(raw: str) -> str:
 class SatBlock:
     subject: str
     module_slot: str  # "module1" | "easier" | "harder"
+    title_row: int
     header_row: int
     question_col: int
     correct_col: int
@@ -188,6 +197,7 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
         blocks_by_key[key] = SatBlock(
             subject=subject,
             module_slot=module_slot,
+            title_row=title_row,
             header_row=header_row,
             question_col=title_col,
             correct_col=title_col + 1,
@@ -196,6 +206,18 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
             flag_cell=flag_cell,
         )
     return list(blocks_by_key.values())
+
+
+def _canonical_module2_col(ws: Worksheet) -> Optional[int]:
+    """The single column every subject's real Module 2 answers get
+    consolidated into, regardless of which difficulty was actually
+    administered -- always the leftmost Module 2 title column found (this
+    template's own layout puts a subject's Higher-difficulty canonical
+    block first; see fill_sat_score_report's own docstring for why every
+    subject's real pick has to land in the same column position). None if
+    the template has no Module 2 blocks at all."""
+    cols = [block.question_col for block in locate_sat_blocks(ws) if block.module_slot != "module1"]
+    return min(cols) if cols else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -225,77 +247,55 @@ def _scan_block_occurrences(ws: Worksheet) -> List[_BlockOccurrence]:
     return occurrences
 
 
-def blocks_to_clear(ws: Worksheet, active_variants: Mapping[str, str]) -> List[Tuple[int, int, int, int]]:
+def blocks_to_clear(ws: Worksheet) -> List[Tuple[int, int, int, int]]:
     """0-indexed (start_row, end_row, start_col, end_col) rectangles (end
     exclusive -- the shape a Sheets API GridRange needs) covering every
-    Module 2 block occurrence that isn't the one subject-active
-    administered difficulty actually written to -- every duplicate/twin,
-    plus a subject's own *other* difficulty's canonical block. Module 1 is
-    never included -- every student takes it, and it's never duplicated.
+    Module 2 block occurrence that isn't at _canonical_module2_col --
+    every subject's own non-canonical occurrence (its other difficulty's
+    canonical block, plus both duplicates/twins), regardless of which
+    difficulty that subject actually administered. Module 1 is never
+    included -- every student takes it, and it's never duplicated.
 
-    Deliberately *per occurrence*, not per column the way an earlier
-    version of this (inactive_block_column_ranges, since removed) worked:
-    a subject's block columns are reused by column *position* across
-    every other subject stacked underneath it (see this module's own
-    docstring on flag cells), so hiding a whole column would also hide
-    another subject's own, different-row occurrence of that same column
-    if that subject's active variant happened to live there -- confirmed
-    live against a real filled report where Reading & Writing's active
-    variant (Higher) and Math's (Lower) differed, which a column-wide hide
-    can't represent at all (whichever column you hide, some subject's
-    real data lives in it). Clearing each occurrence's own row range
-    instead of its whole column sidesteps that entirely: Math's own
-    occurrence of "Higher Difficulty" (which it didn't use) gets cleared
-    within Math's own rows without touching Reading & Writing's separate
-    occurrence of the same title elsewhere on the sheet.
-
-    Each occurrence's own shared flag cell -- at (header_row, title_col),
-    see SatBlock.flag_cell -- is deliberately carved out of its rectangle
-    rather than cleared along with everything else: that one cell is the
-    single sheet-wide boolean an *other* subject's active pick may depend
-    on (the same fact that makes column-wide hiding unsafe in the first
-    place), and it happens to fall inside this occurrence's own row range
-    whenever this occurrence's rows span the sheet's shared flag row (true
-    for whichever subject's block appears first on the sheet). Clearing it
-    unconditionally would silently un-check a flag write_cells just made
-    for a different subject earlier in the same run. Carving it out costs
-    nothing when no other subject needs it -- an unused flag cell being
-    left at whatever the template's default was is harmless (see this
-    module's own docstring).
+    Unconditional on `active_variants` on purpose (this function no
+    longer takes it): fill_sat_score_report now consolidates *every*
+    subject's real answers into the one canonical column regardless of
+    which difficulty was actually administered (see its own docstring for
+    why -- in short, a whole-column hide/clear keyed by which difficulty
+    is "active" can't make Reading & Writing's real pick and Math's real
+    pick land in the same visual column when they differ, which left the
+    report's two Module 2 tables offset from each other; confirmed
+    against the org's own reference example, which shows them at
+    identical column positions). Once every subject's real data always
+    ends up at the same column, that column's own rows never need
+    clearing (either they already held the right subject's own data, or
+    fill_sat_score_report's own consolidation writes overwrite them
+    directly) -- so clearing becomes a simple, uniform "not the canonical
+    column" rule, with no need to reason about per-subject activeness, or
+    to carve any cell out to protect a flag another subject might still
+    need (there is no other flag any subject still needs -- see this
+    module's own docstring on flag cells).
 
     Each rectangle spans the full 6-column block width (title, correct
-    answer, your answer, mark, Domain, Skill -- see _CLEAR_BLOCK_WIDTH),
-    since google_sheets_export.clear_cells (the only caller of this)
-    clears both value and border formatting for whatever rectangle it's
-    given -- leaving column slack would leave a stray Domain/Skill column,
-    or a half-cleared answer.
+    answer, your answer, mark, Domain, Skill -- see _CLEAR_BLOCK_WIDTH)
+    and the occurrence's own full row range (title through its last
+    question row), since google_sheets_export.clear_cells (the only
+    caller of this) clears both value and border formatting for whatever
+    rectangle it's given -- leaving column or row slack would leave a
+    stray title, a half-cleared answer, or a leftover cell border.
     """
-    canonical_cols = {
-        (block.subject, block.module_slot): block.question_col
-        for block in locate_sat_blocks(ws)
-        if block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
-    }
+    canonical_col = _canonical_module2_col(ws)
     rectangles = []
     for occurrence in _scan_block_occurrences(ws):
-        if occurrence.module_slot == "module1":
+        if occurrence.module_slot == "module1" or occurrence.title_col == canonical_col:
             continue
-        key = (occurrence.subject, occurrence.module_slot)
-        if canonical_cols.get(key) == occurrence.title_col:
-            continue  # the one occurrence that's actually filled in and shown
-
-        top, bottom = occurrence.title_row - 1, occurrence.last_row
-        left, right = occurrence.title_col - 1, occurrence.title_col - 1 + _CLEAR_BLOCK_WIDTH
-        flag_row = occurrence.header_row - 1  # 0-indexed
-        # correct-answer/your-answer/mark/Domain/Skill (everything but the
-        # title/flag column) for the full row range -- never shares a cell
-        # with another subject, so no need to carve anything out of it.
-        rectangles.append((top, bottom, left + 1, right))
-        # The title/flag column, split around the one cell (header_row,
-        # title_col) that might be a flag another subject still needs.
-        if top < flag_row:
-            rectangles.append((top, flag_row, left, left + 1))
-        if flag_row + 1 < bottom:
-            rectangles.append((flag_row + 1, bottom, left, left + 1))
+        rectangles.append(
+            (
+                occurrence.title_row - 1,
+                occurrence.last_row,
+                occurrence.title_col - 1,
+                occurrence.title_col - 1 + _CLEAR_BLOCK_WIDTH,
+            )
+        )
     return rectangles
 
 
@@ -357,17 +357,43 @@ def fill_sat_score_report(
     `sheet_name` tab in with the student's name, test date, every answer
     in `answers`, and (if given) each subject's scaled section score --
     plus, in the same FillResult, the rectangles to clear for every
-    Module 2 block occurrence that wasn't administered (see
-    blocks_to_clear), so the exported report only shows the modules that
-    were actually filled in rather than every duplicate/twin block the
-    template ships with.
+    Module 2 block occurrence that isn't the one column every subject's
+    real answers get consolidated into (see blocks_to_clear), so the
+    exported report only shows the modules that were actually filled in
+    rather than every duplicate/twin block the template ships with.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
     answer_keys.annotate_rows) -- this is what decides which of each
-    subject's two same-difficulty block-pairs gets its flag cell set and
-    its answers written (and, in FillResult, stays visible); the other
-    pair is never touched, and every other occurrence gets cleared.
+    subject's own two same-difficulty block-pairs its answers get read
+    from. Regardless of which difficulty that turns out to be, every
+    subject's real answers -- title, correct-answer key, your answer,
+    Domain, Skill -- are written into the *same* column position on the
+    sheet (_canonical_module2_col, always Higher's own canonical block):
+    if a subject's active variant already lives there, its cells are
+    written in place exactly as before; otherwise those same values are
+    copied in from wherever that subject's real block actually sits, and
+    that column's own single flag cell is the only one this ever sets
+    True. Every other Module 2 occurrence -- a subject's own non-matching
+    difficulty, and every duplicate/twin -- is left completely untouched
+    here and cleared instead (see FillResult.cleared_ranges).
+
+    This exists because Reading & Writing and Math share the exact same
+    four column positions for their own Module 2 blocks (see this
+    module's own docstring on flag cells) -- when they administer
+    *different* difficulties (confirmed live: R&W Higher, Math Lower),
+    each subject's real answers naturally sit in different columns, which
+    left their two Module 2 tables visibly offset from each other on the
+    exported report (confirmed against the org's own reference example,
+    where both sit at identical column positions instead) -- a whole-
+    column hide/clear keyed only by which difficulty is "active" can
+    never fix that, since it never moves anything, only hides/shows it in
+    place. Consolidating into one column removes the offset entirely, and
+    -- as a side effect -- also means the sheet's own score-total
+    formulas (which read a fixed handful of cells by absolute address,
+    not by which subject or difficulty) only ever need to see one flag
+    true at a time.
+
     `answers` must only contain keys for "module1" or each subject's
     active variant -- an entry for the *inactive* variant raises, since
     writing it would silently go nowhere the sheet's own formulas count
@@ -413,30 +439,71 @@ def fill_sat_score_report(
             row, col = score_cells[subject]
             writes.append(CellWrite(sheet_name, row, col, score))
 
+    canonical_col = _canonical_module2_col(ws)
+    canonical_flag_cell = next(
+        (b.flag_cell for b in locate_sat_blocks(ws) if b.question_col == canonical_col), None
+    )
+
     remaining = dict(answers)
     for block in locate_sat_blocks(ws):
         is_active = block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
-        if is_active and block.flag_cell is not None:
-            frow, fcol = block.flag_cell
+        if not is_active:
+            continue  # a non-administered block -- leave completely untouched, cleared instead
+
+        if block.module_slot == "module1":
+            r = block.header_row + 1
+            while True:
+                question = ws.cell(row=r, column=block.question_col).value
+                if question is None:
+                    break
+                key = (block.subject, block.module_slot, int(question))
+                writes.append(CellWrite(sheet_name, r, block.answer_col, remaining.pop(key, None)))
+                r += 1
+            continue
+
+        # Module 2: consolidate into canonical_col regardless of which
+        # difficulty this subject actually administered (see this
+        # function's own docstring for why).
+        if canonical_flag_cell is not None:
+            frow, fcol = canonical_flag_cell
             writes.append(CellWrite(sheet_name, frow, fcol, True))
 
-        if not is_active:
-            continue  # the inactive twin of an active pair -- leave completely untouched
+        repositioning = canonical_col is not None and block.question_col != canonical_col
+        target_col = canonical_col if repositioning else block.question_col
+        if repositioning:
+            title_text = ws.cell(row=block.title_row, column=block.question_col).value
+            writes.append(CellWrite(sheet_name, block.title_row, target_col, title_text))
+
         r = block.header_row + 1
         while True:
             question = ws.cell(row=r, column=block.question_col).value
             if question is None:
                 break
             key = (block.subject, block.module_slot, int(question))
-            writes.append(CellWrite(sheet_name, r, block.answer_col, remaining.pop(key, None)))
+            answer_value = remaining.pop(key, None)
+            if repositioning:
+                # Every other cell the report shows for this question --
+                # the correct-answer key and Domain/Skill -- has to move
+                # too, or it'd still read as the wrong (or no) difficulty
+                # once the title above it changes. mark_col needs no
+                # write of its own: it's a formula already sitting at
+                # target_col comparing correct-answer against your-answer
+                # at that same position, so it recomputes on its own once
+                # both of those land there.
+                correct_value = ws.cell(row=r, column=block.correct_col).value
+                domain_value = ws.cell(row=r, column=block.question_col + 4).value
+                skill_value = ws.cell(row=r, column=block.question_col + 5).value
+                writes.append(CellWrite(sheet_name, r, target_col + 1, correct_value))
+                writes.append(CellWrite(sheet_name, r, target_col + 2, answer_value))
+                writes.append(CellWrite(sheet_name, r, target_col + 4, domain_value))
+                writes.append(CellWrite(sheet_name, r, target_col + 5, skill_value))
+            else:
+                writes.append(CellWrite(sheet_name, r, block.answer_col, answer_value))
             r += 1
 
     if remaining:
         unmatched = ", ".join(f"{subject} {slot} {question}" for subject, slot, question in sorted(remaining))
         raise ValueError(f"{template_path}!{sheet_name} has no answer block for: {unmatched}")
 
-    cleared_ranges = [
-        (sheet_name, top, bottom, left, right)
-        for top, bottom, left, right in blocks_to_clear(ws, active_variants)
-    ]
+    cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
     return FillResult(cell_writes=writes, cleared_ranges=cleared_ranges)
