@@ -263,7 +263,14 @@ worked, or to look around the folder tree while debugging.
    ever re-converted through `.xlsx` at all any more, so nothing about a
    tab's own formatting is at risk from this pipeline, no matter what
    Drive's `.xlsx` import does or doesn't preserve faithfully.
-   `export_pdf` then renders the final PDF. The filled working Sheet copy
+   `export_pdf` then renders the final PDF -- via Sheets' own dedicated
+   export URL (the same one "File > Download > PDF" in the Sheets UI
+   itself uses), not Drive's generic file-export call: confirmed live
+   that the generic Drive export doesn't reliably apply a sheet's own
+   "fit to height"/"fit to page" print scale the same way the Sheets UI
+   export does, even when the setting is genuinely saved correctly on the
+   file -- the PDF came out undistorted and overflowing onto an extra
+   page regardless. The filled working Sheet copy
    is *kept*, not deleted, by default (this org's own choice -- having
    the live Sheet behind each generated report is useful for
    review/editing and for debugging one that came out wrong); pass

@@ -90,7 +90,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     assert mocks["clear_cells"].call_args[0][2] == fake_cleared_ranges
 
     mocks["export_pdf"].assert_called_once()
-    assert mocks["export_pdf"].call_args[0][1] == "COPY_ID"
+    assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"
 
 
 def test_export_filled_report_passes_the_sheets_service_to_write_cells():

@@ -120,7 +120,7 @@ def export_filled_report(
             result = fill_fn(tmp_path)
             write_cells(sheets, copy_id, result.cell_writes)
             clear_cells(sheets, copy_id, result.cleared_ranges)
-            pdf_bytes = export_pdf(drive, copy_id)
+            pdf_bytes = export_pdf(copy_id)
         except Exception:
             try:
                 delete_file(drive, copy_id)

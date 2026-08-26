@@ -48,7 +48,11 @@ capture beyond "make this one Drive/Sheets API call correctly," and
 keeping each call in its own small function is what makes it possible to
 unit-test the request-shaping (does this pass supportsAllDrives, the
 right fields, ...) with a mocked service object instead of live network
-access every test run needs.
+access every test run needs. export_pdf is the one exception -- it calls
+Sheets' own dedicated (undocumented, no googleapiclient wrapper) export
+URL directly rather than a Drive/Sheets API method, since confirmed live
+that Drive's generic files.export doesn't reliably apply a sheet's own
+print scale settings; see its own docstring.
 """
 from __future__ import annotations
 
@@ -57,6 +61,7 @@ import datetime as dt
 import io
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import Resource, build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from openpyxl.utils import get_column_letter
@@ -183,14 +188,45 @@ def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
     return buffer.getvalue()
 
 
-def export_pdf(drive: Resource, file_id: str) -> bytes:
-    """The Sheets file at `file_id`, rendered to PDF exactly as Google
-    Sheets' own File > Download > PDF would -- that menu and this API
-    call both honor whatever print setup (page range/"entire workbook",
-    layout, scale) is already saved on the file itself, so a template
-    with its print settings configured once produces the same PDF shape
-    on every copy without this code needing to know or set them itself."""
-    return _export(drive, file_id, "application/pdf")
+def export_pdf(spreadsheet_id: str) -> bytes:
+    """The Sheets file at `spreadsheet_id`, rendered to PDF via Sheets'
+    own dedicated export endpoint (`docs.google.com/spreadsheets/d/{id}/
+    export?format=pdf`) -- the same URL "File > Download > PDF" in the
+    Sheets UI itself navigates to, not Drive's generic `files.export`
+    (used by every other `_export`-based function in this module, and
+    what this used to call too). Switched deliberately: confirmed live
+    that Drive's generic export doesn't reliably apply a sheet's own
+    "fit to height"/"fit to page" print scale the same way the Sheets UI
+    export does, even though the setting itself is genuinely saved on the
+    file correctly -- the exported PDF came out at undistorted, un-shrunk
+    size and overflowed onto an extra page regardless. This endpoint,
+    called with no scale/margin/gid overrides of its own, defers to
+    whatever print setup (page range, layout, scale) is already saved on
+    the file, the same as Drive's export was meant to -- just apparently
+    more faithfully. No `gid` is passed, so this exports the *entire*
+    workbook (every visible sheet), matching the Drive-based export it
+    replaces.
+
+    Undocumented as a formal Google API (there's no googleapiclient
+    wrapper for it) -- authenticated the same way as every other call in
+    this module (`google_auth.get_credentials`), just via a raw
+    `AuthorizedSession` GET instead of a `Resource` method, since this
+    isn't a `sheets`/`drive` API call. Raises RuntimeError if the
+    response isn't actually a PDF (e.g. an HTML error/login page, which
+    this endpoint can return with a 200 status instead of a clean HTTP
+    error for some failure modes)."""
+    creds = get_credentials()
+    session = AuthorizedSession(creds)
+    url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export"
+    response = session.get(url, params={"format": "pdf"})
+    response.raise_for_status()
+    content_type = response.headers.get("Content-Type", "")
+    if not content_type.startswith("application/pdf"):
+        raise RuntimeError(
+            f"Expected a PDF from Sheets' export endpoint for {spreadsheet_id}, got "
+            f"content-type {content_type!r} instead (first 200 bytes: {response.content[:200]!r})"
+        )
+    return response.content
 
 
 def export_xlsx(drive: Resource, file_id: str) -> bytes:

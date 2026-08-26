@@ -88,35 +88,41 @@ def test_copy_template_omits_parents_when_no_folder_is_given():
 
 
 def test_export_pdf_returns_the_downloaded_bytes():
-    drive = MagicMock()
-    request = MagicMock()
-    drive.files.return_value.export_media.return_value = request
+    """Uses Sheets' own dedicated export URL (via an AuthorizedSession),
+    not Drive's generic files.export -- see export_pdf's own docstring
+    for why."""
+    fake_response = MagicMock()
+    fake_response.headers = {"Content-Type": "application/pdf"}
+    fake_response.content = b"%PDF-fake-content"
+    fake_session = MagicMock()
+    fake_session.get.return_value = fake_response
 
-    def _fake_downloader(buffer, req):
-        assert req is request
-        buffer.write(b"%PDF-fake-content")
-        downloader = MagicMock()
-        downloader.next_chunk.return_value = (None, True)
-        return downloader
-
-    with patch("answer_extractor.google_sheets_export.MediaIoBaseDownload", side_effect=_fake_downloader):
-        result = export_pdf(drive, "FILE_ID")
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session) as session_cls:
+        result = export_pdf("FILE_ID")
 
     assert result == b"%PDF-fake-content"
-    drive.files.return_value.export_media.assert_called_once_with(fileId="FILE_ID", mimeType="application/pdf")
+    session_cls.assert_called_once_with("CREDS")
+    fake_response.raise_for_status.assert_called_once()
+    _, kwargs = fake_session.get.call_args
+    assert fake_session.get.call_args[0][0] == "https://docs.google.com/spreadsheets/d/FILE_ID/export"
+    assert kwargs["params"] == {"format": "pdf"}
 
 
-def test_export_pdf_keeps_downloading_until_done():
-    drive = MagicMock()
-    drive.files.return_value.export_media.return_value = MagicMock()
+def test_export_pdf_raises_if_the_response_is_not_actually_a_pdf():
+    """This endpoint can return a 200 with an HTML error/login page
+    instead of a clean HTTP error for some failure modes -- confirm that
+    gets caught rather than silently treated as a valid PDF."""
+    fake_response = MagicMock()
+    fake_response.headers = {"Content-Type": "text/html; charset=UTF-8"}
+    fake_response.content = b"<html>not a pdf</html>"
+    fake_session = MagicMock()
+    fake_session.get.return_value = fake_response
 
-    downloader = MagicMock()
-    downloader.next_chunk.side_effect = [(None, False), (None, False), (None, True)]
-
-    with patch("answer_extractor.google_sheets_export.MediaIoBaseDownload", return_value=downloader):
-        export_pdf(drive, "FILE_ID")
-
-    assert downloader.next_chunk.call_count == 3
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session):
+        with pytest.raises(RuntimeError, match="text/html"):
+            export_pdf("FILE_ID")
 
 
 def test_export_xlsx_requests_the_xlsx_mime_type():
