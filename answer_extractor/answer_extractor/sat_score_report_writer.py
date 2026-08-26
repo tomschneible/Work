@@ -76,10 +76,17 @@ _TITLE_PATTERN = re.compile(
     r"(?:\s*-\s*(?P<difficulty>Higher|Lower)\s+Difficulty)?\s*$",
     re.IGNORECASE,
 )
-# question/correct-answer/your-answer/mark-column -- every SAT block's own
-# width, used both to locate a block's individual columns (SatBlock) and to
-# size a hidden-block's column range (inactive_block_column_ranges).
-_BLOCK_WIDTH = 4
+# A block's full column span for hiding purposes: question, correct-answer,
+# your-answer, mark -- SatBlock's own four columns -- plus Domain and Skill,
+# two more columns immediately after mark_col that SatBlock doesn't track
+# (nothing here ever reads or writes them) but that a hidden block still
+# needs hidden too -- confirmed against a real filled report: hiding only
+# SatBlock's four columns left a block's Domain/Skill columns behind as
+# orphaned, unlabeled columns with no visible question/answer next to them,
+# which still reads as "not fully hidden" even though every actual answer
+# cell was gone. See inactive_block_column_ranges, the only place this is
+# used.
+_HIDDEN_BLOCK_WIDTH = 6
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -196,8 +203,8 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
 def inactive_block_column_ranges(ws: Worksheet, active_variants: Mapping[str, str]) -> List[Tuple[int, int]]:
     """0-indexed [start, end) column ranges (the shape a Sheets API
     dimension range needs) for every Module 2 block's own
-    _BLOCK_WIDTH columns that a filled report should hide -- every block
-    except the one subject-active administered difficulty actually
+    _HIDDEN_BLOCK_WIDTH columns that a filled report should hide -- every
+    block except the one subject-active administered difficulty actually
     written to. Module 1's own column is never included -- every student
     takes it, and it's never duplicated.
 
@@ -219,7 +226,7 @@ def inactive_block_column_ranges(ws: Worksheet, active_variants: Mapping[str, st
         if block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
     }
     all_module2_cols = {col for _row, col, _subject, module_slot in _scan_raw_titles(ws) if module_slot != "module1"}
-    return [(col - 1, col - 1 + _BLOCK_WIDTH) for col in sorted(all_module2_cols - keep_cols)]
+    return [(col - 1, col - 1 + _HIDDEN_BLOCK_WIDTH) for col in sorted(all_module2_cols - keep_cols)]
 
 
 def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:

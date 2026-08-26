@@ -32,7 +32,16 @@ def _write_template(path: Path) -> None:
     module docstring) -- confirmed against a real blank template where a
     *second* subject's blocks reuse the *first* subject's flag row rather
     than having their own; this fixture only needs one subject to prove
-    the same mechanism, since a second subject would just repeat it."""
+    the same mechanism, since a second subject would just repeat it.
+
+    Each block is 6 columns wide (question, correct, your-answer, mark,
+    Domain, Skill -- see _HIDDEN_BLOCK_WIDTH) plus one blank spacer column
+    before the next block's own title, matching a real template's spacing
+    exactly (confirmed against a real filled report) -- narrower spacing
+    would let inactive_block_column_ranges's hide range bleed into the
+    next block's own title column, a fixture-only collision that doesn't
+    happen against the real layout this is modeling.
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Student Responses"
@@ -40,49 +49,35 @@ def _write_template(path: Path) -> None:
     ws["A1"] = "Type name here, date below"
     ws["A2"] = dt.datetime(2024, 1, 1)  # dummy placeholder date, like the real templates'
 
-    # Module 1: columns A-D (question=A, correct=B, your=C, mark=D). No flag.
-    ws["A4"] = "Reading and Writing Module 1"
-    ws["B5"], ws["C5"] = "Correct Answer", "Your Answer"
-    for i, (q, correct) in enumerate([(1, "A"), (2, "B")], start=6):
-        ws.cell(row=i, column=1, value=q)
-        ws.cell(row=i, column=2, value=correct)
+    def _block(title_col: int, title: str, flagged: bool, answers) -> None:
+        ws.cell(row=4, column=title_col, value=title)
+        if flagged:
+            ws.cell(row=5, column=title_col, value=False)
+        ws.cell(row=5, column=title_col + 1, value="Correct Answer")
+        ws.cell(row=5, column=title_col + 2, value="Your Answer")
+        ws.cell(row=5, column=title_col + 4, value="Domain")
+        ws.cell(row=5, column=title_col + 5, value="Skill")
+        for i, (q, correct) in enumerate(answers, start=6):
+            ws.cell(row=i, column=title_col, value=q)
+            ws.cell(row=i, column=title_col + 1, value=correct)
 
-    # Module 2 Higher, first (canonical) copy: columns F-I, flag at F5.
-    ws["F4"] = "R & W Module 2 - Higher Difficulty"
-    ws["F5"] = False
-    ws["G5"], ws["H5"] = "Correct Answer", "Your Answer"
-    for i, (q, correct) in enumerate([(1, "C"), (2, "D")], start=6):
-        ws.cell(row=i, column=6, value=q)
-        ws.cell(row=i, column=7, value=correct)
-
-    # Module 2 Lower, first (canonical) copy: columns K-N, flag at K5.
-    ws["K4"] = "R & W Module 2 - Lower Difficulty"
-    ws["K5"] = False
-    ws["L5"], ws["M5"] = "Correct Answer", "Your Answer"
-    for i, (q, correct) in enumerate([(1, "F"), (2, "G")], start=6):
-        ws.cell(row=i, column=11, value=q)
-        ws.cell(row=i, column=12, value=correct)
-
-    # Module 2 Higher, duplicate copy (byte-identical key): columns P-S, flag at P5.
-    ws["P4"] = "R & W Module 2 - Higher Difficulty"
-    ws["P5"] = False
-    ws["Q5"], ws["R5"] = "Correct Answer", "Your Answer"
-    for i, (q, correct) in enumerate([(1, "C"), (2, "D")], start=6):
-        ws.cell(row=i, column=16, value=q)
-        ws.cell(row=i, column=17, value=correct)
-
-    # Module 2 Lower, duplicate copy: columns U-X, flag at U5.
-    ws["U4"] = "R & W Module 2 - Lower Difficulty"
-    ws["U5"] = False
-    ws["V5"], ws["W5"] = "Correct Answer", "Your Answer"
-    for i, (q, correct) in enumerate([(1, "F"), (2, "G")], start=6):
-        ws.cell(row=i, column=21, value=q)
-        ws.cell(row=i, column=22, value=correct)
+    # Module 1: columns A-F (question=A, correct=B, your=C, mark=D, Domain=E,
+    # Skill=F). No flag.
+    _block(1, "Reading and Writing Module 1", flagged=False, answers=[(1, "A"), (2, "B")])
+    # Module 2 Higher, canonical copy: columns H-M, flag at H5.
+    _block(8, "R & W Module 2 - Higher Difficulty", flagged=True, answers=[(1, "C"), (2, "D")])
+    # Module 2 Lower, canonical copy: columns O-T, flag at O5.
+    _block(15, "R & W Module 2 - Lower Difficulty", flagged=True, answers=[(1, "F"), (2, "G")])
+    # Module 2 Higher, duplicate copy (byte-identical key): columns V-AA, flag at V5.
+    _block(22, "R & W Module 2 - Higher Difficulty", flagged=True, answers=[(1, "C"), (2, "D")])
+    # Module 2 Lower, duplicate copy: columns AC-AH, flag at AC5.
+    _block(29, "R & W Module 2 - Lower Difficulty", flagged=True, answers=[(1, "F"), (2, "G")])
 
     # Scaled section score: value cell sits a couple rows *above* its own
-    # label, like the real templates' "Total Score"/section-score cells.
-    ws["Z10"] = 200
-    ws["Z12"] = "Reading\n& Writing\nScore"
+    # label, like the real templates' "Total Score"/section-score cells --
+    # well clear of every block's own columns (through AI).
+    ws["AN10"] = 200
+    ws["AN12"] = "Reading\n& Writing\nScore"
 
     wb.save(str(path))
 
@@ -100,11 +95,11 @@ def test_locate_sat_blocks_dedupes_duplicate_pairs_to_the_leftmost(tmp_path):
         ("reading and writing", "harder"),
         ("reading and writing", "easier"),
     }
-    assert by_key[("reading and writing", "harder")].question_col == 6  # F, not the P duplicate
-    assert by_key[("reading and writing", "easier")].question_col == 11  # K, not the U duplicate
+    assert by_key[("reading and writing", "harder")].question_col == 8  # H, not the V duplicate
+    assert by_key[("reading and writing", "easier")].question_col == 15  # O, not the AC duplicate
     assert by_key[("reading and writing", "module1")].flag_cell is None
-    assert by_key[("reading and writing", "harder")].flag_cell == (5, 6)
-    assert by_key[("reading and writing", "easier")].flag_cell == (5, 11)
+    assert by_key[("reading and writing", "harder")].flag_cell == (5, 8)
+    assert by_key[("reading and writing", "easier")].flag_cell == (5, 15)
 
 
 def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path):
@@ -129,23 +124,24 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # Module 1 (always active).
     assert _at(writes, "C6") == "A"
     assert _at(writes, "C7") == "B"
-    # Harder, canonical (F) copy -- filled.
-    assert _at(writes, "H6") == "C"
-    assert _at(writes, "H7") == "D"
-    assert _at(writes, "F5") is True
-    # Harder, duplicate (P) copy -- left completely untouched (not even a blank write).
-    assert _at(writes, "R6") is _MISSING
-    assert _at(writes, "R7") is _MISSING
-    assert _at(writes, "P5") is _MISSING
+    # Harder, canonical (H) copy -- filled.
+    assert _at(writes, "J6") == "C"
+    assert _at(writes, "J7") == "D"
+    assert _at(writes, "H5") is True
+    # Harder, duplicate (V) copy -- left completely untouched (not even a blank write).
+    assert _at(writes, "X6") is _MISSING
+    assert _at(writes, "X7") is _MISSING
+    assert _at(writes, "V5") is _MISSING
     # Easier -- not active, left untouched, flag never written (stays whatever the template had).
-    assert _at(writes, "M6") is _MISSING
-    assert _at(writes, "K5") is _MISSING
+    assert _at(writes, "Q6") is _MISSING
+    assert _at(writes, "O5") is _MISSING
     # The report should only show the filled-in module -- every other Module 2
-    # block (both the inactive Easier pair and the Harder duplicate) hidden.
+    # block (both the inactive Easier pair and the Harder duplicate), including
+    # each one's own Domain/Skill columns, hidden.
     assert writes.hidden_column_ranges == [
-        ("Student Responses", 10, 14),  # K -- Easier, canonical
-        ("Student Responses", 15, 19),  # P -- Harder, duplicate
-        ("Student Responses", 20, 24),  # U -- Easier, duplicate
+        ("Student Responses", 14, 20),  # O -- Easier, canonical
+        ("Student Responses", 21, 27),  # V -- Harder, duplicate
+        ("Student Responses", 28, 34),  # AC -- Easier, duplicate
     ]
 
 
@@ -154,11 +150,11 @@ def test_inactive_block_column_ranges_hides_every_module_2_block_but_the_active_
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    # Easier is active -- its canonical (K) column stays visible; Higher's
-    # canonical (F) is hidden along with both duplicates (P, U).
+    # Easier is active -- its canonical (O) column stays visible; Higher's
+    # canonical (H) is hidden along with both duplicates (V, AC).
     ranges = inactive_block_column_ranges(ws, {"reading and writing": "easier"})
 
-    assert ranges == [(5, 9), (15, 19), (20, 24)]  # F, P, U
+    assert ranges == [(7, 13), (21, 27), (28, 34)]  # H, V, AC
 
 
 def test_inactive_block_column_ranges_keeps_a_column_visible_if_any_subject_uses_it(tmp_path):
@@ -196,7 +192,7 @@ def test_inactive_block_column_ranges_hides_every_module_2_block_when_nothing_is
 
     ranges = inactive_block_column_ranges(ws, {})
 
-    assert ranges == [(5, 9), (10, 14), (15, 19), (20, 24)]  # F, K, P, U -- nothing administered
+    assert ranges == [(7, 13), (14, 20), (21, 27), (28, 34)]  # H, O, V, AC -- nothing administered
 
 
 def test_fill_sat_score_report_leaves_a_missing_answer_blank(tmp_path):
@@ -270,7 +266,7 @@ def test_fill_sat_score_report_writes_a_given_section_score(tmp_path):
         section_scores={"reading and writing": 590},
     )
 
-    assert _at(writes, "Z10") == 590
+    assert _at(writes, "AN10") == 590
 
 
 def test_fill_sat_score_report_leaves_score_cell_alone_when_not_given(tmp_path):
@@ -286,7 +282,7 @@ def test_fill_sat_score_report_leaves_score_cell_alone_when_not_given(tmp_path):
         # section_scores omitted entirely
     )
 
-    assert _at(writes, "Z10") is _MISSING  # never written -- template's own default (200) stands
+    assert _at(writes, "AN10") is _MISSING  # never written -- template's own default (200) stands
 
 
 def test_fill_sat_score_report_raises_for_an_unrecognized_score_subject(tmp_path):
