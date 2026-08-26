@@ -79,7 +79,7 @@ def test_fill_score_report_writes_name_date_and_answers(tmp_path):
     assert cells[("ScoreSheet", 8, 3)] is None  # C8, omitted
     assert cells[("ScoreSheet", 6, 10)] == "F"  # J6
     assert cells[("ScoreSheet", 7, 10)] == "H"  # J7
-    assert writes.hidden_column_ranges == ()  # nothing conditionally-administered to hide, unlike SAT
+    assert writes.cleared_ranges == ()  # nothing conditionally-administered to clear, unlike SAT
 
 
 def test_fill_score_report_never_writes_cells_it_should_leave_alone(tmp_path):

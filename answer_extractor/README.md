@@ -326,15 +326,25 @@ worked, or to look around the folder tree while debugging.
    Module 2 blocks per subject (Higher x2, Lower x2 -- see
    `sat_score_report_writer.py`'s own module docstring on why), but a
    given student only ever sat one difficulty; `fill_sat_score_report`
-   hides the other three block-groups (via
-   `sat_score_report_writer.inactive_block_column_ranges` and
-   `google_sheets_export.hide_columns`) rather than leave them showing on
-   the report with empty "Your Answer" columns. This is a whole-sheet,
-   column-position decision, not evaluated per subject -- a subject's
-   block columns are reused by position across every other subject
-   stacked underneath it (the same fact that makes the shared flag-cell
-   row work at all), so a column only gets hidden if *no* subject's
-   active variant uses it.
+   clears the value and border formatting of every other block occurrence
+   (via `sat_score_report_writer.blocks_to_clear` and
+   `google_sheets_export.clear_cells`) rather than leave them showing on
+   the report with empty "Your Answer" columns.
+
+   Deliberately scoped to one block *occurrence's own row range*, not a
+   whole-column hide (an earlier version of this worked that way, and got
+   replaced): a subject's block columns are reused by column *position*
+   across every other subject stacked underneath it (the same fact that
+   makes the shared flag-cell row work at all) -- confirmed live against a
+   real filled report where Reading & Writing's active variant (Higher)
+   and Math's (Lower) differed, which a whole-column hide can't represent
+   at all (whichever column you hide, some subject's real data lives in
+   it). Clearing each occurrence's own rows instead means Math's own
+   Higher-difficulty occurrence (which it didn't sit) gets cleared within
+   Math's own rows without touching Reading & Writing's separate
+   occurrence of the same columns elsewhere on the sheet -- each subject
+   ends up showing only its own real pick, regardless of what any other
+   subject picked.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

@@ -86,18 +86,21 @@ class FillResult:
     """What a fill_fn (score_report_writer.fill_score_report,
     sat_score_report_writer.fill_sat_score_report) returns to
     google_report_export_common.export_filled_report: the individual
-    cell writes needed, plus any column ranges that should be hidden
-    from the exported PDF once those writes land. `hidden_column_ranges`
-    is empty for every fill_fn except SAT's -- it uses this to hide
-    whichever Module 2 block variant (and duplicate/twin block) wasn't
-    actually administered, so the report only shows the modules that
-    were actually filled in; see
-    sat_score_report_writer.inactive_block_column_ranges. Each entry is
-    (sheet_name, 0-indexed start column, 0-indexed end column,
-    exclusive) -- the shape hide_columns' Sheets API request needs."""
+    cell writes needed, plus any rectangles that should be cleared
+    (value and border formatting both) from the exported PDF once those
+    writes land. `cleared_ranges` is empty for every fill_fn except
+    SAT's -- it uses this to clear whichever Module 2 block occurrence
+    (a subject's other difficulty, or a duplicate/twin) wasn't actually
+    administered, so the report only shows the modules that were
+    actually filled in; see sat_score_report_writer.blocks_to_clear for
+    why this has to be scoped to one occurrence's own row range rather
+    than hiding a whole column. Each entry is (sheet_name, 0-indexed
+    start row, 0-indexed end row, 0-indexed start column, 0-indexed end
+    column) -- all ends exclusive, the shape clear_cells' Sheets API
+    request needs."""
 
     cell_writes: List[CellWrite]
-    hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
+    cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -261,38 +264,47 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
     ).execute()
 
 
-def hide_columns(
-    sheets: Resource, spreadsheet_id: str, column_ranges: Sequence[Tuple[str, int, int]]
+def clear_cells(
+    sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int, int, int]]
 ) -> None:
-    """Hide `column_ranges` -- each (sheet_name, 0-indexed start, 0-indexed
-    end (exclusive)), the shape FillResult.hidden_column_ranges carries --
-    on the live Sheet at `spreadsheet_id`, via one Sheets API `batchUpdate`
-    setting each range's own `hiddenByUser` directly (a per-report,
-    per-copy layout change, unrelated to hide_gridlines' template-wide
-    metadata fix above). One `get` call resolves every sheet name to its
-    numeric sheetId first, since the batchUpdate request itself only
-    accepts that, not a name. A no-op (no API call at all) if
-    `column_ranges` is empty. Raises ValueError if a range names a sheet
-    this spreadsheet doesn't have."""
-    if not column_ranges:
+    """Clear both the value and the border formatting of every cell in
+    each of `ranges` -- (sheet_name, 0-indexed start row, 0-indexed end
+    row, 0-indexed start column, 0-indexed end column), all ends
+    exclusive, the shape FillResult.cleared_ranges carries -- via one
+    Sheets API `batchUpdate` `repeatCell` request per range. A per-report,
+    per-copy content change (unrelated to hide_gridlines' template-wide
+    metadata fix above) -- used by sat_score_report_writer.
+    fill_sat_score_report to remove a Module 2 block occurrence that
+    wasn't administered. Deliberately row-scoped rather than a whole-
+    column hide (an earlier version of this, hide_columns, worked that
+    way and got replaced -- see blocks_to_clear's own docstring for why a
+    whole-column hide isn't safe here): clearing only ever affects the
+    exact rows given, so it can't remove another subject's own real
+    answers sitting in the same columns but a different row range. One
+    `get` call resolves every sheet name to its numeric sheetId first,
+    since the batchUpdate request itself only accepts that, not a name.
+    A no-op (no API call at all) if `ranges` is empty. Raises ValueError
+    if a range names a sheet this spreadsheet doesn't have."""
+    if not ranges:
         return
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
     sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
     requests = []
-    for sheet_name, start, end in column_ranges:
+    for sheet_name, start_row, end_row, start_col, end_col in ranges:
         if sheet_name not in sheet_id_by_title:
             raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
         requests.append(
             {
-                "updateDimensionProperties": {
+                "repeatCell": {
                     "range": {
                         "sheetId": sheet_id_by_title[sheet_name],
-                        "dimension": "COLUMNS",
-                        "startIndex": start,
-                        "endIndex": end,
+                        "startRowIndex": start_row,
+                        "endRowIndex": end_row,
+                        "startColumnIndex": start_col,
+                        "endColumnIndex": end_col,
                     },
-                    "properties": {"hiddenByUser": True},
-                    "fields": "hiddenByUser",
+                    "cell": {},
+                    "fields": "userEnteredValue,userEnteredFormat.borders",
                 }
             }
         )

@@ -23,11 +23,11 @@ from googleapiclient.errors import HttpError
 
 from .google_sheets_export import (
     FillResult,
+    clear_cells,
     copy_template,
     delete_file,
     export_pdf,
     export_xlsx,
-    hide_columns,
     write_cells,
 )
 from .template_lookup import find_template_file, resolve_template_folder
@@ -70,12 +70,12 @@ def export_filled_report(
     API (google_sheets_export.write_cells) -- nothing else about the
     workbook is ever touched or re-converted through .xlsx (see
     google_sheets_export.py's own module docstring for why that
-    matters). Its `hidden_column_ranges`, if any, are then applied via
-    google_sheets_export.hide_columns before the PDF is exported -- SAT's
-    fill_fn uses this so the report only shows the Module 2 variant that
-    was actually administered (see
-    sat_score_report_writer.inactive_block_column_ranges); ACT's leaves
-    it empty and this step is skipped entirely.
+    matters). Its `cleared_ranges`, if any, are then applied via
+    google_sheets_export.clear_cells before the PDF is exported -- SAT's
+    fill_fn uses this so the report only shows the Module 2 blocks that
+    were actually administered (see
+    sat_score_report_writer.blocks_to_clear); ACT's leaves it empty and
+    this step is skipped entirely.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -119,7 +119,7 @@ def export_filled_report(
                 f.write(export_xlsx(drive, copy_id))
             result = fill_fn(tmp_path)
             write_cells(sheets, copy_id, result.cell_writes)
-            hide_columns(sheets, copy_id, result.hidden_column_ranges)
+            clear_cells(sheets, copy_id, result.cleared_ranges)
             pdf_bytes = export_pdf(drive, copy_id)
         except Exception:
             try:

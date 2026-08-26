@@ -76,17 +76,14 @@ _TITLE_PATTERN = re.compile(
     r"(?:\s*-\s*(?P<difficulty>Higher|Lower)\s+Difficulty)?\s*$",
     re.IGNORECASE,
 )
-# A block's full column span for hiding purposes: question, correct-answer,
+# A block's full column span for clearing purposes: question, correct-answer,
 # your-answer, mark -- SatBlock's own four columns -- plus Domain and Skill,
 # two more columns immediately after mark_col that SatBlock doesn't track
-# (nothing here ever reads or writes them) but that a hidden block still
-# needs hidden too -- confirmed against a real filled report: hiding only
-# SatBlock's four columns left a block's Domain/Skill columns behind as
-# orphaned, unlabeled columns with no visible question/answer next to them,
-# which still reads as "not fully hidden" even though every actual answer
-# cell was gone. See inactive_block_column_ranges, the only place this is
-# used.
-_HIDDEN_BLOCK_WIDTH = 6
+# (nothing here ever reads or writes them) but that a cleared block still
+# needs cleared too, or its Domain/Skill columns are left behind looking
+# like an orphaned, unlabeled leftover even though every actual answer cell
+# is gone. See blocks_to_clear, the only place this is used.
+_CLEAR_BLOCK_WIDTH = 6
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -123,9 +120,9 @@ class SatBlock:
 def _scan_raw_titles(ws: Worksheet) -> List[Tuple[int, int, str, str]]:
     """Every block title found anywhere on `ws`, as (row, col, subject,
     module_slot) -- *not* deduplicated (see locate_sat_blocks, which keeps
-    only the leftmost per (subject, module_slot); inactive_block_column_ranges
+    only the leftmost per (subject, module_slot); _scan_block_occurrences
     needs every occurrence, including duplicates/twins, to know what to
-    hide). Raises ValueError if a Module 2 title is missing its
+    clear). Raises ValueError if a Module 2 title is missing its
     Higher/Lower difficulty."""
     raw_titles: List[Tuple[int, int, str, str]] = []
     for row in ws.iter_rows():
@@ -146,6 +143,17 @@ def _scan_raw_titles(ws: Worksheet) -> List[Tuple[int, int, str, str]]:
                 module_slot = _DIFFICULTY_TO_SLOT[difficulty.lower()]
             raw_titles.append((cell.row, cell.column, subject, module_slot))
     return raw_titles
+
+
+def _find_header_row(ws: Worksheet, title_row: int, title_col: int) -> int:
+    """The row within _HEADER_SEARCH_ROWS of `title_row` whose
+    `title_col + 2` cell reads "Your Answer" -- shared by locate_sat_blocks
+    and _scan_block_occurrences, both of which need to find one block
+    occurrence's own header row. Raises ValueError if it can't be found."""
+    for candidate_row in range(title_row, title_row + _HEADER_SEARCH_ROWS + 1):
+        if ws.cell(row=candidate_row, column=title_col + 2).value == "Your Answer":
+            return candidate_row
+    raise ValueError(f"Could not find a 'Your Answer' header below the title at row {title_row}, column {title_col}")
 
 
 def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
@@ -174,17 +182,7 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
         if key in blocks_by_key and title_col >= blocks_by_key[key].question_col:
             continue  # a duplicate block further right -- keep the leftmost one already found
 
-        header_row = None
-        for candidate_row in range(title_row, title_row + _HEADER_SEARCH_ROWS + 1):
-            if ws.cell(row=candidate_row, column=title_col + 2).value == "Your Answer":
-                header_row = candidate_row
-                break
-        if header_row is None:
-            raise ValueError(
-                f"Could not find a 'Your Answer' header below {subject!r} {module_slot!r}'s title "
-                f"at row {title_row}, column {title_col}"
-            )
-
+        header_row = _find_header_row(ws, title_row, title_col)
         flag_cell = flag_cell_by_col.get(title_col) if module_slot != "module1" else None
 
         blocks_by_key[key] = SatBlock(
@@ -200,33 +198,105 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
     return list(blocks_by_key.values())
 
 
-def inactive_block_column_ranges(ws: Worksheet, active_variants: Mapping[str, str]) -> List[Tuple[int, int]]:
-    """0-indexed [start, end) column ranges (the shape a Sheets API
-    dimension range needs) for every Module 2 block's own
-    _HIDDEN_BLOCK_WIDTH columns that a filled report should hide -- every
-    block except the one subject-active administered difficulty actually
-    written to. Module 1's own column is never included -- every student
-    takes it, and it's never duplicated.
+@dataclasses.dataclass(frozen=True)
+class _BlockOccurrence:
+    """One raw title occurrence's own full extent -- unlike SatBlock (one
+    already-deduplicated block per (subject, module_slot), used to know
+    *where to write*), this tracks every occurrence individually,
+    including duplicates/twins, each with its own row range -- used to
+    know *what to clear* (see blocks_to_clear)."""
 
-    This is a whole-sheet decision keyed by column, not evaluated
-    per-subject: a subject's block columns are reused by column
-    *position* across every other subject stacked underneath it (see this
-    module's own docstring on flag cells) -- so a column stays visible if
-    *any* subject's active variant uses it, even though it's inactive
-    (and therefore blank) for another subject sharing those same columns.
-    Building the "keep" set from every block returned by locate_sat_blocks
-    -- one already-deduplicated leftmost block per (subject, module_slot)
-    -- and then hiding every *other* raw title occurrence (including
-    duplicates/twins) handles that correctly by construction, without
-    needing to reason about which subject owns which column explicitly.
+    subject: str
+    module_slot: str
+    title_row: int
+    title_col: int
+    header_row: int  # also where the shared flag cell lives, at (header_row, title_col) -- see blocks_to_clear
+    last_row: int  # the block's own last question row (inclusive)
+
+
+def _scan_block_occurrences(ws: Worksheet) -> List[_BlockOccurrence]:
+    occurrences = []
+    for title_row, title_col, subject, module_slot in _scan_raw_titles(ws):
+        header_row = _find_header_row(ws, title_row, title_col)
+        r = header_row + 1
+        while ws.cell(row=r, column=title_col).value is not None:
+            r += 1
+        occurrences.append(_BlockOccurrence(subject, module_slot, title_row, title_col, header_row, last_row=r - 1))
+    return occurrences
+
+
+def blocks_to_clear(ws: Worksheet, active_variants: Mapping[str, str]) -> List[Tuple[int, int, int, int]]:
+    """0-indexed (start_row, end_row, start_col, end_col) rectangles (end
+    exclusive -- the shape a Sheets API GridRange needs) covering every
+    Module 2 block occurrence that isn't the one subject-active
+    administered difficulty actually written to -- every duplicate/twin,
+    plus a subject's own *other* difficulty's canonical block. Module 1 is
+    never included -- every student takes it, and it's never duplicated.
+
+    Deliberately *per occurrence*, not per column the way an earlier
+    version of this (inactive_block_column_ranges, since removed) worked:
+    a subject's block columns are reused by column *position* across
+    every other subject stacked underneath it (see this module's own
+    docstring on flag cells), so hiding a whole column would also hide
+    another subject's own, different-row occurrence of that same column
+    if that subject's active variant happened to live there -- confirmed
+    live against a real filled report where Reading & Writing's active
+    variant (Higher) and Math's (Lower) differed, which a column-wide hide
+    can't represent at all (whichever column you hide, some subject's
+    real data lives in it). Clearing each occurrence's own row range
+    instead of its whole column sidesteps that entirely: Math's own
+    occurrence of "Higher Difficulty" (which it didn't use) gets cleared
+    within Math's own rows without touching Reading & Writing's separate
+    occurrence of the same title elsewhere on the sheet.
+
+    Each occurrence's own shared flag cell -- at (header_row, title_col),
+    see SatBlock.flag_cell -- is deliberately carved out of its rectangle
+    rather than cleared along with everything else: that one cell is the
+    single sheet-wide boolean an *other* subject's active pick may depend
+    on (the same fact that makes column-wide hiding unsafe in the first
+    place), and it happens to fall inside this occurrence's own row range
+    whenever this occurrence's rows span the sheet's shared flag row (true
+    for whichever subject's block appears first on the sheet). Clearing it
+    unconditionally would silently un-check a flag write_cells just made
+    for a different subject earlier in the same run. Carving it out costs
+    nothing when no other subject needs it -- an unused flag cell being
+    left at whatever the template's default was is harmless (see this
+    module's own docstring).
+
+    Each rectangle spans the full 6-column block width (title, correct
+    answer, your answer, mark, Domain, Skill -- see _CLEAR_BLOCK_WIDTH),
+    since google_sheets_export.clear_cells (the only caller of this)
+    clears both value and border formatting for whatever rectangle it's
+    given -- leaving column slack would leave a stray Domain/Skill column,
+    or a half-cleared answer.
     """
-    keep_cols = {
-        block.question_col
+    canonical_cols = {
+        (block.subject, block.module_slot): block.question_col
         for block in locate_sat_blocks(ws)
         if block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
     }
-    all_module2_cols = {col for _row, col, _subject, module_slot in _scan_raw_titles(ws) if module_slot != "module1"}
-    return [(col - 1, col - 1 + _HIDDEN_BLOCK_WIDTH) for col in sorted(all_module2_cols - keep_cols)]
+    rectangles = []
+    for occurrence in _scan_block_occurrences(ws):
+        if occurrence.module_slot == "module1":
+            continue
+        key = (occurrence.subject, occurrence.module_slot)
+        if canonical_cols.get(key) == occurrence.title_col:
+            continue  # the one occurrence that's actually filled in and shown
+
+        top, bottom = occurrence.title_row - 1, occurrence.last_row
+        left, right = occurrence.title_col - 1, occurrence.title_col - 1 + _CLEAR_BLOCK_WIDTH
+        flag_row = occurrence.header_row - 1  # 0-indexed
+        # correct-answer/your-answer/mark/Domain/Skill (everything but the
+        # title/flag column) for the full row range -- never shares a cell
+        # with another subject, so no need to carve anything out of it.
+        rectangles.append((top, bottom, left + 1, right))
+        # The title/flag column, split around the one cell (header_row,
+        # title_col) that might be a flag another subject still needs.
+        if top < flag_row:
+            rectangles.append((top, flag_row, left, left + 1))
+        if flag_row + 1 < bottom:
+            rectangles.append((flag_row + 1, bottom, left, left + 1))
+    return rectangles
 
 
 def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
@@ -286,23 +356,23 @@ def fill_sat_score_report(
     """Return every cell write needed to fill `template_path`'s
     `sheet_name` tab in with the student's name, test date, every answer
     in `answers`, and (if given) each subject's scaled section score --
-    plus, in the same FillResult, the column ranges for every Module 2
-    block variant that wasn't administered (see
-    inactive_block_column_ranges), so the exported report only shows the
-    modules that were actually filled in rather than every duplicate/twin
-    block the template ships with.
+    plus, in the same FillResult, the rectangles to clear for every
+    Module 2 block occurrence that wasn't administered (see
+    blocks_to_clear), so the exported report only shows the modules that
+    were actually filled in rather than every duplicate/twin block the
+    template ships with.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
     answer_keys.annotate_rows) -- this is what decides which of each
     subject's two same-difficulty block-pairs gets its flag cell set and
     its answers written (and, in FillResult, stays visible); the other
-    pair is never touched, and every other block gets hidden. `answers`
-    must only contain keys for "module1" or each subject's active variant
-    -- an entry for the *inactive* variant raises, since writing it would
-    silently go nowhere the sheet's own formulas count (its flag stays
-    False). A template question with no entry in `answers` is left blank
-    (a legitimate omitted bubble).
+    pair is never touched, and every other occurrence gets cleared.
+    `answers` must only contain keys for "module1" or each subject's
+    active variant -- an entry for the *inactive* variant raises, since
+    writing it would silently go nowhere the sheet's own formulas count
+    (its flag stays False). A template question with no entry in
+    `answers` is left blank (a legitimate omitted bubble).
 
     `section_scores` maps subject -> scaled score (e.g. {"math": 620}) --
     unlike every other field here, this isn't something this pipeline can
@@ -365,7 +435,8 @@ def fill_sat_score_report(
         unmatched = ", ".join(f"{subject} {slot} {question}" for subject, slot, question in sorted(remaining))
         raise ValueError(f"{template_path}!{sheet_name} has no answer block for: {unmatched}")
 
-    hidden_ranges = [
-        (sheet_name, start, end) for start, end in inactive_block_column_ranges(ws, active_variants)
+    cleared_ranges = [
+        (sheet_name, top, bottom, left, right)
+        for top, bottom, left, right in blocks_to_clear(ws, active_variants)
     ]
-    return FillResult(cell_writes=writes, hidden_column_ranges=hidden_ranges)
+    return FillResult(cell_writes=writes, cleared_ranges=cleared_ranges)
