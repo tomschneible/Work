@@ -80,7 +80,7 @@ def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path)
     with patch(f"{_MODULE}.export_sat_score_report", return_value=b"%PDF-fake") as export_mock:
         pdf_path = export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
-    assert pdf_path == tmp_path / "Jane Student - March 8, 2026.pdf"
+    assert pdf_path == tmp_path / "Student, Jane 2027 DSAT 8 March 8 2026.pdf"
     assert pdf_path.read_bytes() == b"%PDF-fake"
     assert prompt_fn.call_count == 2
 

@@ -93,11 +93,11 @@ def test_parse_scan_filename_ignores_a_descriptive_suffix_plus_page_index():
     """Both of the above stacked together, exactly as seen live: a
     multi-page PDF whose own filename already had a descriptive suffix."""
     result = parse_scan_filename(
-        "Kelson, Gabriella 2028 ACT 25MC1 August 2026 Test Scan & Bubble_p49"
+        "Learner, Priya 2028 ACT 25MC1 August 2026 Test Scan & Bubble_p49"
     )
 
-    assert result.last_name == "Kelson"
-    assert result.first_name == "Gabriella"
+    assert result.last_name == "Learner"
+    assert result.first_name == "Priya"
     assert result.grad_year == 2028
     assert result.test_code == "25MC1"
     assert result.test_date == dt.date(2026, 8, 1)
@@ -107,3 +107,33 @@ def test_parse_scan_filename_ignores_a_descriptive_suffix_plus_page_index():
 def test_parse_scan_filename_raises_on_invalid_calendar_date():
     with pytest.raises(ValueError, match="invalid date"):
         parse_scan_filename("Student, Jane 2027 ACT 25MC1 February 30 2026")
+
+
+def test_canonical_filename_reconstructs_the_input_shape_with_a_day():
+    scan = parse_scan_filename("Student, Jane 2027 ACT 25MC1 January 17 2026")
+
+    assert scan.canonical_filename() == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+
+
+def test_canonical_filename_reconstructs_the_input_shape_without_a_day():
+    scan = parse_scan_filename("Student, Jane 2027 ACT 25MC1 January 2026")
+
+    assert scan.canonical_filename() == "Student, Jane 2027 ACT 25MC1 January 2026"
+
+
+def test_canonical_filename_appends_flag_only_when_flagged():
+    scan = parse_scan_filename("Student, Jane 2027 ACT 25MC1 January 17 2026")
+
+    assert scan.canonical_filename(flagged=True) == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG"
+    assert scan.canonical_filename(flagged=False) == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+
+
+def test_canonical_filename_uses_the_family_exactly_as_parsed_never_a_separate_label():
+    """Confirms there's no redundant "SAT DSAT ..." double-labeling: the
+    family token is always exactly scan.test_family, whatever the input
+    filename actually carried (ACT, SAT, or DSAT)."""
+    dsat_scan = parse_scan_filename("Smith, John 2026 DSAT 8 March 8 2026")
+    sat_scan = parse_scan_filename("Smith, John 2026 SAT 1234 March 2026")
+
+    assert dsat_scan.canonical_filename() == "Smith, John 2026 DSAT 8 March 8 2026"
+    assert sat_scan.canonical_filename() == "Smith, John 2026 SAT 1234 March 2026"

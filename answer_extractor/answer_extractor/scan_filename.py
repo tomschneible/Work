@@ -72,6 +72,40 @@ class ScanFilename:
             return f"{self.test_date.strftime('%B')} {self.test_date.day}, {self.test_date.year}"
         return self.test_date.strftime("%B %Y")
 
+    def canonical_filename(self, *, flagged: bool = False) -> str:
+        """This pipeline's own naming convention for a generated
+        score-report PDF (and the kept Google Sheet working copy behind
+        it -- see score_report_pipeline.output_base_name/
+        sat_score_report_pipeline.export_sat_report) -- the org's own
+        preference: name a report's output the same way its scanned input
+        was named. Reconstructs "LastName, FirstName GradYear TestFamily
+        TestCode Month [Day] Year" from this scan's own already-parsed
+        fields -- test_family here is always exactly what the input
+        filename carried (ACT, SAT, or DSAT; see this module's own
+        docstring), never a separately-chosen label, so a SAT/DSAT report
+        is never redundantly double-labeled ("SAT DSAT ...").
+
+        Deliberately doesn't reuse formatted_test_date, which puts a comma
+        before the year ("January 17, 2026") for report-content display --
+        this needs the comma-less "January 17 2026" shape that matches the
+        input convention (and that parse_scan_filename itself expects),
+        not the display format.
+
+        `flagged` adds a trailing " FLAG" -- for a review-worthy ACT sheet
+        only (see score_report_pipeline.py); SAT has no equivalent
+        confidence signal to flag on, so sat_score_report_pipeline.py
+        never passes True.
+        """
+        if self.day_known:
+            date_part = f"{self.test_date.strftime('%B')} {self.test_date.day} {self.test_date.year}"
+        else:
+            date_part = self.test_date.strftime("%B %Y")
+        suffix = " FLAG" if flagged else ""
+        return (
+            f"{self.last_name}, {self.first_name} {self.grad_year} {self.test_family} "
+            f"{self.test_code} {date_part}{suffix}"
+        )
+
 
 def parse_scan_filename(label: str) -> ScanFilename:
     """Raises ValueError if `label` doesn't match the expected shape --

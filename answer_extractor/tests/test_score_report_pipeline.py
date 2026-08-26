@@ -50,8 +50,8 @@ def test_answers_from_result_blanks_multiple_but_keeps_a_low_confidence_answer()
 
 def test_output_base_name_appends_flag_suffix_only_when_flagged():
     scan = parse_scan_filename("Student, Jane 2027 ACT 25MC1 January 17 2026")
-    assert output_base_name(scan, flagged=False) == "Jane Student - January 17, 2026"
-    assert output_base_name(scan, flagged=True) == "Jane Student - January 17, 2026 FLAG"
+    assert output_base_name(scan, flagged=False) == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+    assert output_base_name(scan, flagged=True) == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG"
 
 
 def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
@@ -61,17 +61,17 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
         outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
 
-    assert outcome.pdf_path == tmp_path / "Jane Student - January 17, 2026.pdf"
+    assert outcome.pdf_path == tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf"
     assert outcome.pdf_path.read_bytes() == b"%PDF-fake"
     assert outcome.xlsx_path is None
-    assert not (tmp_path / "Jane Student - January 17, 2026.xlsx").exists()
+    assert not (tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.xlsx").exists()
 
     kwargs = export_mock.call_args.kwargs
     assert kwargs["category_path"] == ["ACT", "Enhanced"]
     assert kwargs["test_code"] == "25MC1"
     assert kwargs["student_name"] == "Jane Student"
     assert kwargs["test_date"] == parse_scan_filename(result.label).test_date
-    assert kwargs["output_name"] == "Jane Student - January 17, 2026"
+    assert kwargs["output_name"] == "Student, Jane 2027 ACT 25MC1 January 17 2026"
 
 
 def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_review_items(tmp_path):
@@ -82,9 +82,9 @@ def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_rev
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
 
-    assert outcome.pdf_path.name == "Jane Student - January 17, 2026 FLAG.pdf"
+    assert outcome.pdf_path.name == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG.pdf"
     assert outcome.xlsx_path is not None
-    assert outcome.xlsx_path.name == "Jane Student - January 17, 2026 FLAG.xlsx"
+    assert outcome.xlsx_path.name == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG.xlsx"
     assert outcome.xlsx_path.exists()  # write_xlsx actually ran, not mocked
 
 

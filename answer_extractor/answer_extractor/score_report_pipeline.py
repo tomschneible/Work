@@ -54,8 +54,10 @@ def answers_from_result(result: SheetResult) -> Dict[Tuple[str, int], str]:
 
 
 def output_base_name(scan: ScanFilename, flagged: bool) -> str:
-    suffix = " FLAG" if flagged else ""
-    return f"{scan.student_name} - {scan.formatted_test_date}{suffix}"
+    """This sheet's output filename (PDF, and .xlsx when flagged) -- see
+    ScanFilename.canonical_filename for the shape and why it's built this
+    way."""
+    return scan.canonical_filename(flagged=flagged)
 
 
 @dataclasses.dataclass(frozen=True)

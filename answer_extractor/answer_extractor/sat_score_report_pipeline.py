@@ -150,7 +150,7 @@ def export_sat_report(
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
     test_date = scan.test_date if scan.day_known else scan.formatted_test_date
-    base_name = f"{scan.student_name} - {scan.formatted_test_date}"
+    base_name = scan.canonical_filename()
 
     subjects = sorted({normalize_subject(row.section) for row in rows})
     section_scores: Dict[str, int] = {}

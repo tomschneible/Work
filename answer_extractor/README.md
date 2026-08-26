@@ -316,9 +316,17 @@ worked, or to look around the folder tree while debugging.
    the rest of that glue). Cancelling a prompt, or a Module 2 whose
    difficulty couldn't be confidently identified, falls that report back
    to the combined `.xlsx` the same as any other export failure.
-5. **Where files land.** PDFs (and any flagged `.xlsx`) are written to
-   the Desktop by default -- override with `--report-output-dir` or
-   `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`.
+5. **Where files land, and how they're named.** PDFs (and any flagged
+   `.xlsx`) are written to the Desktop by default -- override with
+   `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
+   report's own filename (and the kept Google Sheet working copy behind
+   it) is the same "LastName, FirstName GradYear TestFamily TestCode
+   Month [Day] Year" shape the scan's own input filename was parsed from
+   in the first place (`ScanFilename.canonical_filename`, point 2 above)
+   -- plus a trailing `" FLAG"` for a flagged ACT sheet (point 4). The
+   family token is always exactly whatever the input carried (`ACT`,
+   `SAT`, or `DSAT`) -- never a separately-chosen label layered on top, so
+   a DSAT report is never redundantly double-labeled ("SAT DSAT ...").
 
 `answer_extractor/auto_cli.py` (what the macOS droplet calls) is where
 this is wired in: each auto-detected bubble sheet, and each identified
