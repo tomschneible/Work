@@ -39,6 +39,15 @@ fail() {
   exit 1
 }
 
+# Non-fatal but worth a click-through: e.g. a sheet fell back to the plain
+# .xlsx instead of its own Sheets-report PDF. A passive notification is
+# too easy to miss for something this consequential, and there's no
+# terminal to print it to either.
+warn_dialog() {
+  local message="$1"
+  osascript -e "display alert \"Answer Extractor\" message \"$message\"" >/dev/null 2>&1 || true
+}
+
 if [ "$#" -eq 0 ]; then
   fail "No files were dropped."
 fi
@@ -67,17 +76,31 @@ if [ ! -x "$VENV_PYTHON" ]; then
   fail "Python environment not found at $VENV_PYTHON. Run the one-time setup in README.md (\"macOS drag-and-drop app\") first."
 fi
 
+STDERR_FILE="$(mktemp)"
+trap 'rm -f "$STDERR_FILE"' EXIT
+
 set +e
 # The ${arr[@]+"${arr[@]}"} form (not plain "${arr[@]}") is required for an
 # empty array under `set -u` on macOS's stock bash 3.2, which otherwise
 # raises "unbound variable" expanding an empty array.
-ERROR_OUTPUT="$("$VENV_PYTHON" -m answer_extractor.auto_cli --input "$@" ${TEMPLATE_ARGS[@]+"${TEMPLATE_ARGS[@]}"} --output "$OUTPUT" 2>&1 >/dev/null)"
+STDOUT_OUTPUT="$("$VENV_PYTHON" -m answer_extractor.auto_cli --input "$@" ${TEMPLATE_ARGS[@]+"${TEMPLATE_ARGS[@]}"} --output "$OUTPUT" 2>"$STDERR_FILE")"
 STATUS=$?
 set -e
+STDERR_OUTPUT="$(cat "$STDERR_FILE")"
 
 if [ "$STATUS" -ne 0 ]; then
-  fail "Scan failed:\n$ERROR_OUTPUT"
+  fail "Scan failed:\n$STDERR_OUTPUT"
 fi
 
-notify "Wrote $(basename "$OUTPUT")"
+# auto_cli prints warnings to stderr for anything non-fatal that still
+# changed what you got -- most importantly, a sheet falling back to the
+# plain .xlsx instead of its own Sheets-report PDF (Google auth not set
+# up, no matching Drive template, a bad filename, ...). The run still
+# "succeeded" (you get a valid .xlsx either way), so don't lose that
+# explanation just because nothing failed outright.
+if [ -n "$STDERR_OUTPUT" ]; then
+  warn_dialog "Wrote $(basename "$OUTPUT"), but:\n\n$STDERR_OUTPUT"
+else
+  notify "Wrote $(basename "$OUTPUT")"
+fi
 open "$OUTPUT"
