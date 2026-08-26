@@ -99,14 +99,30 @@ fi
 # auto_cli prints warnings to stderr for anything non-fatal that still
 # changed what you got -- most importantly, a sheet falling back to the
 # plain .xlsx instead of its own Sheets-report PDF (Google auth not set
-# up, no matching Drive template, a bad filename, ...). The run still
-# "succeeded" (you get a valid .xlsx either way), so don't lose that
-# explanation just because nothing failed outright. $STDOUT_OUTPUT is
-# auto_cli's own one-line summary (e.g. "1 score report(s) exported to
+# up, no matching Drive template, a bad filename, ...), but also one line
+# per bubble-sheet-shaped page in a batch that just isn't one (routine and
+# expected for a multi-page scan bundle where only one page is the real
+# answer grid). The run still "succeeded" (you get a valid .xlsx either
+# way), so don't lose that explanation just because nothing failed
+# outright -- but a real batch can produce dozens of these lines, and
+# dumping all of them into a single AppleScript alert produces an
+# oversized, effectively uncloseable dialog. So the full text always goes
+# to $LOG_FILE, and only a short preview (plus a pointer to the rest, if
+# there is more) goes in the dialog itself. $STDOUT_OUTPUT is auto_cli's
+# own one-line summary (e.g. "1 score report(s) exported to
 # /Users/you/Desktop."), which already says where everything actually
 # went, so it's used directly rather than a generic "Wrote <name>".
+LOG_FILE="$HOME/Desktop/Answer Extractor - Last Run Warnings.txt"
+MAX_DIALOG_CHARS=600
+
 if [ -n "$STDERR_OUTPUT" ]; then
-  warn_dialog "$STDOUT_OUTPUT\n\n$STDERR_OUTPUT"
+  printf '%s\n' "$STDERR_OUTPUT" >"$LOG_FILE"
+  if [ "${#STDERR_OUTPUT}" -gt "$MAX_DIALOG_CHARS" ]; then
+    DIALOG_STDERR="$(printf '%s' "$STDERR_OUTPUT" | cut -c1-"$MAX_DIALOG_CHARS")...\n\n(truncated -- full details saved to \"$LOG_FILE\")"
+  else
+    DIALOG_STDERR="$STDERR_OUTPUT"
+  fi
+  warn_dialog "$STDOUT_OUTPUT\n\n$DIALOG_STDERR"
 else
   notify "$STDOUT_OUTPUT"
 fi

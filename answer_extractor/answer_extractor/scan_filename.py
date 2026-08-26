@@ -9,6 +9,14 @@ nothing else in the input carries it.
 TestFamily is "ACT", "SAT", or "DSAT" -- confirmed against a real
 Digital SAT filename using "DSAT", not "SAT" (sat_score_report_pipeline.py
 treats both as the same "SAT" Drive category).
+
+Anything after Year is ignored, not just trimmed -- e.g.
+"Student, Jane 2027 ACT 25MC1 January 2026 Test Scan & Bubble" and
+"..._p3" (the page-index suffix loading.py appends to each page's own
+label when a multi-page PDF is split apart) both still parse. Confirmed
+against real filenames: a trailing descriptive suffix like "Test Scan &
+Bubble" -- or worse, a debug note like "didn't find lines" -- after the
+naming convention's own fields is common in practice, not the exception.
 """
 from __future__ import annotations
 
@@ -24,7 +32,7 @@ _MONTHS = {
 
 _PATTERN = re.compile(
     r"^(?P<last>[^,]+),\s*(?P<first>\S+)\s+(?P<grad_year>\d{4})\s+(?P<test_family>ACT|DSAT|SAT)\s+"
-    r"(?P<test_code>\S+)\s+(?P<month>[A-Za-z]+)(?:\s+(?P<day>\d{1,2}))?\s+(?P<year>\d{4})$",
+    r"(?P<test_code>\S+)\s+(?P<month>[A-Za-z]+)(?:\s+(?P<day>\d{1,2}))?\s+(?P<year>\d{4})(?:[\s_].*)?$",
     re.IGNORECASE,
 )
 
