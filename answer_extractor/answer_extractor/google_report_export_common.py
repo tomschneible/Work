@@ -26,10 +26,10 @@ from .google_sheets_export import (
     clear_cells,
     copy_template,
     delete_file,
+    delete_rows,
     export_pdf,
     export_xlsx,
     hide_columns,
-    hide_rows,
     write_cells,
 )
 from .template_lookup import find_template_file, resolve_template_folder
@@ -73,17 +73,17 @@ def export_filled_report(
     workbook is ever touched or re-converted through .xlsx (see
     google_sheets_export.py's own module docstring for why that
     matters). Its `cleared_ranges`, `hidden_column_ranges`, and
-    `hidden_row_ranges`, if any, are then applied via
-    google_sheets_export.clear_cells, .hide_columns, and .hide_rows (in
+    `deleted_row_ranges`, if any, are then applied via
+    google_sheets_export.clear_cells, .hide_columns, and .delete_rows (in
     that order) before the PDF is exported -- SAT's fill_fn uses the
     first two so the report only shows the Module 2 blocks that were
     actually administered, both in content and in the exported PDF's own
     print-area sizing (see sat_score_report_writer.blocks_to_clear for
-    why both are needed, not just one), and the third to hide a sheet's
-    own trailing blank rows that would otherwise inflate that same print
-    area regardless of Module 2 at all (see
-    sat_score_report_writer.rows_to_hide); ACT's fill_fn leaves all three
-    empty and these steps are skipped entirely.
+    why both are needed, not just one), and the third to remove a
+    sheet's own trailing blank rows that would otherwise inflate that
+    same print area regardless of Module 2 at all (see
+    sat_score_report_writer.trailing_rows_to_delete); ACT's fill_fn
+    leaves all three empty and these steps are skipped entirely.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -129,7 +129,7 @@ def export_filled_report(
             write_cells(sheets, copy_id, result.cell_writes)
             clear_cells(sheets, copy_id, result.cleared_ranges)
             hide_columns(sheets, copy_id, result.hidden_column_ranges)
-            hide_rows(sheets, copy_id, result.hidden_row_ranges)
+            delete_rows(sheets, copy_id, result.deleted_row_ranges)
             pdf_bytes = export_pdf(copy_id)
         except Exception:
             try:

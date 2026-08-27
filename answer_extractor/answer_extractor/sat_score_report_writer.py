@@ -305,7 +305,7 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
 
 
-def rows_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
+def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
     """0-indexed (start_row, end_row) row range (end exclusive -- the
     shape a Sheets API dimension range needs) covering every row below
     `ws`'s own last real content -- empty if there's no such gap.
@@ -317,7 +317,7 @@ def rows_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     formatting (row heights, borders) all the way out to row 996, even
     though its actual content -- every block, every score cell, the
     footer -- ends at row 64. With no print area explicitly set on the
-    file (see hide_rows' own docstring on why this pipeline doesn't set
+    file (see delete_rows' own docstring on why this pipeline doesn't set
     one directly), Sheets' PDF export falls back to the sheet's full used
     range for that tab, so those ~930 empty rows were still being
     counted when "fit to page" computed its scale -- confirmed live: the
@@ -326,8 +326,15 @@ def rows_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     columns_to_hide fixes for width, just for height instead and
     unrelated to Module 2 at all (this still matters even for a subject
     combination that never needed a single non-canonical column hidden).
-    Hiding these rows removes them from the print area the same way
-    hiding a column does.
+
+    These rows get *deleted* outright, not hidden -- a first version of
+    this fix hid them the same way columns_to_hide hides a column
+    (google_sheets_export.hide_rows, since removed), and confirmed live
+    that doing so had *no effect whatsoever* on the exported PDF: a
+    before/after export came out pixel-for-pixel identical, unlike hiding
+    a column, which measurably fixed the analogous width problem. Only
+    actually removing the rows shrinks what Sheets' print-area
+    computation still counts.
 
     "Last real content" is found by scanning every cell on the sheet for
     a non-None value, deliberately not using `ws.max_row`/`ws.dimensions`
@@ -410,10 +417,10 @@ def fill_sat_score_report(
     shows the modules that were actually filled in -- both in content
     and in the exported PDF's own sizing -- rather than every
     duplicate/twin block the template ships with; plus the whole rows
-    below `sheet_name`'s own real content to hide too (see rows_to_hide),
-    an unrelated problem (the sheet's own trailing blank-but-formatted
-    rows, nothing to do with Module 2) that inflates the same exported
-    PDF's print area regardless.
+    below `sheet_name`'s own real content to delete too (see
+    trailing_rows_to_delete), an unrelated problem (the sheet's own
+    trailing blank-but-formatted rows, nothing to do with Module 2) that
+    inflates the same exported PDF's print area regardless.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
@@ -561,10 +568,10 @@ def fill_sat_score_report(
 
     cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
     hidden_column_ranges = [(sheet_name, left, right) for left, right in columns_to_hide(ws)]
-    hidden_row_ranges = [(sheet_name, top, bottom) for top, bottom in rows_to_hide(ws)]
+    deleted_row_ranges = [(sheet_name, top, bottom) for top, bottom in trailing_rows_to_delete(ws)]
     return FillResult(
         cell_writes=writes,
         cleared_ranges=cleared_ranges,
         hidden_column_ranges=hidden_column_ranges,
-        hidden_row_ranges=hidden_row_ranges,
+        deleted_row_ranges=deleted_row_ranges,
     )

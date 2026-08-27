@@ -429,13 +429,27 @@ worked, or to look around the folder tree while debugging.
    formatting on re-upload), Sheets' PDF export falls back to the
    sheet's full used range, so those ~930 empty rows were still being
    counted in the vertical "fit to page" scale calculation right
-   alongside the real content. `sat_score_report_writer.rows_to_hide`
-   finds that gap (scanning for the sheet's own actual last row with any
-   value, not trusting `ws.max_row`/`ws.dimensions` -- those *are* the
-   stray formatting this needs to see past) and hides it the same way
-   `columns_to_hide` hides a non-canonical column, via
-   `google_sheets_export.hide_rows` (the row-dimension counterpart of
-   `hide_columns`).
+   alongside the real content. `sat_score_report_writer.
+   trailing_rows_to_delete` finds that gap (scanning for the sheet's own
+   actual last row with any value, not trusting `ws.max_row`/
+   `ws.dimensions` -- those *are* the stray formatting this needs to see
+   past).
+
+   The first version of this fix *hid* those rows the same way
+   `columns_to_hide` hides a non-canonical column (a `hide_rows`
+   function, since removed, mirroring `hide_columns`) -- confirmed live
+   that this had no effect on the exported PDF whatsoever: a real export
+   before and after came out pixel-for-pixel identical, unlike hiding a
+   column, which measurably fixed the analogous width problem. Rows and
+   columns evidently aren't treated the same way by Sheets' own print-
+   area computation. `google_sheets_export.delete_rows` removes the same
+   rows outright instead (a `deleteDimension` request, not
+   `updateDimensionProperties`) -- actually shrinking the sheet's row
+   count, so there's nothing left there at all to still be counted,
+   rather than something merely marked invisible. Safe for the same
+   reason hiding was: this is always the sheet's own trailing rows,
+   strictly below everything real, so nothing downstream ever needs
+   those row numbers to stay put.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

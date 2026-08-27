@@ -33,7 +33,7 @@ def _patch_all(**overrides):
         write_cells=MagicMock(),
         clear_cells=MagicMock(),
         hide_columns=MagicMock(),
-        hide_rows=MagicMock(),
+        delete_rows=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
     )
@@ -54,13 +54,13 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     fake_writes = [CellWrite(sheet="ScoreSheet", row=1, column=1, value="Jane Student")]
     fake_cleared_ranges = [("Student Responses", 3, 7, 14, 20)]
     fake_hidden_column_ranges = [("Student Responses", 14, 20)]
-    fake_hidden_row_ranges = [("Student Responses", 64, 996)]
+    fake_deleted_row_ranges = [("Student Responses", 64, 996)]
     fill_fn = MagicMock(
         return_value=FillResult(
             cell_writes=fake_writes,
             cleared_ranges=fake_cleared_ranges,
             hidden_column_ranges=fake_hidden_column_ranges,
-            hidden_row_ranges=fake_hidden_row_ranges,
+            deleted_row_ranges=fake_deleted_row_ranges,
         )
     )
     try:
@@ -104,9 +104,9 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     assert mocks["hide_columns"].call_args[0][1] == "COPY_ID"
     assert mocks["hide_columns"].call_args[0][2] == fake_hidden_column_ranges
 
-    mocks["hide_rows"].assert_called_once()
-    assert mocks["hide_rows"].call_args[0][1] == "COPY_ID"
-    assert mocks["hide_rows"].call_args[0][2] == fake_hidden_row_ranges
+    mocks["delete_rows"].assert_called_once()
+    assert mocks["delete_rows"].call_args[0][1] == "COPY_ID"
+    assert mocks["delete_rows"].call_args[0][2] == fake_deleted_row_ranges
 
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"

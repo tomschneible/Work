@@ -13,12 +13,12 @@ from answer_extractor.google_sheets_export import (
     clear_cells,
     copy_template,
     delete_file,
+    delete_rows,
     export_pdf,
     export_xlsx,
     format_date_for_sheets,
     hide_columns,
     hide_gridlines,
-    hide_rows,
     list_folder,
     replace_content,
     write_cells,
@@ -410,7 +410,7 @@ def test_hide_columns_raises_for_an_unknown_sheet_name():
         hide_columns(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4)])
 
 
-def test_hide_rows_resolves_sheet_names_and_sends_one_batch_update():
+def test_delete_rows_resolves_sheet_names_and_sends_one_batch_update():
     sheets = MagicMock()
     sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
         "sheets": [
@@ -419,7 +419,7 @@ def test_hide_rows_resolves_sheet_names_and_sends_one_batch_update():
         ]
     }
 
-    hide_rows(
+    delete_rows(
         sheets,
         "SPREADSHEET_ID",
         [("Student Responses", 64, 996), ("Cover Page", 60, 61)],
@@ -432,46 +432,42 @@ def test_hide_rows_resolves_sheet_names_and_sends_one_batch_update():
     assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
     assert kwargs["body"]["requests"] == [
         {
-            "updateDimensionProperties": {
+            "deleteDimension": {
                 "range": {
                     "sheetId": 111,
                     "dimension": "ROWS",
                     "startIndex": 64,
                     "endIndex": 996,
                 },
-                "properties": {"hiddenByUser": True},
-                "fields": "hiddenByUser",
             }
         },
         {
-            "updateDimensionProperties": {
+            "deleteDimension": {
                 "range": {
                     "sheetId": 222,
                     "dimension": "ROWS",
                     "startIndex": 60,
                     "endIndex": 61,
                 },
-                "properties": {"hiddenByUser": True},
-                "fields": "hiddenByUser",
             }
         },
     ]
     sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
 
 
-def test_hide_rows_is_a_no_op_for_an_empty_list():
+def test_delete_rows_is_a_no_op_for_an_empty_list():
     sheets = MagicMock()
 
-    hide_rows(sheets, "SPREADSHEET_ID", [])
+    delete_rows(sheets, "SPREADSHEET_ID", [])
 
     sheets.spreadsheets.assert_not_called()
 
 
-def test_hide_rows_raises_for_an_unknown_sheet_name():
+def test_delete_rows_raises_for_an_unknown_sheet_name():
     sheets = MagicMock()
     sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
         "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
     }
 
     with pytest.raises(ValueError, match="Cover Page"):
-        hide_rows(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4)])
+        delete_rows(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4)])
