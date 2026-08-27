@@ -9,6 +9,7 @@ from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from answer_extractor.google_sheets_export import CellWrite, FillResult
 from answer_extractor.sat_score_report_writer import (
     _HIDDEN_COLUMN_SHRINK_FACTOR,
+    _MARK_COLUMN_WIDEN_FACTOR,
     _TABLE_COLUMN_NARROW_FACTOR,
     blocks_to_clear,
     columns_to_hide,
@@ -16,6 +17,7 @@ from answer_extractor.sat_score_report_writer import (
     header_bar_extension,
     hidden_columns_to_shrink,
     locate_sat_blocks,
+    mark_columns_to_widen,
     trailing_rows_to_delete,
     visible_table_columns_to_narrow,
 )
@@ -166,11 +168,10 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         ("Student Responses", 0, max_row, 21, 27),
         ("Student Responses", 0, max_row, 28, 34),
     ]
-    assert writes.hidden_column_ranges == [
-        ("Student Responses", 14, 20),
-        ("Student Responses", 21, 27),
-        ("Student Responses", 28, 34),
-    ]
+    # One single contiguous range now -- covers the spacer columns between
+    # occurrences too, not just each occurrence's own 6-column block (see
+    # test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one).
+    assert writes.hidden_column_ranges == [("Student Responses", 14, 34)]
     # Module 1's own title-through-answer (A-C) and domain-through-spacer
     # (E-G), then the canonical Module 2 block's own title-through-answer
     # (H-J) and domain-through-skill (L-M) -- mark_col (D, K) excluded
@@ -178,15 +179,17 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block)
     # -- followed by the same non-canonical columns hide_columns already
     # hides, narrowed to near-zero too (see
-    # test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides).
+    # test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides)
+    # -- followed by the canonical block's own mark_col (K), widened
+    # rather than narrowed (see
+    # test_mark_columns_to_widen_widens_the_canonical_blocks_own_mark_col).
     assert writes.narrowed_column_ranges == [
         ("Student Responses", 0, 3, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 4, 7, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 7, 10, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 11, 13, _TABLE_COLUMN_NARROW_FACTOR),
-        ("Student Responses", 14, 20, _HIDDEN_COLUMN_SHRINK_FACTOR),
-        ("Student Responses", 21, 27, _HIDDEN_COLUMN_SHRINK_FACTOR),
-        ("Student Responses", 28, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        ("Student Responses", 14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        ("Student Responses", 10, 11, _MARK_COLUMN_WIDEN_FACTOR),
     ]
     # This fixture's own row 1 has no decorative fill at all -- nothing
     # for header_bar_extension to find or extend.
@@ -223,20 +226,26 @@ def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_pa
 
 
 def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_path):
-    """The exact same non-canonical columns blocks_to_clear clears, but as
-    whole-column (no row bounds) ranges -- see columns_to_hide's own
-    docstring for why clearing alone isn't enough."""
+    """One contiguous range spanning every non-canonical occurrence *and*
+    the spacer columns between/after them (O is the canonical block, so
+    the range starts right after it, at V) -- see columns_to_hide's own
+    docstring for why the spacer columns need to be swept up too, not
+    just each occurrence's own 6-column block."""
     path = tmp_path / "template.xlsx"
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
     ranges = columns_to_hide(ws)
 
-    assert ranges == [
-        (14, 20),  # O -- Lower, canonical
-        (21, 27),  # V -- Higher, duplicate
-        (28, 34),  # AC -- Lower, duplicate
-    ]
+    assert ranges == [(14, 34)]  # V (Lower, canonical) through AH (Lower, duplicate)'s own end
+
+
+def test_columns_to_hide_is_empty_without_any_non_canonical_occurrence():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+
+    assert columns_to_hide(ws) == []
 
 
 def test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block(tmp_path):
@@ -272,11 +281,23 @@ def test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    assert hidden_columns_to_shrink(ws) == [
-        (14, 20, _HIDDEN_COLUMN_SHRINK_FACTOR),
-        (21, 27, _HIDDEN_COLUMN_SHRINK_FACTOR),
-        (28, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
-    ]
+    assert hidden_columns_to_shrink(ws) == [(14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR)]
+
+
+def test_mark_columns_to_widen_widens_the_canonical_blocks_own_mark_col(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert mark_columns_to_widen(ws) == [(10, 11, _MARK_COLUMN_WIDEN_FACTOR)]  # K, canonical block's own mark_col
+
+
+def test_mark_columns_to_widen_is_empty_without_a_module2_block():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+
+    assert mark_columns_to_widen(ws) == []
 
 
 def test_header_bar_extension_extends_a_solid_row1_fill_to_the_narrowed_table_width(tmp_path):

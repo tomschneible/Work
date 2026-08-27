@@ -129,6 +129,15 @@ _TABLE_COLUMN_NARROW_FACTOR = 0.82
 # enough. Small enough to floor at 1px (narrow_columns' own minimum)
 # for any realistic starting width on this sheet.
 _HIDDEN_COLUMN_SHRINK_FACTOR = 0.01
+# How much the canonical Module 2 block's own mark_col (the sole one
+# left at risk -- see mark_columns_to_widen's own docstring) gets
+# widened, via narrow_columns reused with a factor above 1. Confirmed
+# against the real template: Module 1's own mark_col (which never showed
+# this bug) is ~3.75 character-units wide there; the canonical Module 2
+# block's own mark_col is only ~2.88 -- a ~1.30x gap. 1.5x clears that
+# gap with real margin, since the exact width this bug actually starts
+# at isn't known.
+_MARK_COLUMN_WIDEN_FACTOR = 1.5
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -309,9 +318,12 @@ def blocks_to_clear(ws: Worksheet) -> List[Tuple[int, int, int, int]]:
 
 def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     """0-indexed (start_col, end_col) column ranges (end exclusive --
-    the shape a Sheets API dimension range needs) covering the exact
-    same non-canonical Module 2 columns blocks_to_clear clears -- one
-    range per occurrence, each _CLEAR_BLOCK_WIDTH columns wide.
+    the shape a Sheets API dimension range needs) covering every
+    non-canonical Module 2 column *and* the spacer columns between and
+    after them -- one single contiguous range from the leftmost
+    non-canonical occurrence's own title column through the rightmost
+    occurrence's own last column, empty if there are no non-canonical
+    occurrences at all.
 
     Needed *in addition to* blocks_to_clear, not instead of it:
     clearing removes an occurrence's own cell values, but its columns
@@ -327,15 +339,34 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     these same columns removes them from the print area entirely, so
     "fit to page" scales to what's actually left to show.
 
+    Contiguous rather than one range per occurrence (an earlier version
+    of this returned three separate _CLEAR_BLOCK_WIDTH-wide ranges,
+    leaving the single blank spacer column between each pair of
+    occurrences untouched at its own full width) because that gap turned
+    out to matter for a *different* reason than clearing/hiding was
+    originally about: confirmed live, with `printOptions
+    horizontalCentered="1"` already set on the real template (this
+    pipeline never sets it, so it was always meant to center the print
+    area horizontally), those leftover full-width spacer columns were
+    still counted toward whatever Sheets centers against, visibly
+    pushing the real content left of center. A single contiguous range
+    removes them too, without needing to enumerate every spacer by hand.
+
     Safe to do unconditionally (every non-canonical column, for every
     subject) for the same reason blocks_to_clear now is: since
     fill_sat_score_report consolidates every subject's real answers
     into _canonical_module2_col, nothing real is ever left in any other
     Module 2 column position for any subject -- see hide_columns' own
     docstring for why this wasn't true, and this approach wasn't safe,
-    before that consolidation existed.
+    before that consolidation existed. The spacer columns swept up along
+    the way never held anything to begin with, in any state.
     """
-    return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
+    non_canonical_cols = _non_canonical_module2_cols(ws)
+    if not non_canonical_cols:
+        return []
+    start = min(non_canonical_cols) - 1
+    end = max(non_canonical_cols) - 1 + _CLEAR_BLOCK_WIDTH
+    return [(start, end)]
 
 
 def hidden_columns_to_shrink(ws: Worksheet) -> List[Tuple[int, int, float]]:
@@ -508,6 +539,32 @@ def visible_table_columns_to_narrow(ws: Worksheet) -> List[Tuple[int, int, float
             (canonical_col - 1 + 4, canonical_col - 1 + _CLEAR_BLOCK_WIDTH, _TABLE_COLUMN_NARROW_FACTOR)
         )
     return ranges
+
+
+def mark_columns_to_widen(ws: Worksheet) -> List[Tuple[int, int, float]]:
+    """0-indexed (start_col, end_col, factor) (end exclusive, factor
+    above 1 -- narrow_columns reused to widen rather than shrink) for the
+    canonical Module 2 block's own mark_col. Empty if `ws` has no Module
+    2 block at all.
+
+    Excluding mark_col from visible_table_columns_to_narrow (leaving it
+    at its own *original* width) turned out not to be enough on its own:
+    confirmed live, the header-border bug persisted even with mark_col
+    left completely unnarrowed. That's because the bug was never really
+    about narrowing specifically -- it's about the column being *too
+    narrow*, full stop, and this column's own original width was already
+    below whatever threshold Sheets stops reliably drawing a blank
+    header cell's border at (confirmed against the real template: Module
+    1's own mark_col, ~30% wider to begin with, never showed this bug at
+    any point, narrowed or not). Leaving it alone preserves a width that
+    was already the problem; only actively widening it past that
+    threshold fixes it. See _MARK_COLUMN_WIDEN_FACTOR's own comment for
+    where its value comes from."""
+    canonical_col = _canonical_module2_col(ws)
+    if canonical_col is None:
+        return []
+    mark_col = canonical_col + 3
+    return [(mark_col - 1, mark_col, _MARK_COLUMN_WIDEN_FACTOR)]
 
 
 def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
@@ -779,7 +836,9 @@ def fill_sat_score_report(
     deleted_row_ranges = [(sheet_name, top, bottom) for top, bottom in trailing_rows_to_delete(ws)]
     narrowed_column_ranges = [
         (sheet_name, left, right, factor)
-        for left, right, factor in (visible_table_columns_to_narrow(ws) + hidden_columns_to_shrink(ws))
+        for left, right, factor in (
+            visible_table_columns_to_narrow(ws) + hidden_columns_to_shrink(ws) + mark_columns_to_widen(ws)
+        )
     ]
     bar = header_bar_extension(ws)
     header_bar_extension_ranges = [(sheet_name,) + bar] if bar is not None else []

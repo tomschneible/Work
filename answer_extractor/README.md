@@ -519,11 +519,21 @@ worked, or to look around the folder tree while debugging.
      mark column, unlike every neighboring one), and a blank cell
      apparently stops rendering its own border below some width Sheets
      still draws one at reliably -- the *data* rows below it, never
-     blank, kept theirs throughout. `visible_table_columns_to_narrow`
-     now excludes each block's own `mark_col` from every range it
-     returns, at the cost of a little of the overall size gain (it
-     never held more than one glyph to begin with) against a real,
-     visible formatting break.
+     blank, kept theirs throughout. Confirmed live that simply
+     *excluding* `mark_col` from narrowing (an earlier version of this
+     fix, leaving it at its own original width) wasn't enough on its
+     own -- the border stayed broken, since the bug was never really
+     about narrowing specifically, it's about the column being *too
+     narrow*, full stop, and this one's own original width (confirmed
+     against the real template: ~2.88 character-units, vs. ~3.75 for
+     Module 1's own `mark_col`, which never showed this bug) was already
+     below whatever threshold Sheets stops reliably drawing a blank
+     header cell's border at. `mark_columns_to_widen` actively widens
+     the canonical block's own `mark_col` instead, to
+     `_MARK_COLUMN_WIDEN_FACTOR` (1.5x its own real width) via
+     `narrow_columns` reused above 1 -- comfortable margin past the
+     ~1.30x gap confirmed against the real template, since the exact
+     width the bug starts at isn't known.
    - This sheet's `printOptions horizontalCentered="1"` (confirmed
      against the real template file -- this pipeline never sets it, so
      it was always meant to center the print area horizontally) doesn't
@@ -535,7 +545,18 @@ worked, or to look around the folder tree while debugging.
      just showing up in a different computation this time.
      `hidden_columns_to_shrink` narrows those same hidden columns to
      `_HIDDEN_COLUMN_SHRINK_FACTOR` (near-zero) via `narrow_columns`
-     too, in addition to `hide_columns` marking them hidden.
+     too, in addition to `hide_columns` marking them hidden. That alone
+     still wasn't quite enough, though: confirmed live the blank *spacer*
+     column standing between each pair of non-canonical occurrences (and
+     the sheet's own last one) was never included in either fix, since
+     both were built from one range *per occurrence*, each exactly
+     `_CLEAR_BLOCK_WIDTH` columns wide -- leaving those spacers at their
+     own full width, still counted toward centering. `columns_to_hide`
+     now returns a single range spanning from the leftmost non-canonical
+     occurrence's own title column all the way through the rightmost
+     occurrence's own last column, sweeping the spacers up too --
+     `hidden_columns_to_shrink` (built from the same function) inherits
+     the fix automatically.
    - Separately, this sheet's own decorative accent bar under "Your
      Question-Level Feedback" (a solid fill spanning a fixed range of
      columns on row 1, confirmed against the real template file to run
@@ -547,7 +568,17 @@ worked, or to look around the folder tree while debugging.
      `google_sheets_export.extend_fill`) re-applies that same fill color
      -- read live from the sheet itself, not hardcoded -- across the
      rest of the narrowed table's own width, so the bar spans the same
-     width as the content sitting below it again.
+     width as the content sitting below it again. Extracting the
+     exported PDF's own raw drawing commands (not just its text) showed
+     this fix is doing exactly what it's supposed to -- the bar's blue
+     fill genuinely does extend through the canonical block's own last
+     column now, immediately followed by a separate, correctly-bounded
+     white rectangle covering everything past it. What still reads as
+     "cut off short" is really the *centering* gap above -- the bar (tied
+     to the same columns as the table it sits above) is left of center
+     for the exact same reason the table is, and should move right along
+     with it once that's fixed, without needing a fix of its own beyond
+     what's already here.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
