@@ -415,41 +415,73 @@ worked, or to look around the folder tree while debugging.
    the tables were noticeably wider now, but still confined to roughly
    the top 86% of the page's usable height instead of filling it, the
    leftover space stranded below rather than distributed proportionally.
-   The cause turned out to be nothing to do with Module 2 at all: the
-   "Student Responses" tab itself carries stray formatting (borders,
-   fills -- no actual value) all the way out to row 996, even though its
-   real content -- every block, every score cell, the footer -- ends at
-   row 64 (confirmed against the real template file: `openpyxl`'s own
-   `ws.max_row` reports 996 there). With no print area explicitly set on
-   the file (Google Sheets' own Print-settings dialog doesn't reliably
-   persist a manually-selected range -- confirmed live in this repo's
-   own history, back when an earlier version of this pipeline tried
-   setting one directly via an xlsx round-trip and had to abandon that
-   approach for an unrelated reason -- corrupting a different tab's own
-   formatting on re-upload), Sheets' PDF export falls back to the
-   sheet's full used range, so those ~930 empty rows were still being
-   counted in the vertical "fit to page" scale calculation right
-   alongside the real content. `sat_score_report_writer.
-   trailing_rows_to_delete` finds that gap (scanning for the sheet's own
-   actual last row with any value, not trusting `ws.max_row`/
-   `ws.dimensions` -- those *are* the stray formatting this needs to see
-   past).
 
-   The first version of this fix *hid* those rows the same way
-   `columns_to_hide` hides a non-canonical column (a `hide_rows`
-   function, since removed, mirroring `hide_columns`) -- confirmed live
-   that this had no effect on the exported PDF whatsoever: a real export
-   before and after came out pixel-for-pixel identical, unlike hiding a
-   column, which measurably fixed the analogous width problem. Rows and
-   columns evidently aren't treated the same way by Sheets' own print-
-   area computation. `google_sheets_export.delete_rows` removes the same
-   rows outright instead (a `deleteDimension` request, not
-   `updateDimensionProperties`) -- actually shrinking the sheet's row
-   count, so there's nothing left there at all to still be counted,
-   rather than something merely marked invisible. Safe for the same
-   reason hiding was: this is always the sheet's own trailing rows,
-   strictly below everything real, so nothing downstream ever needs
-   those row numbers to stay put.
+   The first theory was that this had nothing to do with Module 2 at
+   all: the "Student Responses" tab itself carries stray formatting
+   (borders, fills -- no actual value) all the way out to row 996, even
+   though its real content -- every block, every score cell, the footer
+   -- ends at row 64 (confirmed against the real template file:
+   `openpyxl`'s own `ws.max_row` reports 996 there), and with no print
+   area explicitly set on the file, Sheets' PDF export falls back to the
+   sheet's full used range -- so, the theory went, those ~930 empty rows
+   were still being counted in the vertical "fit to page" scale
+   calculation right alongside the real content. Two different fixes for
+   this were tried in turn -- first hiding those rows
+   (`updateDimensionProperties`, the row-dimension version of
+   `hide_columns`), then, when that measured zero effect, deleting them
+   outright (`deleteDimension`, actually shrinking the sheet's row
+   count rather than just marking it invisible) -- and **both** measured
+   zero effect on the exported PDF: three separate real exports (no row
+   fix, rows hidden, rows deleted) came out pixel-for-pixel identical.
+   Whatever's setting this sheet's print scale, it evidently isn't
+   reading live row state the way it reads live column state (confirmed
+   hiding a column *did* measurably change the export). The theory was
+   wrong; neither fix stuck around in the code.
+
+   The org then tested Google's own "Custom" print scale directly on the
+   master template (bypassing "Fit to Page" entirely) to see whether a
+   *static* percentage would be respected any differently. It was: font
+   size measurably changed for the first time in this whole
+   investigation. But no percentage threaded the needle -- every value
+   small enough not to overflow read as too small to be worth printing,
+   and nothing in between existed. That result, together with the
+   "Fit to Page" numbers, pins down what's actually going on: Sheets'
+   print scale is one uniform percentage applied to *both* width and
+   height, and width was confirmed to be the tighter of the two (a real
+   export's rendered table width already reached the page's full
+   available width at "Fit to Page"'s own ~55% scale, while its rendered
+   height fell well short of the page's available height at that same
+   scale) -- so the scale needed to keep width inside the page was
+   smaller than height alone would have required, and that same
+   undersized scale then left height under-filled too. There is no
+   percentage that fixes this, because the problem isn't the percentage
+   -- it's that the *columns* are wide enough to need a smaller
+   percentage than the *rows* do.
+
+   Per the org's own instruction, this is fixed by reformatting the
+   sheet, not by touching print settings at all:
+   `sat_score_report_writer.visible_table_columns_to_narrow` finds every
+   *visible* answer-table column (Module 1's own title column through
+   the canonical Module 2 block's own last column -- the sidebar is
+   deliberately excluded, to avoid clipping or misaligning a graphic
+   element this never otherwise touches), and
+   `google_sheets_export.narrow_columns` shrinks each one to
+   `_TABLE_COLUMN_NARROW_FACTOR` (currently 0.75) times its own *actual
+   current* pixel width -- read live from Sheets itself via a `get` call
+   rather than converted from `openpyxl`'s character-unit column width
+   locally, since a generic conversion formula wasn't confirmed to match
+   what Sheets actually renders. Narrowing the columns that make width
+   the tighter constraint lets "fit to page" recompute a larger uniform
+   scale on its own (still guaranteed not to overflow -- "fit to page"
+   always finds whatever scale fits) -- which, applied uniformly, also
+   renders the *untouched* rows taller, filling more of the page's
+   actual height as a side effect, without narrowing anything, adjusting
+   a print setting, or resizing a single font.
+
+   `_TABLE_COLUMN_NARROW_FACTOR`'s own value (0.75) is a first estimate
+   derived from the real numbers above, not one confirmed against a live
+   export -- see its own comment in `sat_score_report_writer.py` for the
+   arithmetic. It may need tuning once tested live.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

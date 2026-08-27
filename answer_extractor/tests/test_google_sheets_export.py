@@ -20,6 +20,7 @@ from answer_extractor.google_sheets_export import (
     hide_columns,
     hide_gridlines,
     list_folder,
+    narrow_columns,
     replace_content,
     write_cells,
 )
@@ -471,3 +472,101 @@ def test_delete_rows_raises_for_an_unknown_sheet_name():
 
     with pytest.raises(ValueError, match="Cover Page"):
         delete_rows(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4)])
+
+
+def test_narrow_columns_reads_current_widths_and_shrinks_each_by_its_own_factor():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.side_effect = [
+        # first call: resolve sheet name -> sheetId
+        {"sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]},
+        # second call: current pixel widths for H1:J1
+        {
+            "sheets": [
+                {
+                    "properties": {"sheetId": 111},
+                    "data": [{"columnMetadata": [{"pixelSize": 100}, {"pixelSize": 80}, {"pixelSize": 60}]}],
+                }
+            ]
+        },
+    ]
+
+    narrow_columns(sheets, "SPREADSHEET_ID", [("Student Responses", 7, 10, 0.75)])
+
+    get_calls = sheets.spreadsheets.return_value.get.call_args_list
+    assert get_calls[0].kwargs == {"spreadsheetId": "SPREADSHEET_ID", "fields": "sheets.properties"}
+    assert get_calls[1].kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert get_calls[1].kwargs["ranges"] == ["'Student Responses'!H1:J1"]
+    assert get_calls[1].kwargs["fields"] == "sheets.properties.sheetId,sheets.data.columnMetadata.pixelSize"
+
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert kwargs["body"]["requests"] == [
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": 111, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 8},
+                "properties": {"pixelSize": 75},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": 111, "dimension": "COLUMNS", "startIndex": 8, "endIndex": 9},
+                "properties": {"pixelSize": 60},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": 111, "dimension": "COLUMNS", "startIndex": 9, "endIndex": 10},
+                "properties": {"pixelSize": 45},
+                "fields": "pixelSize",
+            }
+        },
+    ]
+    sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
+
+
+def test_narrow_columns_skips_a_column_with_no_reported_pixel_size():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.side_effect = [
+        {"sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]},
+        {
+            "sheets": [
+                {
+                    "properties": {"sheetId": 111},
+                    "data": [{"columnMetadata": [{"pixelSize": 100}, {}]}],
+                }
+            ]
+        },
+    ]
+
+    narrow_columns(sheets, "SPREADSHEET_ID", [("Student Responses", 7, 9, 0.75)])
+
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["body"]["requests"] == [
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": 111, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 8},
+                "properties": {"pixelSize": 75},
+                "fields": "pixelSize",
+            }
+        },
+    ]
+
+
+def test_narrow_columns_is_a_no_op_for_an_empty_list():
+    sheets = MagicMock()
+
+    narrow_columns(sheets, "SPREADSHEET_ID", [])
+
+    sheets.spreadsheets.assert_not_called()
+
+
+def test_narrow_columns_raises_for_an_unknown_sheet_name():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
+    }
+
+    with pytest.raises(ValueError, match="Cover Page"):
+        narrow_columns(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4, 0.75)])

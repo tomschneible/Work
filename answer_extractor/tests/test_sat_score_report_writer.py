@@ -8,11 +8,13 @@ from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from answer_extractor.google_sheets_export import CellWrite, FillResult
 from answer_extractor.sat_score_report_writer import (
+    _TABLE_COLUMN_NARROW_FACTOR,
     blocks_to_clear,
     columns_to_hide,
     fill_sat_score_report,
     locate_sat_blocks,
     trailing_rows_to_delete,
+    visible_table_columns_to_narrow,
 )
 
 _MISSING = object()  # distinguishes "never written" from an explicitly-written None (an omitted answer)
@@ -166,6 +168,10 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         ("Student Responses", 21, 27),
         ("Student Responses", 28, 34),
     ]
+    # Module 1's own title column (A) through the canonical Module 2
+    # block's own last column (M) -- see
+    # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block.
+    assert writes.narrowed_column_ranges == [("Student Responses", 0, 13, _TABLE_COLUMN_NARROW_FACTOR)]
     # This fixture's own last row already matches its last real content
     # (no stray trailing formatting the way a real template has -- see
     # test_trailing_rows_to_delete_finds_a_sheets_own_trailing_blank_rows),
@@ -208,6 +214,27 @@ def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_pa
         (21, 27),  # V -- Higher, duplicate
         (28, 34),  # AC -- Lower, duplicate
     ]
+
+
+def test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block(tmp_path):
+    """Module 1's own title column (A, 0-indexed 0) through the canonical
+    Module 2 block's own last column (Domain/Skill -- H's own 6-column
+    span, ending at column M, 0-indexed 12 exclusive) -- the sidebar
+    (never modeled in this fixture) and every non-canonical Module 2
+    occurrence are excluded either way."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert visible_table_columns_to_narrow(ws) == (0, 13, _TABLE_COLUMN_NARROW_FACTOR)
+
+
+def test_visible_table_columns_to_narrow_is_none_without_a_module1_block():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+
+    assert visible_table_columns_to_narrow(ws) is None
 
 
 def test_trailing_rows_to_delete_finds_a_sheets_own_trailing_blank_rows(tmp_path):

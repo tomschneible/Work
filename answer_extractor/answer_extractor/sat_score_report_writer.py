@@ -96,6 +96,28 @@ _TITLE_PATTERN = re.compile(
 # like an orphaned, unlabeled leftover even though every actual answer cell
 # is gone. See blocks_to_clear, the only place this is used.
 _CLEAR_BLOCK_WIDTH = 6
+# How much narrower the visible answer-table columns (Module 1 through
+# the canonical Module 2 block) get made on the working copy -- see
+# visible_table_columns_to_narrow's own docstring for the full derivation.
+# Confirmed live against a real export: at "fit to page" (~55% scale,
+# width the binding dimension -- its own rendered width already reached
+# the page's full available width, while rendered height fell well short
+# of the page's available height), reaching the target used by a real,
+# well-filling reference example (~681pt of vertical space, matching this
+# sheet's own real row-height sum of 1020pt scaled to ~67%) needs
+# `0.55 / 0.667 =~ 0.824` -- i.e. these columns narrowed to ~82% of their
+# real width would, in principle, let "fit to page" recompute a big-
+# enough scale on its own. But that 82% assumed the *sidebar* (Score
+# Summary/Key/Domains, deliberately left untouched here -- narrowing it
+# risks clipping/misaligning a graphic element none of this ever
+# otherwise touches) narrows right along with the tables; with only the
+# tables narrowing, they have to shrink further to produce the *same*
+# overall page-width reduction (the sidebar's own real character-width
+# share of the visible print area works out to ~75% for the tables
+# alone, by the same math). 0.75 either way is a first estimate, not a
+# value confirmed against a live export -- see this function's own
+# docstring.
+_TABLE_COLUMN_NARROW_FACTOR = 0.75
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -303,6 +325,61 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     before that consolidation existed.
     """
     return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
+
+
+def visible_table_columns_to_narrow(ws: Worksheet) -> Optional[Tuple[int, int, float]]:
+    """0-indexed (start_col, end_col, factor) (end exclusive -- the shape
+    a Sheets API dimension range needs, plus narrow_columns' own shrink
+    factor) spanning every *visible* answer-table column on `ws` --
+    Module 1 through the canonical Module 2 block's own last column
+    (Domain/Skill) -- to shrink via narrow_columns. None if `ws` has no
+    Module 1 block at all (nothing to narrow).
+
+    This exists because hiding/deleting non-canonical Module 2 columns
+    and a sheet's own trailing blank rows (columns_to_hide,
+    trailing_rows_to_delete) turned out not to be the whole story:
+    confirmed live, a real export with both of those already applied
+    still left the answer tables confined to roughly the top ~86% of the
+    page's usable height, the leftover space stranded below rather than
+    filling it. The cause: Sheets' "fit to page" print scale is computed
+    from the print area's *natural* (unscaled) size, and applies
+    *uniformly* to both width and height -- confirmed live that width was
+    the tighter of the two even after the fixes above (the real export's
+    rendered table width already reached the page's full available
+    width at "fit to page"'s own ~55% scale, while its rendered height
+    fell well short of the page's available height at that same scale),
+    so the scale needed to keep width inside the page was smaller than
+    height alone would have required, and that same undersized scale
+    then left height under-filled too.
+
+    Rows and columns are *not* interchangeable for a fix like this --
+    confirmed live, the hard way: hiding and then deleting a sheet's own
+    trailing rows (see trailing_rows_to_delete/delete_rows) had *zero*
+    measurable effect on the exported PDF's scale, while hiding columns
+    measurably did. Narrowing the answer tables' own columns further
+    (rather than touching row heights or font sizes directly) targets
+    the dimension already confirmed to move the needle, on the theory
+    that it's still what's forcing the scale down: shrinking these
+    columns lets "fit to page" recompute a *larger* uniform scale on its
+    own (still guaranteed not to overflow -- "fit to page" always finds
+    whatever scale fits, however large or small the natural size is),
+    which then renders the *untouched* rows taller too, filling more of
+    the page's actual height as a side effect -- without narrowing
+    anything, adjusting any print setting, or resizing a single font.
+
+    The sidebar (Score Summary/Key/Domains) is deliberately excluded --
+    only Module 1's own title column through the canonical Module 2
+    block's own last column narrows. See _TABLE_COLUMN_NARROW_FACTOR's
+    own comment for where that factor's value comes from and how
+    confident it actually is (a first estimate, not one confirmed
+    against a live export)."""
+    blocks = locate_sat_blocks(ws)
+    module1 = next((b for b in blocks if b.module_slot == "module1"), None)
+    if module1 is None:
+        return None
+    canonical_col = _canonical_module2_col(ws)
+    end_col = canonical_col if canonical_col is not None else module1.question_col
+    return (module1.question_col - 1, end_col - 1 + _CLEAR_BLOCK_WIDTH, _TABLE_COLUMN_NARROW_FACTOR)
 
 
 def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
@@ -569,9 +646,12 @@ def fill_sat_score_report(
     cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
     hidden_column_ranges = [(sheet_name, left, right) for left, right in columns_to_hide(ws)]
     deleted_row_ranges = [(sheet_name, top, bottom) for top, bottom in trailing_rows_to_delete(ws)]
+    narrow_range = visible_table_columns_to_narrow(ws)
+    narrowed_column_ranges = [(sheet_name,) + narrow_range] if narrow_range is not None else []
     return FillResult(
         cell_writes=writes,
         cleared_ranges=cleared_ranges,
         hidden_column_ranges=hidden_column_ranges,
         deleted_row_ranges=deleted_row_ranges,
+        narrowed_column_ranges=narrowed_column_ranges,
     )

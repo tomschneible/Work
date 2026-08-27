@@ -116,12 +116,22 @@ class FillResult:
     delete_rows -- used to remove a sheet's own trailing blank rows
     outright, since merely hiding them (tried first) turned out to have
     no effect at all on the exported PDF's print area, unlike hiding a
-    column; see delete_rows' own docstring."""
+    column; see delete_rows' own docstring. `narrowed_column_ranges` is
+    yet another different fix, for a third, separate problem: (sheet_name,
+    0-indexed start column, 0-indexed end column, shrink factor), end
+    column exclusive, for narrow_columns -- used to shrink the answer
+    tables' own column widths so "fit to page" doesn't have to shrink the
+    whole page's scale nearly as far to keep them within one page's
+    width, which -- since that scale applies uniformly -- was leaving
+    height under-filled even though height alone had room to spare; see
+    sat_score_report_writer.visible_table_columns_to_narrow for the full
+    reasoning."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
     hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
     deleted_row_ranges: Sequence[Tuple[str, int, int]] = ()
+    narrowed_column_ranges: Sequence[Tuple[str, int, int, float]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -360,6 +370,113 @@ def clear_cells(
             }
         )
     sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def narrow_columns(
+    sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int, float]]
+) -> None:
+    """Shrink every column in each of `ranges` -- (sheet_name, 0-indexed
+    start column, 0-indexed end column [exclusive], shrink factor) -- to
+    `factor` times its own *current* width, via one Sheets API `get` call
+    that reads each column's actual current `pixelSize`, followed by one
+    `updateDimensionProperties` request per column setting its new
+    `pixelSize` explicitly (`round(current * factor)`, floored at 1px). A
+    no-op (no API call at all) if `ranges` is empty.
+
+    This exists because Sheets' "fit to page" print scale is computed
+    from the print area's *natural* (unscaled) size -- confirmed live
+    (see sat_score_report_writer.visible_table_columns_to_narrow's own
+    docstring for the full reasoning and the real numbers behind it):
+    with the Module 2 answer tables' natural column widths as wide as
+    they currently are, "fit to page" has to shrink everything down to
+    ~55% to keep the *widest* dimension (width, confirmed the binding
+    one -- a real export's rendered width already reached the page's
+    full available width at that scale, while its rendered height fell
+    well short of the page's available height) inside one page -- and
+    since scale applies uniformly to both dimensions, that same
+    width-driven 55% leaves height under-filled even though height alone
+    had plenty of room to spare. Narrowing the columns that make width
+    the tighter constraint lets "fit to page" recompute a *larger*
+    uniform scale on its own (still never overflowing -- "fit to page"
+    always finds whatever scale fits, regardless of how large or small
+    the natural size is), which -- being applied uniformly -- makes the
+    *unshrunk* rows render taller too, filling more of the page's actual
+    height. This changes column *width*, not font size or row height, on
+    the theory that width is what's forcing the scale down in the first
+    place; nothing about font size is touched here.
+
+    Deliberately reads each column's *actual* current pixel width from
+    Sheets itself, rather than trying to convert `openpyxl`'s own
+    (character-unit) column width into pixels locally -- confirmed live
+    that a generic char-unit-to-pixel formula doesn't reliably match
+    what Sheets actually renders a given `width` as; reading the real
+    `pixelSize` avoids compounding that guesswork into an already
+    uncertain factor.
+
+    Rows and columns are *not* interchangeable for this kind of fix --
+    confirmed live, painfully: hiding and deleting a sheet's own trailing
+    rows (see delete_rows) had *zero* measurable effect on the exported
+    PDF, while hiding columns (hide_columns) measurably changed it. This
+    function only ever touches columns for that reason.
+
+    One `get` call resolves every sheet name to its numeric sheetId and
+    reads that sheet's current column widths together (multiple `ranges`
+    for the same sheet are matched back up by request order -- the
+    Sheets API's own `get` response groups `data` entries per sheet, not
+    per requested range, so this doesn't just zip `ranges` against the
+    response 1:1). Raises ValueError if a range names a sheet this
+    spreadsheet doesn't have."""
+    if not ranges:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    for sheet_name, _start, _end, _factor in ranges:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+
+    a1_ranges = [
+        f"'{sheet_name}'!{get_column_letter(start_col + 1)}1:{get_column_letter(end_col)}1"
+        for sheet_name, start_col, end_col, _factor in ranges
+    ]
+    widths_response = sheets.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        ranges=a1_ranges,
+        fields="sheets.properties.sheetId,sheets.data.columnMetadata.pixelSize",
+    ).execute()
+    data_by_sheet_id: Dict[int, List[dict]] = {
+        sheet_result["properties"]["sheetId"]: sheet_result.get("data", [])
+        for sheet_result in widths_response.get("sheets", [])
+    }
+    next_data_index: Dict[int, int] = {}
+
+    requests = []
+    for sheet_name, start_col, end_col, factor in ranges:
+        sheet_id = sheet_id_by_title[sheet_name]
+        data_index = next_data_index.get(sheet_id, 0)
+        next_data_index[sheet_id] = data_index + 1
+        column_metadata = data_by_sheet_id.get(sheet_id, [])[data_index].get("columnMetadata", [])
+        for offset, col_meta in enumerate(column_metadata):
+            current_width = col_meta.get("pixelSize")
+            if current_width is None:
+                continue
+            new_width = max(1, round(current_width * factor))
+            col_index = start_col + offset
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_index,
+                            "endIndex": col_index + 1,
+                        },
+                        "properties": {"pixelSize": new_width},
+                        "fields": "pixelSize",
+                    }
+                }
+            )
+    if requests:
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
 
 def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
