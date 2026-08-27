@@ -34,6 +34,7 @@ def _patch_all(**overrides):
         clear_cells=MagicMock(),
         hide_columns=MagicMock(),
         narrow_columns=MagicMock(),
+        allow_text_overflow=MagicMock(),
         delete_rows=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
@@ -56,6 +57,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     fake_cleared_ranges = [("Student Responses", 3, 7, 14, 20)]
     fake_hidden_column_ranges = [("Student Responses", 14, 20)]
     fake_narrowed_column_ranges = [("Student Responses", 7, 20, 0.75)]
+    fake_overflow_title_cells = [("Student Responses", 3, 7)]
     fake_deleted_row_ranges = [("Student Responses", 64, 996)]
     fill_fn = MagicMock(
         return_value=FillResult(
@@ -63,6 +65,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
             cleared_ranges=fake_cleared_ranges,
             hidden_column_ranges=fake_hidden_column_ranges,
             narrowed_column_ranges=fake_narrowed_column_ranges,
+            overflow_title_cells=fake_overflow_title_cells,
             deleted_row_ranges=fake_deleted_row_ranges,
         )
     )
@@ -110,6 +113,10 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks["narrow_columns"].assert_called_once()
     assert mocks["narrow_columns"].call_args[0][1] == "COPY_ID"
     assert mocks["narrow_columns"].call_args[0][2] == fake_narrowed_column_ranges
+
+    mocks["allow_text_overflow"].assert_called_once()
+    assert mocks["allow_text_overflow"].call_args[0][1] == "COPY_ID"
+    assert mocks["allow_text_overflow"].call_args[0][2] == fake_overflow_title_cells
 
     mocks["delete_rows"].assert_called_once()
     assert mocks["delete_rows"].call_args[0][1] == "COPY_ID"

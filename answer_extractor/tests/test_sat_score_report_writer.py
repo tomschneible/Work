@@ -172,6 +172,10 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # block's own last column (M) -- see
     # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block.
     assert writes.narrowed_column_ranges == [("Student Responses", 0, 13, _TABLE_COLUMN_NARROW_FACTOR)]
+    # Module 1's own title cell (A4) and the canonical Module 2 block's
+    # own title cell (H4, already canonical here -- no repositioning) --
+    # only active blocks' titles, 0-indexed.
+    assert writes.overflow_title_cells == [("Student Responses", 3, 0), ("Student Responses", 3, 7)]
     # This fixture's own last row already matches its last real content
     # (no stray trailing formatting the way a real template has -- see
     # test_trailing_rows_to_delete_finds_a_sheets_own_trailing_blank_rows),
@@ -338,6 +342,14 @@ def test_fill_sat_score_report_consolidates_a_non_canonical_active_variant(tmp_p
     assert _at(writes, "J27") == "C"
     assert _at(writes, "L27") == "ALG"
     assert _at(writes, "M27") == "LE1"
+
+    # Both subjects' own canonical title cells get OVERFLOW_CELL forced,
+    # regardless of whether repositioning happened for that one -- R&W's
+    # own (H4, written in place) and Math's own (H24, repositioned here) --
+    # since a real export showed *only* an untouched, non-repositioned
+    # title cell could still end up truncated (a template inconsistency
+    # this doesn't try to distinguish between block by block).
+    assert writes.overflow_title_cells == [("Student Responses", 3, 7), ("Student Responses", 23, 7)]
 
     # Math's own native Lower occurrence (O, rows 24-27) is never written to
     # at all -- nothing in this whole run ever targets column O (15),

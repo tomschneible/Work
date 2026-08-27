@@ -125,13 +125,23 @@ class FillResult:
     width, which -- since that scale applies uniformly -- was leaving
     height under-filled even though height alone had room to spare; see
     sat_score_report_writer.visible_table_columns_to_narrow for the full
-    reasoning."""
+    reasoning. `overflow_title_cells` is a follow-on fix for a side
+    effect narrowing those columns exposed: (sheet_name, 0-indexed row,
+    0-indexed column) for every block's own title cell, for
+    allow_text_overflow -- forces `OVERFLOW_CELL` wrap strategy there
+    regardless of whatever the template's own cell already had, since
+    confirmed live one subject's own title genuinely truncated (not just
+    got visually overlapped) once its column narrowed, while a different
+    subject's own title at the same narrowed width didn't -- the two
+    cells never shared the same wrap strategy to begin with; see
+    allow_text_overflow's own docstring."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
     hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
     deleted_row_ranges: Sequence[Tuple[str, int, int]] = ()
     narrowed_column_ranges: Sequence[Tuple[str, int, int, float]] = ()
+    overflow_title_cells: Sequence[Tuple[str, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -477,6 +487,61 @@ def narrow_columns(
             )
     if requests:
         sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def allow_text_overflow(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int]]) -> None:
+    """Set `OVERFLOW_CELL` wrap strategy on each of `cells` -- (sheet_name,
+    0-indexed row, 0-indexed column) -- via one Sheets API `batchUpdate`
+    `repeatCell` request per cell, so text too wide for its own column
+    visibly spills into blank neighboring cells instead of being clipped.
+    A no-op (no API call at all) if `cells` is empty.
+
+    Exists because narrow_columns can shrink a block's own title column
+    enough to expose an inconsistency already latent in the template
+    itself: confirmed live against a real export, one subject's own
+    canonical Module 2 title rendered with the end of its text missing
+    entirely -- not just visually overlapped by a neighboring cell's own
+    background, but genuinely truncated in the exported PDF's own text
+    layer -- while a *different* subject's own canonical Module 2 title,
+    at the same narrowed column width, rendered completely. Since both
+    are the exact same physical columns (just different rows), the only
+    explanation is that these two cells never shared the same
+    `wrapStrategy` in the template to begin with -- one already tolerated
+    overflowing into its blank neighbors, the other didn't, and only
+    widening the gap (narrow_columns) that a full-width column used to
+    paper over made that latent difference visible. Explicitly setting
+    `OVERFLOW_CELL` on every title cell removes the dependence on
+    whatever the template happens to already have there, rather than
+    hoping a wider column reliably works around it.
+
+    One `get` call resolves every sheet name to its numeric sheetId
+    first, since the batchUpdate request itself only accepts that, not a
+    name. Raises ValueError if a cell names a sheet this spreadsheet
+    doesn't have."""
+    if not cells:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, row, col in cells:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "startRowIndex": row,
+                        "endRowIndex": row + 1,
+                        "startColumnIndex": col,
+                        "endColumnIndex": col + 1,
+                    },
+                    "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
+                    "fields": "userEnteredFormat.wrapStrategy",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
 
 def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:

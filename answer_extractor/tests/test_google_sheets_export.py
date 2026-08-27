@@ -10,6 +10,7 @@ import pytest
 
 from answer_extractor.google_sheets_export import (
     CellWrite,
+    allow_text_overflow,
     clear_cells,
     copy_template,
     delete_file,
@@ -570,3 +571,72 @@ def test_narrow_columns_raises_for_an_unknown_sheet_name():
 
     with pytest.raises(ValueError, match="Cover Page"):
         narrow_columns(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 4, 0.75)])
+
+
+def test_allow_text_overflow_resolves_sheet_names_and_sends_one_batch_update():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 111, "title": "Student Responses"}},
+            {"properties": {"sheetId": 222, "title": "Cover Page"}},
+        ]
+    }
+
+    allow_text_overflow(
+        sheets,
+        "SPREADSHEET_ID",
+        [("Student Responses", 5, 14), ("Cover Page", 0, 0)],
+    )
+
+    sheets.spreadsheets.return_value.get.assert_called_once_with(
+        spreadsheetId="SPREADSHEET_ID", fields="sheets.properties"
+    )
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert kwargs["body"]["requests"] == [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": 111,
+                    "startRowIndex": 5,
+                    "endRowIndex": 6,
+                    "startColumnIndex": 14,
+                    "endColumnIndex": 15,
+                },
+                "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
+                "fields": "userEnteredFormat.wrapStrategy",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": 222,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 1,
+                },
+                "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
+                "fields": "userEnteredFormat.wrapStrategy",
+            }
+        },
+    ]
+    sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
+
+
+def test_allow_text_overflow_is_a_no_op_for_an_empty_list():
+    sheets = MagicMock()
+
+    allow_text_overflow(sheets, "SPREADSHEET_ID", [])
+
+    sheets.spreadsheets.assert_not_called()
+
+
+def test_allow_text_overflow_raises_for_an_unknown_sheet_name():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
+    }
+
+    with pytest.raises(ValueError, match="Cover Page"):
+        allow_text_overflow(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 0)])

@@ -466,22 +466,47 @@ worked, or to look around the folder tree while debugging.
    deliberately excluded, to avoid clipping or misaligning a graphic
    element this never otherwise touches), and
    `google_sheets_export.narrow_columns` shrinks each one to
-   `_TABLE_COLUMN_NARROW_FACTOR` (currently 0.75) times its own *actual
-   current* pixel width -- read live from Sheets itself via a `get` call
-   rather than converted from `openpyxl`'s character-unit column width
-   locally, since a generic conversion formula wasn't confirmed to match
-   what Sheets actually renders. Narrowing the columns that make width
-   the tighter constraint lets "fit to page" recompute a larger uniform
+   `_TABLE_COLUMN_NARROW_FACTOR` times its own *actual current* pixel
+   width -- read live from Sheets itself via a `get` call rather than
+   converted from `openpyxl`'s character-unit column width locally,
+   since a generic conversion formula wasn't confirmed to match what
+   Sheets actually renders. Narrowing the columns that make width the
+   tighter constraint lets "fit to page" recompute a larger uniform
    scale on its own (still guaranteed not to overflow -- "fit to page"
    always finds whatever scale fits) -- which, applied uniformly, also
    renders the *untouched* rows taller, filling more of the page's
    actual height as a side effect, without narrowing anything, adjusting
    a print setting, or resizing a single font.
 
-   `_TABLE_COLUMN_NARROW_FACTOR`'s own value (0.75) is a first estimate
-   derived from the real numbers above, not one confirmed against a live
-   export -- see its own comment in `sat_score_report_writer.py` for the
-   arithmetic. It may need tuning once tested live.
+   The first value tried, 0.75, overshot: confirmed live against a real
+   export, it filled the page far better (font size measurably bigger,
+   matching the reference example's own fill level) but pushed a
+   subject's last couple of questions onto a nearly-blank extra page,
+   and separately exposed a *different*, previously-latent bug (see
+   next paragraph). `_TABLE_COLUMN_NARROW_FACTOR` is now 0.82, still not
+   confirmed against a live export at this specific value -- may need
+   further tuning; see its own comment in `sat_score_report_writer.py`
+   for the arithmetic behind both values.
+
+   Narrowing far enough also genuinely truncated a block's own title in
+   that same real export -- not just visually overlapped by a
+   neighboring cell's background, but missing characters outright in
+   the exported PDF's own text layer. Confirmed live it wasn't
+   `narrow_columns` cutting the text off directly: a *different*
+   subject's own canonical Module 2 title, at the exact same narrowed
+   column width, rendered completely intact. Since both are literally
+   the same physical columns (just different rows), the only
+   explanation is that these two title cells never shared the same
+   `wrapStrategy` in the template to begin with -- one already tolerated
+   overflowing into its blank neighbors, the other didn't -- and only
+   narrowing a full-width column that used to paper over the gap made
+   that latent inconsistency visible. `google_sheets_export.
+   allow_text_overflow` forces `OVERFLOW_CELL` wrap strategy onto every
+   active block's own title cell (Module 1's, and whichever cell ends up
+   holding each subject's canonical Module 2 title after any
+   repositioning) regardless of what the template's own cell already
+   had, closing off the dependency on that inconsistency entirely rather
+   than hoping a wider column reliably works around it.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

@@ -99,25 +99,30 @@ _CLEAR_BLOCK_WIDTH = 6
 # How much narrower the visible answer-table columns (Module 1 through
 # the canonical Module 2 block) get made on the working copy -- see
 # visible_table_columns_to_narrow's own docstring for the full derivation.
-# Confirmed live against a real export: at "fit to page" (~55% scale,
-# width the binding dimension -- its own rendered width already reached
-# the page's full available width, while rendered height fell well short
-# of the page's available height), reaching the target used by a real,
-# well-filling reference example (~681pt of vertical space, matching this
-# sheet's own real row-height sum of 1020pt scaled to ~67%) needs
-# `0.55 / 0.667 =~ 0.824` -- i.e. these columns narrowed to ~82% of their
-# real width would, in principle, let "fit to page" recompute a big-
-# enough scale on its own. But that 82% assumed the *sidebar* (Score
-# Summary/Key/Domains, deliberately left untouched here -- narrowing it
-# risks clipping/misaligning a graphic element none of this ever
-# otherwise touches) narrows right along with the tables; with only the
-# tables narrowing, they have to shrink further to produce the *same*
-# overall page-width reduction (the sidebar's own real character-width
-# share of the visible print area works out to ~75% for the tables
-# alone, by the same math). 0.75 either way is a first estimate, not a
-# value confirmed against a live export -- see this function's own
-# docstring.
-_TABLE_COLUMN_NARROW_FACTOR = 0.75
+# The first value tried, 0.75, was derived from: at "fit to page" (~55%
+# scale, width the binding dimension -- its own rendered width already
+# reached the page's full available width, while rendered height fell
+# well short of the page's available height), reaching the target used
+# by a real, well-filling reference example (~681pt of vertical space,
+# matching this sheet's own real row-height sum of 1020pt scaled to
+# ~67%) needs `0.55 / 0.667 =~ 0.824` for the *whole* visible print area
+# -- but since the sidebar (Score Summary/Key/Domains) is deliberately
+# left unnarrowed here (narrowing it risks clipping/misaligning a
+# graphic element none of this ever otherwise touches), the tables alone
+# have to shrink further to produce the same overall page-width
+# reduction, working out to ~0.75 by the same math.
+#
+# Confirmed live that 0.75 overshot: real export at 0.75 filled the page
+# far better (font size measurably bigger, matching the reference
+# example's own fill level) but pushed a subject's last couple of
+# questions onto a nearly-blank extra page, and exposed a template
+# inconsistency (see allow_text_overflow) that truncated a block title
+# outright once its column got that narrow. 0.82 pulls back toward the
+# original, whole-print-area estimate (0.824) -- still meaningfully
+# narrower than no fix at all, but with real margin against both of
+# those failures. Still not confirmed against a live export at this
+# specific value -- may need further tuning.
+_TABLE_COLUMN_NARROW_FACTOR = 0.82
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -583,12 +588,14 @@ def fill_sat_score_report(
     )
 
     remaining = dict(answers)
+    overflow_title_cells: List[Tuple[str, int, int]] = []
     for block in locate_sat_blocks(ws):
         is_active = block.module_slot == "module1" or active_variants.get(block.subject) == block.module_slot
         if not is_active:
             continue  # a non-administered block -- leave completely untouched, cleared instead
 
         if block.module_slot == "module1":
+            overflow_title_cells.append((sheet_name, block.title_row - 1, block.question_col - 1))
             r = block.header_row + 1
             while True:
                 question = ws.cell(row=r, column=block.question_col).value
@@ -608,6 +615,7 @@ def fill_sat_score_report(
 
         repositioning = canonical_col is not None and block.question_col != canonical_col
         target_col = canonical_col if repositioning else block.question_col
+        overflow_title_cells.append((sheet_name, block.title_row - 1, target_col - 1))
         if repositioning:
             title_text = ws.cell(row=block.title_row, column=block.question_col).value
             writes.append(CellWrite(sheet_name, block.title_row, target_col, title_text))
@@ -654,4 +662,5 @@ def fill_sat_score_report(
         hidden_column_ranges=hidden_column_ranges,
         deleted_row_ranges=deleted_row_ranges,
         narrowed_column_ranges=narrowed_column_ranges,
+        overflow_title_cells=overflow_title_cells,
     )
