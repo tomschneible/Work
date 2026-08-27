@@ -110,11 +110,17 @@ class FillResult:
     `hidden_column_ranges` entries are (sheet_name, 0-indexed start
     column, 0-indexed end column) -- end exclusive, the shape
     hide_columns' Sheets API request needs; whole-column, so no row
-    bounds."""
+    bounds. `hidden_row_ranges` is the row-dimension counterpart --
+    (sheet_name, 0-indexed start row, 0-indexed end row), end exclusive,
+    for hide_rows -- used to hide a sheet's own trailing blank rows that
+    still count toward the exported PDF's print area even though nothing
+    is actually on them; see sat_score_report_writer.rows_to_hide for
+    why."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
     hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
+    hidden_row_ranges: Sequence[Tuple[str, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -408,6 +414,64 @@ def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[s
                         "dimension": "COLUMNS",
                         "startIndex": start_col,
                         "endIndex": end_col,
+                    },
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def hide_rows(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
+    """Hide every whole row in each of `ranges` -- (sheet_name, 0-indexed
+    start row, 0-indexed end row), end exclusive, the shape
+    FillResult.hidden_row_ranges carries -- via one Sheets API
+    `batchUpdate` `updateDimensionProperties` request per range, the row-
+    dimension counterpart of hide_columns (see its own docstring for why
+    hiding, not just clearing, is needed at all: a blank-but-visible
+    dimension still counts toward the sheet's print area, forcing "fit to
+    page" to scale down more than the actually-visible content needs).
+
+    Used for a different problem than hide_columns, though: not a Module
+    2 occurrence that wasn't administered, but a sheet's own trailing
+    rows that were never real content to begin with. Confirmed live
+    against the real "Student Responses" tab: it carries formatting
+    (row heights, borders) out to row 996 even though its real content
+    -- every block, every score cell, the footer -- ends at row 64;
+    nothing in this pipeline ever wrote that formatting or can remove it
+    by clearing cells, since there's no *content* there to clear, only
+    the sheet's own stray row metadata. With no print area explicitly
+    set on the file (Sheets' own Print-settings UI doesn't reliably
+    persist one -- confirmed live; see this repo's history), the export
+    falls back to the sheet's full used range, so those ~930 empty rows
+    were still being counted in the vertical "fit to page" scale
+    calculation -- confirmed live, the real tables were left occupying
+    only the top ~86% of the page's usable height instead of filling it,
+    with the leftover space stranded below rather than distributed
+    proportionally. See sat_score_report_writer.rows_to_hide for how the
+    boundary is found.
+
+    One `get` call resolves every sheet name to its numeric sheetId
+    first, since the batchUpdate request itself only accepts that, not a
+    name. A no-op (no API call at all) if `ranges` is empty. Raises
+    ValueError if a range names a sheet this spreadsheet doesn't have."""
+    if not ranges:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, start_row, end_row in ranges:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "dimension": "ROWS",
+                        "startIndex": start_row,
+                        "endIndex": end_row,
                     },
                     "properties": {"hiddenByUser": True},
                     "fields": "hiddenByUser",

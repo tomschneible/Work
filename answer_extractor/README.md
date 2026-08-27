@@ -409,6 +409,33 @@ worked, or to look around the folder tree while debugging.
    answers always land in the same canonical column first, nothing real
    is ever left in a non-canonical column for anyone, so hiding it is
    never at risk of hiding real data.
+
+   Fixing the width didn't fully fix the sizing, though -- confirmed
+   live comparing a real export against the org's own reference example:
+   the tables were noticeably wider now, but still confined to roughly
+   the top 86% of the page's usable height instead of filling it, the
+   leftover space stranded below rather than distributed proportionally.
+   The cause turned out to be nothing to do with Module 2 at all: the
+   "Student Responses" tab itself carries stray formatting (borders,
+   fills -- no actual value) all the way out to row 996, even though its
+   real content -- every block, every score cell, the footer -- ends at
+   row 64 (confirmed against the real template file: `openpyxl`'s own
+   `ws.max_row` reports 996 there). With no print area explicitly set on
+   the file (Google Sheets' own Print-settings dialog doesn't reliably
+   persist a manually-selected range -- confirmed live in this repo's
+   own history, back when an earlier version of this pipeline tried
+   setting one directly via an xlsx round-trip and had to abandon that
+   approach for an unrelated reason -- corrupting a different tab's own
+   formatting on re-upload), Sheets' PDF export falls back to the
+   sheet's full used range, so those ~930 empty rows were still being
+   counted in the vertical "fit to page" scale calculation right
+   alongside the real content. `sat_score_report_writer.rows_to_hide`
+   finds that gap (scanning for the sheet's own actual last row with any
+   value, not trusting `ws.max_row`/`ws.dimensions` -- those *are* the
+   stray formatting this needs to see past) and hides it the same way
+   `columns_to_hide` hides a non-canonical column, via
+   `google_sheets_export.hide_rows` (the row-dimension counterpart of
+   `hide_columns`).
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

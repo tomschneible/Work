@@ -305,6 +305,47 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
 
 
+def rows_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
+    """0-indexed (start_row, end_row) row range (end exclusive -- the
+    shape a Sheets API dimension range needs) covering every row below
+    `ws`'s own last real content -- empty if there's no such gap.
+
+    A completely different problem than blocks_to_clear/columns_to_hide:
+    not a Module 2 occurrence that wasn't administered, but the sheet's
+    own trailing rows that were never real content in the first place.
+    Confirmed against the real template: "Student Responses" carries
+    formatting (row heights, borders) all the way out to row 996, even
+    though its actual content -- every block, every score cell, the
+    footer -- ends at row 64. With no print area explicitly set on the
+    file (see hide_rows' own docstring on why this pipeline doesn't set
+    one directly), Sheets' PDF export falls back to the sheet's full used
+    range for that tab, so those ~930 empty rows were still being
+    counted when "fit to page" computed its scale -- confirmed live: the
+    real tables were confined to the top ~86% of the page's usable
+    height instead of filling it, the same class of problem
+    columns_to_hide fixes for width, just for height instead and
+    unrelated to Module 2 at all (this still matters even for a subject
+    combination that never needed a single non-canonical column hidden).
+    Hiding these rows removes them from the print area the same way
+    hiding a column does.
+
+    "Last real content" is found by scanning every cell on the sheet for
+    a non-None value, deliberately not using `ws.max_row`/`ws.dimensions`
+    the way an earlier, now-abandoned approach did (_tighten_print_areas,
+    see this repo's history) -- those reflect exactly the stray
+    formatting this needs to look *past*, not the real content boundary
+    itself.
+    """
+    last_content_row = 0
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is not None:
+                last_content_row = max(last_content_row, cell.row)
+    if ws.max_row <= last_content_row:
+        return []
+    return [(last_content_row, ws.max_row)]
+
+
 def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
     """{subject: (row, col)} for every "<Subject> Score" label found (e.g.
     "Reading\n& Writing\nScore", "Math\nScore") -- these templates put the
@@ -368,7 +409,11 @@ def fill_sat_score_report(
     blocks_to_clear and columns_to_hide), so the exported report only
     shows the modules that were actually filled in -- both in content
     and in the exported PDF's own sizing -- rather than every
-    duplicate/twin block the template ships with.
+    duplicate/twin block the template ships with; plus the whole rows
+    below `sheet_name`'s own real content to hide too (see rows_to_hide),
+    an unrelated problem (the sheet's own trailing blank-but-formatted
+    rows, nothing to do with Module 2) that inflates the same exported
+    PDF's print area regardless.
 
     `active_variants` maps subject -> "easier"/"harder", the Module 2
     difficulty actually administered for that subject (from
@@ -516,4 +561,10 @@ def fill_sat_score_report(
 
     cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
     hidden_column_ranges = [(sheet_name, left, right) for left, right in columns_to_hide(ws)]
-    return FillResult(cell_writes=writes, cleared_ranges=cleared_ranges, hidden_column_ranges=hidden_column_ranges)
+    hidden_row_ranges = [(sheet_name, top, bottom) for top, bottom in rows_to_hide(ws)]
+    return FillResult(
+        cell_writes=writes,
+        cleared_ranges=cleared_ranges,
+        hidden_column_ranges=hidden_column_ranges,
+        hidden_row_ranges=hidden_row_ranges,
+    )

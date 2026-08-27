@@ -3,6 +3,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+from openpyxl.styles import Border, Side
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from answer_extractor.google_sheets_export import CellWrite, FillResult
@@ -11,6 +12,7 @@ from answer_extractor.sat_score_report_writer import (
     columns_to_hide,
     fill_sat_score_report,
     locate_sat_blocks,
+    rows_to_hide,
 )
 
 _MISSING = object()  # distinguishes "never written" from an explicitly-written None (an omitted answer)
@@ -164,6 +166,11 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         ("Student Responses", 21, 27),
         ("Student Responses", 28, 34),
     ]
+    # This fixture's own last row already matches its last real content
+    # (no stray trailing formatting the way a real template has -- see
+    # test_rows_to_hide_hides_a_sheets_own_trailing_blank_rows), so
+    # there's nothing for rows_to_hide to find here.
+    assert writes.hidden_row_ranges == []
 
 
 def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_path):
@@ -201,6 +208,44 @@ def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_pa
         (21, 27),  # V -- Higher, duplicate
         (28, 34),  # AC -- Lower, duplicate
     ]
+
+
+def test_rows_to_hide_hides_a_sheets_own_trailing_blank_rows(tmp_path):
+    """The bug confirmed live against the real "Student Responses" tab: it
+    carries stray formatting (border/fill, no value) all the way out to
+    row 996, even though its actual content -- every block, every score
+    cell, the footer -- ends at row 64. openpyxl's own `ws.max_row`
+    reflects that stray formatting, not the real content boundary, which
+    is exactly why rows_to_hide can't just use it directly as "the last
+    row" -- it has to scan for the last row that actually holds a value
+    and hide everything past *that*."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Student Responses"]
+    # Stray formatting with no real content -- the same shape the real
+    # template has: a border applied to cells well past the last row
+    # anything was ever written to, with no value of their own -- this is
+    # what actually makes openpyxl (and Sheets' own export) treat those
+    # rows as part of the sheet's used range; a bare row height alone
+    # (tried first) turned out not to reproduce it.
+    for row in range(13, 51):
+        ws.cell(row=row, column=1).border = Border(bottom=Side(style="thin"))
+    wb.save(str(path))
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert ws.max_row == 50  # confirms the fixture actually reproduces the gap
+    ranges = rows_to_hide(ws)
+
+    assert ranges == [(12, 50)]  # 0-indexed: 1-indexed rows 13-50, end exclusive
+
+
+def test_rows_to_hide_is_empty_when_there_is_no_trailing_gap(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert rows_to_hide(ws) == []
 
 
 def test_fill_sat_score_report_consolidates_a_non_canonical_active_variant(tmp_path):
