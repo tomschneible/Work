@@ -123,6 +123,12 @@ _CLEAR_BLOCK_WIDTH = 6
 # those failures. Still not confirmed against a live export at this
 # specific value -- may need further tuning.
 _TABLE_COLUMN_NARROW_FACTOR = 0.82
+# How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
+# get narrowed too, on top of being marked hidden -- see
+# hidden_columns_to_shrink's own docstring for why hiding alone wasn't
+# enough. Small enough to floor at 1px (narrow_columns' own minimum)
+# for any realistic starting width on this sheet.
+_HIDDEN_COLUMN_SHRINK_FACTOR = 0.01
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -332,12 +338,99 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     return [(col - 1, col - 1 + _CLEAR_BLOCK_WIDTH) for col in _non_canonical_module2_cols(ws)]
 
 
-def visible_table_columns_to_narrow(ws: Worksheet) -> Optional[Tuple[int, int, float]]:
-    """0-indexed (start_col, end_col, factor) (end exclusive -- the shape
-    a Sheets API dimension range needs, plus narrow_columns' own shrink
-    factor) spanning every *visible* answer-table column on `ws` --
-    Module 1 through the canonical Module 2 block's own last column
-    (Domain/Skill) -- to shrink via narrow_columns. None if `ws` has no
+def hidden_columns_to_shrink(ws: Worksheet) -> List[Tuple[int, int, float]]:
+    """0-indexed (start_col, end_col, factor) ranges (end exclusive) --
+    the exact same non-canonical Module 2 columns columns_to_hide hides,
+    narrowed to _HIDDEN_COLUMN_SHRINK_FACTOR (near-zero) via
+    narrow_columns *in addition to* being marked hidden.
+
+    Exists because marking a column `hiddenByUser` turned out not to be
+    enough on its own for a *different* reason than either of the row
+    lessons (trailing_rows_to_delete/delete_rows) or the width-vs-height
+    scale lesson (visible_table_columns_to_narrow): confirmed live
+    against a real export, with `printOptions horizontalCentered="1"`
+    already set on this sheet (confirmed in the real template's own
+    saved xlsx -- this pipeline never sets it, so it was always meant to
+    center the print area horizontally), the *visible* answer tables
+    rendered pushed to the left of center, with a large blank gap on the
+    right roughly matching where the hidden Module 2 occurrences used to
+    sit. Hiding a column removes it from what gets *drawn*, but
+    apparently not from what Sheets still counts as the print area's own
+    width when centering it -- the same kind of gap between "hidden" and
+    "actually gone" already confirmed for trailing rows. Giving the same
+    hidden columns an explicit near-zero width too closes that gap
+    without needing to touch anything about the print setup itself.
+    """
+    return [
+        (start, end, _HIDDEN_COLUMN_SHRINK_FACTOR)
+        for start, end in columns_to_hide(ws)
+    ]
+
+
+def header_bar_extension(ws: Worksheet) -> Optional[Tuple[int, str, int, int]]:
+    """(row 0-indexed, hex fill color, start_col 0-indexed, end_col
+    0-indexed exclusive) for extending a decorative full-row fill (the
+    accent bar under "Your Question-Level Feedback") to cover the same
+    visible answer-table width visible_table_columns_to_narrow narrows
+    -- via extend_fill. None if row 1 has no such fill to extend at all
+    (a template that doesn't use this design).
+
+    Exists because narrowing the answer tables' own columns
+    (visible_table_columns_to_narrow) has a side effect on anything else
+    that happens to be sized by those *same* columns: confirmed live
+    against a real export, this sheet's own row-1 accent bar -- a solid
+    fill spanning a fixed range of columns, confirmed against the real
+    template file, from column A through N -- is exactly as wide as the
+    sum of those columns' widths, so narrowing the table columns inside
+    that same range (Module 1's own, from column H on) shrank the bar
+    along with them, leaving it visibly short of the width it used to
+    reach while the page title's own text sat above it unchanged.
+    Extending the fill to cover the rest of the narrowed table's own
+    width (through the canonical Module 2 block's own last column, not
+    just where the bar originally stopped at Module 1's own end) makes
+    it span the same width as the table content it sits above, which
+    reads as more consistent than trying to reproduce its original
+    (now-narrower) absolute pixel width exactly.
+
+    The color is read directly from the sheet's own row-1 fill (via
+    `openpyxl`, the same local, read-only copy every other scan here
+    uses) rather than hardcoded, so this doesn't assume any specific
+    template's own color choice."""
+    last_col = 0
+    color: Optional[str] = None
+    for col in range(1, ws.max_column + 1):
+        cell = ws.cell(row=1, column=col)
+        fill = cell.fill
+        fg = fill.fgColor if fill else None
+        if fill and fill.patternType == "solid" and fg and fg.rgb not in (None, "00000000", "FFFFFFFF"):
+            last_col = col
+            color = fg.rgb
+    if color is None:
+        return None
+
+    canonical_col = _canonical_module2_col(ws)
+    blocks = locate_sat_blocks(ws)
+    module1 = next((b for b in blocks if b.module_slot == "module1"), None)
+    if module1 is None:
+        return None
+    target_end = (canonical_col + _CLEAR_BLOCK_WIDTH - 1) if canonical_col is not None else module1.question_col
+    if target_end <= last_col:
+        return None  # already covers (or exceeds) the narrowed table's own width
+    # `last_col` (1-indexed) is numerically identical to the 0-indexed
+    # start of the column right after it -- e.g. the bar's last filled
+    # column is N (14, 1-indexed); O, the first one still needing fill,
+    # is 15 (1-indexed) = 14 (0-indexed). Extending from `last_col` as a
+    # bare 0-indexed start is this identity, not a coincidence to
+    # untangle further.
+    return (0, str(color), last_col, target_end)
+
+
+def visible_table_columns_to_narrow(ws: Worksheet) -> List[Tuple[int, int, float]]:
+    """0-indexed (start_col, end_col, factor) ranges (end exclusive -- the
+    shape a Sheets API dimension range needs, plus narrow_columns' own
+    shrink factor) spanning every *visible* answer-table column on `ws`
+    -- Module 1 through the canonical Module 2 block's own last column
+    (Domain/Skill) -- to shrink via narrow_columns. Empty if `ws` has no
     Module 1 block at all (nothing to narrow).
 
     This exists because hiding/deleting non-canonical Module 2 columns
@@ -372,19 +465,49 @@ def visible_table_columns_to_narrow(ws: Worksheet) -> Optional[Tuple[int, int, f
     the page's actual height as a side effect -- without narrowing
     anything, adjusting any print setting, or resizing a single font.
 
-    The sidebar (Score Summary/Key/Domains) is deliberately excluded --
-    only Module 1's own title column through the canonical Module 2
-    block's own last column narrows. See _TABLE_COLUMN_NARROW_FACTOR's
-    own comment for where that factor's value comes from and how
-    confident it actually is (a first estimate, not one confirmed
-    against a live export)."""
+    Each active block's own `mark_col` (the ✔/✘ column, already one of
+    the narrowest on the sheet -- it holds a single glyph) is
+    deliberately *excluded* from every range here, unlike every other
+    sub-column of the block: confirmed live that narrowing it too made
+    its own header cell (blank -- there's no label over the mark column,
+    unlike every neighboring column) lose its left border entirely in
+    the exported PDF, while the *data* rows below it (never blank --
+    always holding a ✔ or ✘) kept theirs. The same mark_col on Module 1
+    (a wider column there to begin with) never showed this at the same
+    factor, pointing at narrowing pushing an already-narrow, *content*-
+    less header cell below whatever width Sheets still renders a border
+    at reliably. Leaving mark_col at its own real width costs very
+    little of the overall size gain -- it only ever holds one glyph --
+    against a real, visible formatting break.
+
+    The sidebar (Score Summary/Key/Domains) is deliberately excluded
+    too -- only Module 1's own title column through the canonical
+    Module 2 block's own last column narrows. See
+    _TABLE_COLUMN_NARROW_FACTOR's own comment for where that factor's
+    value comes from and how confident it actually is (a first estimate,
+    not one confirmed against a live export)."""
     blocks = locate_sat_blocks(ws)
     module1 = next((b for b in blocks if b.module_slot == "module1"), None)
     if module1 is None:
-        return None
+        return []
     canonical_col = _canonical_module2_col(ws)
-    end_col = canonical_col if canonical_col is not None else module1.question_col
-    return (module1.question_col - 1, end_col - 1 + _CLEAR_BLOCK_WIDTH, _TABLE_COLUMN_NARROW_FACTOR)
+
+    ranges: List[Tuple[int, int, float]] = []
+    # Module 1: title through answer (3 cols), skip mark_col, then domain
+    # through skill *and* the spacer column(s) up to wherever Module 2's
+    # own canonical block starts (or just domain/skill if there's no
+    # Module 2 at all on this sheet).
+    m1 = module1.question_col
+    ranges.append((m1 - 1, m1 - 1 + 3, _TABLE_COLUMN_NARROW_FACTOR))
+    domain_end = (canonical_col - 1) if canonical_col is not None else (m1 - 1 + _CLEAR_BLOCK_WIDTH)
+    ranges.append((m1 - 1 + 4, domain_end, _TABLE_COLUMN_NARROW_FACTOR))
+
+    if canonical_col is not None:
+        ranges.append((canonical_col - 1, canonical_col - 1 + 3, _TABLE_COLUMN_NARROW_FACTOR))
+        ranges.append(
+            (canonical_col - 1 + 4, canonical_col - 1 + _CLEAR_BLOCK_WIDTH, _TABLE_COLUMN_NARROW_FACTOR)
+        )
+    return ranges
 
 
 def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
@@ -654,13 +777,18 @@ def fill_sat_score_report(
     cleared_ranges = [(sheet_name, top, bottom, left, right) for top, bottom, left, right in blocks_to_clear(ws)]
     hidden_column_ranges = [(sheet_name, left, right) for left, right in columns_to_hide(ws)]
     deleted_row_ranges = [(sheet_name, top, bottom) for top, bottom in trailing_rows_to_delete(ws)]
-    narrow_range = visible_table_columns_to_narrow(ws)
-    narrowed_column_ranges = [(sheet_name,) + narrow_range] if narrow_range is not None else []
+    narrowed_column_ranges = [
+        (sheet_name, left, right, factor)
+        for left, right, factor in (visible_table_columns_to_narrow(ws) + hidden_columns_to_shrink(ws))
+    ]
+    bar = header_bar_extension(ws)
+    header_bar_extension_ranges = [(sheet_name,) + bar] if bar is not None else []
     return FillResult(
         cell_writes=writes,
         cleared_ranges=cleared_ranges,
         hidden_column_ranges=hidden_column_ranges,
         deleted_row_ranges=deleted_row_ranges,
         narrowed_column_ranges=narrowed_column_ranges,
+        header_bar_extension=header_bar_extension_ranges,
         overflow_title_cells=overflow_title_cells,
     )

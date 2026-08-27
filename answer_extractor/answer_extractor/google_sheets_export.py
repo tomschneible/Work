@@ -134,13 +134,23 @@ class FillResult:
     got visually overlapped) once its column narrowed, while a different
     subject's own title at the same narrowed width didn't -- the two
     cells never shared the same wrap strategy to begin with; see
-    allow_text_overflow's own docstring."""
+    allow_text_overflow's own docstring. `header_bar_extension` is a
+    second side effect of narrowing those same columns: (sheet_name,
+    0-indexed row, ARGB hex color, 0-indexed start column, 0-indexed end
+    column [exclusive]), for extend_fill -- a decorative full-row fill
+    happened to span some of the same columns being narrowed for size,
+    so it visibly shrank right along with them; this re-applies the same
+    fill color across the columns it now needs to cover the table's own
+    (narrower) width again. See
+    sat_score_report_writer.header_bar_extension for the full reasoning
+    and why this doesn't just hardcode a color."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
     hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
     deleted_row_ranges: Sequence[Tuple[str, int, int]] = ()
     narrowed_column_ranges: Sequence[Tuple[str, int, int, float]] = ()
+    header_bar_extension: Sequence[Tuple[str, int, str, int, int]] = ()
     overflow_title_cells: Sequence[Tuple[str, int, int]] = ()
 
 
@@ -538,6 +548,64 @@ def allow_text_overflow(sheets: Resource, spreadsheet_id: str, cells: Sequence[T
                     },
                     "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
                     "fields": "userEnteredFormat.wrapStrategy",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def _hex_to_color(hex_rgb: str) -> Dict[str, float]:
+    """An 8-digit ARGB hex string (openpyxl's own `Color.rgb` format,
+    e.g. "FF0497D4") to a Sheets API `Color` object -- alpha is dropped
+    (Sheets' `backgroundColor` field has no alpha channel of its own)."""
+    hex_rgb = hex_rgb[-6:]  # drop a leading 2-digit alpha if present
+    return {
+        "red": int(hex_rgb[0:2], 16) / 255,
+        "green": int(hex_rgb[2:4], 16) / 255,
+        "blue": int(hex_rgb[4:6], 16) / 255,
+    }
+
+
+def extend_fill(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, str, int, int]]) -> None:
+    """Set a solid background fill on each of `cells` -- (sheet_name,
+    0-indexed row, ARGB hex color, 0-indexed start column, 0-indexed end
+    column [exclusive]) -- via one Sheets API `batchUpdate` `repeatCell`
+    request per entry. A no-op (no API call at all) if `cells` is empty.
+
+    Exists to extend a decorative full-row accent fill that
+    narrow_columns has a side effect on: confirmed live, a fill spanning
+    a fixed range of columns is exactly as wide as the sum of those
+    columns' own widths, so narrowing any of the columns it covers
+    narrows the fill along with them -- see
+    sat_score_report_writer.header_bar_extension's own docstring for the
+    real numbers behind it. This re-applies the *same* color (read from
+    the sheet itself, not hardcoded) across the additional columns that
+    still need it to match the table's own narrowed width.
+
+    One `get` call resolves every sheet name to its numeric sheetId
+    first, since the batchUpdate request itself only accepts that, not a
+    name. Raises ValueError if a cell names a sheet this spreadsheet
+    doesn't have."""
+    if not cells:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, row, hex_color, start_col, end_col in cells:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "startRowIndex": row,
+                        "endRowIndex": row + 1,
+                        "startColumnIndex": start_col,
+                        "endColumnIndex": end_col,
+                    },
+                    "cell": {"userEnteredFormat": {"backgroundColor": _hex_to_color(hex_color)}},
+                    "fields": "userEnteredFormat.backgroundColor",
                 }
             }
         )

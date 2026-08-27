@@ -507,6 +507,47 @@ worked, or to look around the folder tree while debugging.
    repositioning) regardless of what the template's own cell already
    had, closing off the dependency on that inconsistency entirely rather
    than hoping a wider column reliably works around it.
+
+   Narrowing had two more side effects, both confirmed live against the
+   same real export and both fixed the same way -- by patching up
+   whatever the narrowing affected, not by narrowing less:
+
+   - Each active block's own `mark_col` (the ✔/✘ column -- already one
+     of the narrowest on the sheet, since it only ever holds a single
+     glyph) lost its own header cell's left border entirely once
+     narrowed: that header cell is blank (there's no label over the
+     mark column, unlike every neighboring one), and a blank cell
+     apparently stops rendering its own border below some width Sheets
+     still draws one at reliably -- the *data* rows below it, never
+     blank, kept theirs throughout. `visible_table_columns_to_narrow`
+     now excludes each block's own `mark_col` from every range it
+     returns, at the cost of a little of the overall size gain (it
+     never held more than one glyph to begin with) against a real,
+     visible formatting break.
+   - This sheet's `printOptions horizontalCentered="1"` (confirmed
+     against the real template file -- this pipeline never sets it, so
+     it was always meant to center the print area horizontally) doesn't
+     seem to treat a *hidden* column as having zero width for centering
+     purposes, only for rendering: the visible tables came out pushed
+     left of center, with a blank gap on the right roughly the width of
+     the hidden, non-canonical Module 2 columns -- the same gap between
+     "hidden" and "actually gone" already confirmed for trailing rows,
+     just showing up in a different computation this time.
+     `hidden_columns_to_shrink` narrows those same hidden columns to
+     `_HIDDEN_COLUMN_SHRINK_FACTOR` (near-zero) via `narrow_columns`
+     too, in addition to `hide_columns` marking them hidden.
+   - Separately, this sheet's own decorative accent bar under "Your
+     Question-Level Feedback" (a solid fill spanning a fixed range of
+     columns on row 1, confirmed against the real template file to run
+     from column A through N) is exactly as wide as the sum of those
+     columns' own widths -- so narrowing the table columns inside that
+     same range (Module 1's own, from column H on) shrank the bar right
+     along with them, leaving it visibly short of where it used to
+     reach. `header_bar_extension` (paired with
+     `google_sheets_export.extend_fill`) re-applies that same fill color
+     -- read live from the sheet itself, not hardcoded -- across the
+     rest of the narrowed table's own width, so the bar spans the same
+     width as the content sitting below it again.
 6. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each

@@ -17,6 +17,7 @@ from answer_extractor.google_sheets_export import (
     delete_rows,
     export_pdf,
     export_xlsx,
+    extend_fill,
     format_date_for_sheets,
     hide_columns,
     hide_gridlines,
@@ -640,3 +641,60 @@ def test_allow_text_overflow_raises_for_an_unknown_sheet_name():
 
     with pytest.raises(ValueError, match="Cover Page"):
         allow_text_overflow(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 0)])
+
+
+def test_extend_fill_resolves_sheet_names_and_converts_argb_hex_to_a_color_object():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
+    }
+
+    extend_fill(sheets, "SPREADSHEET_ID", [("Student Responses", 0, "FF0497D4", 14, 20)])
+
+    sheets.spreadsheets.return_value.get.assert_called_once_with(
+        spreadsheetId="SPREADSHEET_ID", fields="sheets.properties"
+    )
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert kwargs["body"]["requests"] == [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": 111,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 14,
+                    "endColumnIndex": 20,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": {
+                            "red": pytest.approx(0x04 / 255),
+                            "green": pytest.approx(0x97 / 255),
+                            "blue": pytest.approx(0xD4 / 255),
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        },
+    ]
+    sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
+
+
+def test_extend_fill_is_a_no_op_for_an_empty_list():
+    sheets = MagicMock()
+
+    extend_fill(sheets, "SPREADSHEET_ID", [])
+
+    sheets.spreadsheets.assert_not_called()
+
+
+def test_extend_fill_raises_for_an_unknown_sheet_name():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
+    }
+
+    with pytest.raises(ValueError, match="Cover Page"):
+        extend_fill(sheets, "SPREADSHEET_ID", [("Cover Page", 0, "FF0497D4", 0, 4)])

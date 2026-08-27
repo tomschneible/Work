@@ -30,6 +30,7 @@ from .google_sheets_export import (
     delete_rows,
     export_pdf,
     export_xlsx,
+    extend_fill,
     hide_columns,
     narrow_columns,
     write_cells,
@@ -75,27 +76,32 @@ def export_filled_report(
     workbook is ever touched or re-converted through .xlsx (see
     google_sheets_export.py's own module docstring for why that
     matters). Its `cleared_ranges`, `hidden_column_ranges`,
-    `narrowed_column_ranges`, `overflow_title_cells`, and
-    `deleted_row_ranges`, if any, are then applied via
-    google_sheets_export.clear_cells, .hide_columns, .narrow_columns,
-    .allow_text_overflow, and .delete_rows (in that order) before the
-    PDF is exported -- SAT's fill_fn uses the first two so the report
-    only shows the Module 2 blocks that were actually administered, both
-    in content and in the exported PDF's own print-area sizing (see
+    `narrowed_column_ranges`, `header_bar_extension`,
+    `overflow_title_cells`, and `deleted_row_ranges`, if any, are then
+    applied via google_sheets_export.clear_cells, .hide_columns,
+    .narrow_columns, .extend_fill, .allow_text_overflow, and
+    .delete_rows (in that order) before the PDF is exported -- SAT's
+    fill_fn uses the first two so the report only shows the Module 2
+    blocks that were actually administered, both in content and in the
+    exported PDF's own print-area sizing (see
     sat_score_report_writer.blocks_to_clear for why both are needed, not
     just one); the third to shrink the answer tables' own column widths
-    so "fit to page" doesn't have to shrink the whole page's scale as
-    far to keep them within one page's width -- which was leaving height
-    under-filled even though height alone had room to spare (see
-    sat_score_report_writer.visible_table_columns_to_narrow); the fourth
-    to force every block's own title cell to let text overflow into its
-    blank neighbors rather than risk truncating it, a latent template
-    inconsistency narrowing those columns exposed (see
-    google_sheets_export.allow_text_overflow); and the fifth to remove a
+    (and the already-hidden Module 2 columns further still) so "fit to
+    page" doesn't have to shrink the whole page's scale as far to keep
+    them within one page's width -- which was leaving height under-
+    filled, and the print area off-center, even though both had room to
+    spare (see sat_score_report_writer.visible_table_columns_to_narrow
+    and .hidden_columns_to_shrink); the fourth and fifth to patch up two
+    side effects narrowing those columns exposed -- a decorative fill
+    that happened to span some of the same columns shrinking right along
+    with them (see sat_score_report_writer.header_bar_extension), and a
+    latent template inconsistency that let one block's own title
+    genuinely truncate once its column got that narrow (see
+    google_sheets_export.allow_text_overflow); and the sixth to remove a
     sheet's own trailing blank rows that would otherwise inflate that
     same print area regardless of Module 2 at all (see
     sat_score_report_writer.trailing_rows_to_delete); ACT's fill_fn
-    leaves all five empty and these steps are skipped entirely.
+    leaves all six empty and these steps are skipped entirely.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -142,6 +148,7 @@ def export_filled_report(
             clear_cells(sheets, copy_id, result.cleared_ranges)
             hide_columns(sheets, copy_id, result.hidden_column_ranges)
             narrow_columns(sheets, copy_id, result.narrowed_column_ranges)
+            extend_fill(sheets, copy_id, result.header_bar_extension)
             allow_text_overflow(sheets, copy_id, result.overflow_title_cells)
             delete_rows(sheets, copy_id, result.deleted_row_ranges)
             pdf_bytes = export_pdf(copy_id)

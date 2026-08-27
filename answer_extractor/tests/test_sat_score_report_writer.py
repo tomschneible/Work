@@ -3,15 +3,18 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-from openpyxl.styles import Border, Side
+from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from answer_extractor.google_sheets_export import CellWrite, FillResult
 from answer_extractor.sat_score_report_writer import (
+    _HIDDEN_COLUMN_SHRINK_FACTOR,
     _TABLE_COLUMN_NARROW_FACTOR,
     blocks_to_clear,
     columns_to_hide,
     fill_sat_score_report,
+    header_bar_extension,
+    hidden_columns_to_shrink,
     locate_sat_blocks,
     trailing_rows_to_delete,
     visible_table_columns_to_narrow,
@@ -168,10 +171,26 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         ("Student Responses", 21, 27),
         ("Student Responses", 28, 34),
     ]
-    # Module 1's own title column (A) through the canonical Module 2
-    # block's own last column (M) -- see
-    # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block.
-    assert writes.narrowed_column_ranges == [("Student Responses", 0, 13, _TABLE_COLUMN_NARROW_FACTOR)]
+    # Module 1's own title-through-answer (A-C) and domain-through-spacer
+    # (E-G), then the canonical Module 2 block's own title-through-answer
+    # (H-J) and domain-through-skill (L-M) -- mark_col (D, K) excluded
+    # from each block (see
+    # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block)
+    # -- followed by the same non-canonical columns hide_columns already
+    # hides, narrowed to near-zero too (see
+    # test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides).
+    assert writes.narrowed_column_ranges == [
+        ("Student Responses", 0, 3, _TABLE_COLUMN_NARROW_FACTOR),
+        ("Student Responses", 4, 7, _TABLE_COLUMN_NARROW_FACTOR),
+        ("Student Responses", 7, 10, _TABLE_COLUMN_NARROW_FACTOR),
+        ("Student Responses", 11, 13, _TABLE_COLUMN_NARROW_FACTOR),
+        ("Student Responses", 14, 20, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        ("Student Responses", 21, 27, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        ("Student Responses", 28, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
+    ]
+    # This fixture's own row 1 has no decorative fill at all -- nothing
+    # for header_bar_extension to find or extend.
+    assert writes.header_bar_extension == []
     # Module 1's own title cell (A4) and the canonical Module 2 block's
     # own title cell (H4, already canonical here -- no repositioning) --
     # only active blocks' titles, 0-indexed.
@@ -221,24 +240,69 @@ def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_pa
 
 
 def test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block(tmp_path):
-    """Module 1's own title column (A, 0-indexed 0) through the canonical
-    Module 2 block's own last column (Domain/Skill -- H's own 6-column
-    span, ending at column M, 0-indexed 12 exclusive) -- the sidebar
-    (never modeled in this fixture) and every non-canonical Module 2
-    occurrence are excluded either way."""
+    """Module 1's own title-through-answer (A-C) and domain-through-
+    spacer (E-G), then the canonical Module 2 block's own title-through-
+    answer (H-J) and domain-through-skill (L-M) -- each block's own
+    mark_col (D, K) is deliberately skipped (see this function's own
+    docstring for why), and the sidebar (never modeled in this fixture)
+    and every non-canonical Module 2 occurrence are excluded either
+    way."""
     path = tmp_path / "template.xlsx"
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    assert visible_table_columns_to_narrow(ws) == (0, 13, _TABLE_COLUMN_NARROW_FACTOR)
+    assert visible_table_columns_to_narrow(ws) == [
+        (0, 3, _TABLE_COLUMN_NARROW_FACTOR),
+        (4, 7, _TABLE_COLUMN_NARROW_FACTOR),
+        (7, 10, _TABLE_COLUMN_NARROW_FACTOR),
+        (11, 13, _TABLE_COLUMN_NARROW_FACTOR),
+    ]
 
 
-def test_visible_table_columns_to_narrow_is_none_without_a_module1_block():
+def test_visible_table_columns_to_narrow_is_empty_without_a_module1_block():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Student Responses"
 
-    assert visible_table_columns_to_narrow(ws) is None
+    assert visible_table_columns_to_narrow(ws) == []
+
+
+def test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert hidden_columns_to_shrink(ws) == [
+        (14, 20, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        (21, 27, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        (28, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
+    ]
+
+
+def test_header_bar_extension_extends_a_solid_row1_fill_to_the_narrowed_table_width(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Student Responses"]
+
+    # A real template's own accent bar: solid fill on row 1, stopping
+    # short of the canonical Module 2 block (matching the real file's
+    # own shape -- confirmed against it, the bar stops right at Module
+    # 1's own end, not partway through it).
+    for col in range(1, 8):  # A-G
+        ws.cell(row=1, column=col).fill = PatternFill(fill_type="solid", fgColor="FF0497D4")
+    wb.save(str(path))
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert header_bar_extension(ws) == (0, "FF0497D4", 7, 13)
+
+
+def test_header_bar_extension_is_none_without_a_row1_fill(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    assert header_bar_extension(ws) is None
 
 
 def test_trailing_rows_to_delete_finds_a_sheets_own_trailing_blank_rows(tmp_path):
