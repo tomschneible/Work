@@ -482,11 +482,17 @@ worked, or to look around the folder tree while debugging.
    export, it filled the page far better (font size measurably bigger,
    matching the reference example's own fill level) but pushed a
    subject's last couple of questions onto a nearly-blank extra page,
-   and separately exposed a *different*, previously-latent bug (see
-   next paragraph). `_TABLE_COLUMN_NARROW_FACTOR` is now 0.82, still not
-   confirmed against a live export at this specific value -- may need
-   further tuning; see its own comment in `sat_score_report_writer.py`
-   for the arithmetic behind both values.
+   and separately exposed a *different*, previously-latent bug (see next
+   paragraph). 0.82 (a pull back toward the original, whole-print-area
+   estimate) *also* overshot, once the print area's own centering was
+   separately fixed (see the centering fix a few paragraphs down) --
+   confirmed live, closing that gap raised the achievable scale enough
+   that 0.82 pushed several of a subject's last questions onto a mostly-
+   blank extra page, a bigger overflow than 0.75 caused on its own.
+   `_TABLE_COLUMN_NARROW_FACTOR` is now 0.90, still not confirmed against
+   a live export at this specific value -- may need further tuning
+   either direction; see its own comment in `sat_score_report_writer.py`
+   for the arithmetic behind all three values.
 
    Narrowing far enough also genuinely truncated a block's own title in
    that same real export -- not just visually overlapped by a
@@ -512,28 +518,27 @@ worked, or to look around the folder tree while debugging.
    same real export and both fixed the same way -- by patching up
    whatever the narrowing affected, not by narrowing less:
 
-   - Each active block's own `mark_col` (the ✔/✘ column -- already one
-     of the narrowest on the sheet, since it only ever holds a single
-     glyph) lost its own header cell's left border entirely once
-     narrowed: that header cell is blank (there's no label over the
-     mark column, unlike every neighboring one), and a blank cell
-     apparently stops rendering its own border below some width Sheets
-     still draws one at reliably -- the *data* rows below it, never
-     blank, kept theirs throughout. Confirmed live that simply
-     *excluding* `mark_col` from narrowing (an earlier version of this
-     fix, leaving it at its own original width) wasn't enough on its
-     own -- the border stayed broken, since the bug was never really
-     about narrowing specifically, it's about the column being *too
-     narrow*, full stop, and this one's own original width (confirmed
-     against the real template: ~2.88 character-units, vs. ~3.75 for
-     Module 1's own `mark_col`, which never showed this bug) was already
-     below whatever threshold Sheets stops reliably drawing a blank
-     header cell's border at. `mark_columns_to_widen` actively widens
-     the canonical block's own `mark_col` instead, to
-     `_MARK_COLUMN_WIDEN_FACTOR` (1.5x its own real width) via
-     `narrow_columns` reused above 1 -- comfortable margin past the
-     ~1.30x gap confirmed against the real template, since the exact
-     width the bug starts at isn't known.
+   - Each active block's own `mark_col` (the ✔/✘ column) can lose its
+     own header cell's left border entirely in the exported PDF: that
+     header cell is blank (there's no label over the mark column, unlike
+     every neighboring one), while the *data* rows below it (never
+     blank, always holding a ✔ or ✘) never lose theirs. This one took
+     two wrong turns before landing on the actual fix. First,
+     `visible_table_columns_to_narrow` simply *excluded* `mark_col` from
+     narrowing, leaving it at its own original width -- confirmed live
+     this wasn't enough; the border stayed broken. Second, a
+     `mark_columns_to_widen` function actively widened the canonical
+     block's own `mark_col` to 1.5x its real width instead (reusing
+     `narrow_columns` above 1) -- confirmed live *this* wasn't enough
+     either, and the same bug even showed up on Module 1's own
+     `mark_col` at that point, a column no narrowing fix here had ever
+     touched. Column width, in either direction, was never reliably the
+     variable. What actually fixed it: `fill_sat_score_report` now
+     writes a real, zero-width character (`_MARK_HEADER_NON_BLANK`, a
+     U+200B ZERO WIDTH SPACE) into every active block's own `mark_col`
+     header cell, matching the one confirmed, consistent distinguishing
+     factor between cells that keep their border and cells that don't --
+     not blank vs. narrow, just blank vs. not.
    - This sheet's `printOptions horizontalCentered="1"` (confirmed
      against the real template file -- this pipeline never sets it, so
      it was always meant to center the print area horizontally) doesn't
@@ -556,7 +561,8 @@ worked, or to look around the folder tree while debugging.
      occurrence's own title column all the way through the rightmost
      occurrence's own last column, sweeping the spacers up too --
      `hidden_columns_to_shrink` (built from the same function) inherits
-     the fix automatically.
+     the fix automatically. Confirmed live this actually fixed it --
+     the org's own next real export centered correctly.
    - Separately, this sheet's own decorative accent bar under "Your
      Question-Level Feedback" (a solid fill spanning a fixed range of
      columns on row 1, confirmed against the real template file to run

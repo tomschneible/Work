@@ -9,7 +9,7 @@ from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from answer_extractor.google_sheets_export import CellWrite, FillResult
 from answer_extractor.sat_score_report_writer import (
     _HIDDEN_COLUMN_SHRINK_FACTOR,
-    _MARK_COLUMN_WIDEN_FACTOR,
+    _MARK_HEADER_NON_BLANK,
     _TABLE_COLUMN_NARROW_FACTOR,
     blocks_to_clear,
     columns_to_hide,
@@ -17,7 +17,6 @@ from answer_extractor.sat_score_report_writer import (
     header_bar_extension,
     hidden_columns_to_shrink,
     locate_sat_blocks,
-    mark_columns_to_widen,
     trailing_rows_to_delete,
     visible_table_columns_to_narrow,
 )
@@ -147,6 +146,11 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     assert _at(writes, "J6") == "C"
     assert _at(writes, "J7") == "D"
     assert _at(writes, "H5") is True
+    # Every active block's own mark_col header cell (blank in the
+    # template) gets a zero-width space so it's no longer blank -- see
+    # _MARK_HEADER_NON_BLANK's own comment for why.
+    assert _at(writes, "D5") == _MARK_HEADER_NON_BLANK  # Module 1's own mark_col
+    assert _at(writes, "K5") == _MARK_HEADER_NON_BLANK  # canonical Module 2's own mark_col
     # Harder, duplicate (V) copy -- left completely untouched (not even a blank write).
     assert _at(writes, "X6") is _MISSING
     assert _at(writes, "X7") is _MISSING
@@ -179,17 +183,13 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # test_visible_table_columns_to_narrow_spans_module1_through_the_canonical_block)
     # -- followed by the same non-canonical columns hide_columns already
     # hides, narrowed to near-zero too (see
-    # test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides)
-    # -- followed by the canonical block's own mark_col (K), widened
-    # rather than narrowed (see
-    # test_mark_columns_to_widen_widens_the_canonical_blocks_own_mark_col).
+    # test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides).
     assert writes.narrowed_column_ranges == [
         ("Student Responses", 0, 3, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 4, 7, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 7, 10, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 11, 13, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
-        ("Student Responses", 10, 11, _MARK_COLUMN_WIDEN_FACTOR),
     ]
     # This fixture's own row 1 has no decorative fill at all -- nothing
     # for header_bar_extension to find or extend.
@@ -282,22 +282,6 @@ def test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
     assert hidden_columns_to_shrink(ws) == [(14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR)]
-
-
-def test_mark_columns_to_widen_widens_the_canonical_blocks_own_mark_col(tmp_path):
-    path = tmp_path / "template.xlsx"
-    _write_template(path)
-    ws = openpyxl.load_workbook(path)["Student Responses"]
-
-    assert mark_columns_to_widen(ws) == [(10, 11, _MARK_COLUMN_WIDEN_FACTOR)]  # K, canonical block's own mark_col
-
-
-def test_mark_columns_to_widen_is_empty_without_a_module2_block():
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Student Responses"
-
-    assert mark_columns_to_widen(ws) == []
 
 
 def test_header_bar_extension_extends_a_solid_row1_fill_to_the_narrowed_table_width(tmp_path):
@@ -411,6 +395,11 @@ def test_fill_sat_score_report_consolidates_a_non_canonical_active_variant(tmp_p
     assert _at(writes, "J6") == "C"
     assert _at(writes, "J7") == "D"
     assert _at(writes, "H5") is True
+    # Both subjects' own canonical mark_col header cell (K, same column
+    # position for both, different rows) gets the same zero-width-space
+    # treatment -- see _MARK_HEADER_NON_BLANK's own comment.
+    assert _at(writes, "K5") == _MARK_HEADER_NON_BLANK
+    assert _at(writes, "K25") == _MARK_HEADER_NON_BLANK
 
     # Math's own pick (Lower, column O) gets copied into the canonical
     # column (H) at Math's own rows (26-27), not left at its native column.

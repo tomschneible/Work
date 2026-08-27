@@ -117,27 +117,31 @@ _CLEAR_BLOCK_WIDTH = 6
 # example's own fill level) but pushed a subject's last couple of
 # questions onto a nearly-blank extra page, and exposed a template
 # inconsistency (see allow_text_overflow) that truncated a block title
-# outright once its column got that narrow. 0.82 pulls back toward the
-# original, whole-print-area estimate (0.824) -- still meaningfully
-# narrower than no fix at all, but with real margin against both of
-# those failures. Still not confirmed against a live export at this
-# specific value -- may need further tuning.
-_TABLE_COLUMN_NARROW_FACTOR = 0.82
+# outright once its column got that narrow. 0.82 (a pull back toward the
+# original, whole-print-area estimate of 0.824) *also* overshot once the
+# print area's own centering was separately fixed (hidden_columns_to_shrink
+# closing the gap columns_to_hide's own spacer columns left open) --
+# confirmed live, that fix alone raised the achievable scale enough that
+# 0.82 pushed a subject's last several questions onto a mostly-blank
+# extra page, a bigger overflow than 0.75 caused on its own. 0.90 pulls
+# back further still. Still not confirmed against a live export at this
+# specific value -- may need further tuning either direction.
+_TABLE_COLUMN_NARROW_FACTOR = 0.90
 # How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
 # get narrowed too, on top of being marked hidden -- see
 # hidden_columns_to_shrink's own docstring for why hiding alone wasn't
 # enough. Small enough to floor at 1px (narrow_columns' own minimum)
 # for any realistic starting width on this sheet.
 _HIDDEN_COLUMN_SHRINK_FACTOR = 0.01
-# How much the canonical Module 2 block's own mark_col (the sole one
-# left at risk -- see mark_columns_to_widen's own docstring) gets
-# widened, via narrow_columns reused with a factor above 1. Confirmed
-# against the real template: Module 1's own mark_col (which never showed
-# this bug) is ~3.75 character-units wide there; the canonical Module 2
-# block's own mark_col is only ~2.88 -- a ~1.30x gap. 1.5x clears that
-# gap with real margin, since the exact width this bug actually starts
-# at isn't known.
-_MARK_COLUMN_WIDEN_FACTOR = 1.5
+# Written into every active block's own mark_col header cell (blank in
+# the template -- there's no label over the ✔/✘ column, unlike every
+# neighboring one) so it's no longer blank -- see
+# fill_sat_score_report's own docstring for why this, rather than any
+# column-width fix, is what actually stops that cell from losing its own
+# left border in the exported PDF. A zero-width space: real content as
+# far as a cell's own blank/non-blank state is concerned, but nothing
+# visibly renders in the cell itself.
+_MARK_HEADER_NON_BLANK = "​"  # U+200B ZERO WIDTH SPACE
 _SUBJECT_ALIASES = {
     "r & w": "reading and writing",
     "r and w": "reading and writing",
@@ -499,17 +503,28 @@ def visible_table_columns_to_narrow(ws: Worksheet) -> List[Tuple[int, int, float
     Each active block's own `mark_col` (the ✔/✘ column, already one of
     the narrowest on the sheet -- it holds a single glyph) is
     deliberately *excluded* from every range here, unlike every other
-    sub-column of the block: confirmed live that narrowing it too made
-    its own header cell (blank -- there's no label over the mark column,
-    unlike every neighboring column) lose its left border entirely in
-    the exported PDF, while the *data* rows below it (never blank --
-    always holding a ✔ or ✘) kept theirs. The same mark_col on Module 1
-    (a wider column there to begin with) never showed this at the same
-    factor, pointing at narrowing pushing an already-narrow, *content*-
-    less header cell below whatever width Sheets still renders a border
-    at reliably. Leaving mark_col at its own real width costs very
-    little of the overall size gain -- it only ever holds one glyph --
-    against a real, visible formatting break.
+    sub-column of the block -- confirmed live that its own header cell
+    (blank -- there's no label over the mark column, unlike every
+    neighboring one) can lose its left border entirely in the exported
+    PDF, while the *data* rows below it (never blank -- always holding a
+    ✔ or ✘) never do. Excluding it from narrowing costs very little of
+    the overall size gain (it only ever holds one glyph) on the chance
+    that width is part of what triggers this.
+
+    Width alone isn't the actual fix, though -- confirmed live, across
+    two different attempts (excluding this column from narrowing at all,
+    then actively *widening* it well past its own original size): the
+    border loss persisted regardless, and even showed up on Module 1's
+    own mark_col at one point, a column never touched by any narrowing
+    at any point in this whole investigation. Whatever real threshold
+    (if any) governs this isn't reliably tied to column width the way
+    the rest of this module's own fixes are. The fix that actually
+    worked is in fill_sat_score_report itself: writing a real,
+    zero-width character into each active block's own mark_col header
+    cell so it's no longer *blank* -- see _MARK_HEADER_NON_BLANK's own
+    comment. This function still excludes the column from narrowing
+    anyway, since there's no cost to doing so and it removes one more
+    variable from the picture.
 
     The sidebar (Score Summary/Key/Domains) is deliberately excluded
     too -- only Module 1's own title column through the canonical
@@ -539,32 +554,6 @@ def visible_table_columns_to_narrow(ws: Worksheet) -> List[Tuple[int, int, float
             (canonical_col - 1 + 4, canonical_col - 1 + _CLEAR_BLOCK_WIDTH, _TABLE_COLUMN_NARROW_FACTOR)
         )
     return ranges
-
-
-def mark_columns_to_widen(ws: Worksheet) -> List[Tuple[int, int, float]]:
-    """0-indexed (start_col, end_col, factor) (end exclusive, factor
-    above 1 -- narrow_columns reused to widen rather than shrink) for the
-    canonical Module 2 block's own mark_col. Empty if `ws` has no Module
-    2 block at all.
-
-    Excluding mark_col from visible_table_columns_to_narrow (leaving it
-    at its own *original* width) turned out not to be enough on its own:
-    confirmed live, the header-border bug persisted even with mark_col
-    left completely unnarrowed. That's because the bug was never really
-    about narrowing specifically -- it's about the column being *too
-    narrow*, full stop, and this column's own original width was already
-    below whatever threshold Sheets stops reliably drawing a blank
-    header cell's border at (confirmed against the real template: Module
-    1's own mark_col, ~30% wider to begin with, never showed this bug at
-    any point, narrowed or not). Leaving it alone preserves a width that
-    was already the problem; only actively widening it past that
-    threshold fixes it. See _MARK_COLUMN_WIDEN_FACTOR's own comment for
-    where its value comes from."""
-    canonical_col = _canonical_module2_col(ws)
-    if canonical_col is None:
-        return []
-    mark_col = canonical_col + 3
-    return [(mark_col - 1, mark_col, _MARK_COLUMN_WIDEN_FACTOR)]
 
 
 def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
@@ -776,6 +765,7 @@ def fill_sat_score_report(
 
         if block.module_slot == "module1":
             overflow_title_cells.append((sheet_name, block.title_row - 1, block.question_col - 1))
+            writes.append(CellWrite(sheet_name, block.header_row, block.mark_col, _MARK_HEADER_NON_BLANK))
             r = block.header_row + 1
             while True:
                 question = ws.cell(row=r, column=block.question_col).value
@@ -796,6 +786,7 @@ def fill_sat_score_report(
         repositioning = canonical_col is not None and block.question_col != canonical_col
         target_col = canonical_col if repositioning else block.question_col
         overflow_title_cells.append((sheet_name, block.title_row - 1, target_col - 1))
+        writes.append(CellWrite(sheet_name, block.header_row, target_col + 3, _MARK_HEADER_NON_BLANK))
         if repositioning:
             title_text = ws.cell(row=block.title_row, column=block.question_col).value
             writes.append(CellWrite(sheet_name, block.title_row, target_col, title_text))
@@ -836,9 +827,7 @@ def fill_sat_score_report(
     deleted_row_ranges = [(sheet_name, top, bottom) for top, bottom in trailing_rows_to_delete(ws)]
     narrowed_column_ranges = [
         (sheet_name, left, right, factor)
-        for left, right, factor in (
-            visible_table_columns_to_narrow(ws) + hidden_columns_to_shrink(ws) + mark_columns_to_widen(ws)
-        )
+        for left, right, factor in (visible_table_columns_to_narrow(ws) + hidden_columns_to_shrink(ws))
     ]
     bar = header_bar_extension(ws)
     header_bar_extension_ranges = [(sheet_name,) + bar] if bar is not None else []
