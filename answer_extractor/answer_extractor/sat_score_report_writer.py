@@ -123,10 +123,25 @@ _CLEAR_BLOCK_WIDTH = 6
 # closing the gap columns_to_hide's own spacer columns left open) --
 # confirmed live, that fix alone raised the achievable scale enough that
 # 0.82 pushed a subject's last several questions onto a mostly-blank
-# extra page, a bigger overflow than 0.75 caused on its own. 0.90 pulls
-# back further still. Still not confirmed against a live export at this
-# specific value -- may need further tuning either direction.
-_TABLE_COLUMN_NARROW_FACTOR = 0.90
+# extra page, a bigger overflow than 0.75 caused on its own. 0.90 pulled
+# back further still, and got close: confirmed live, only the Math
+# tables' last two rows (of 22 each; the Reading & Writing tables, with
+# more rows but no multi-line wrapped answer cells inflating a couple of
+# their row heights, fit in full) spilled onto an otherwise-empty extra
+# page, with the printed content ending only ~26pt short of the page's
+# own bottom margin (which mirrors its top margin almost exactly, so
+# that 26pt is real overflow, not unused page space). Since a *larger*
+# factor here means *less* narrowing, i.e. a *wider* natural table width,
+# which forces "fit to page" to pick a *smaller* scale (and therefore
+# shorter rows) to still fit that width on one page -- the direction that
+# fixed 0.82's overshoot -- the same relationship implies the ~26pt gap
+# closes at roughly a 4% smaller scale, which in turn wants roughly a 4%
+# larger natural table width than 0.90 produced. 0.95 is that estimate
+# plus a small safety margin, given how rough the "same relationship
+# scales linearly" assumption is. Still not confirmed against a live
+# export at this specific value -- may need further tuning either
+# direction.
+_TABLE_COLUMN_NARROW_FACTOR = 0.95
 # How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
 # get narrowed too, on top of being marked hidden -- see
 # hidden_columns_to_shrink's own docstring for why hiding alone wasn't

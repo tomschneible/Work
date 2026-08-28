@@ -489,10 +489,22 @@ worked, or to look around the folder tree while debugging.
    confirmed live, closing that gap raised the achievable scale enough
    that 0.82 pushed several of a subject's last questions onto a mostly-
    blank extra page, a bigger overflow than 0.75 caused on its own.
-   `_TABLE_COLUMN_NARROW_FACTOR` is now 0.90, still not confirmed against
-   a live export at this specific value -- may need further tuning
-   either direction; see its own comment in `sat_score_report_writer.py`
-   for the arithmetic behind all three values.
+   0.90 pulled back further still, and got close: confirmed live, only
+   the Math tables' last two rows (of 22 each -- the Reading & Writing
+   tables, with more rows but no multi-line wrapped answer cells
+   inflating a couple of their row heights, fit in full) spilled onto an
+   otherwise-empty extra page, only ~26pt short of fitting. Since a
+   *larger* factor here means *less* narrowing -- a wider natural table
+   width, which forces "fit to page" to pick a smaller scale, and
+   therefore shorter rows, to still fit that width on one page -- the
+   same relationship that fixed 0.82's overshoot implies the gap closes
+   at roughly a 4% smaller scale, wanting roughly a 4% wider natural
+   table width than 0.90 produced. `_TABLE_COLUMN_NARROW_FACTOR` is now
+   0.95 (that estimate plus a small safety margin), still not confirmed
+   against a live export at this specific value -- may need further
+   tuning either direction; see its own comment in
+   `sat_score_report_writer.py` for the arithmetic behind all four
+   values.
 
    Narrowing far enough also genuinely truncated a block's own title in
    that same real export -- not just visually overlapped by a
