@@ -130,18 +130,37 @@ _CLEAR_BLOCK_WIDTH = 6
 # their row heights, fit in full) spilled onto an otherwise-empty extra
 # page, with the printed content ending only ~26pt short of the page's
 # own bottom margin (which mirrors its top margin almost exactly, so
-# that 26pt is real overflow, not unused page space). Since a *larger*
-# factor here means *less* narrowing, i.e. a *wider* natural table width,
-# which forces "fit to page" to pick a *smaller* scale (and therefore
-# shorter rows) to still fit that width on one page -- the direction that
-# fixed 0.82's overshoot -- the same relationship implies the ~26pt gap
-# closes at roughly a 4% smaller scale, which in turn wants roughly a 4%
-# larger natural table width than 0.90 produced. 0.95 is that estimate
-# plus a small safety margin, given how rough the "same relationship
-# scales linearly" assumption is. Still not confirmed against a live
-# export at this specific value -- may need further tuning either
-# direction.
-_TABLE_COLUMN_NARROW_FACTOR = 0.95
+# that 26pt is real overflow, not unused page space). 0.95 pulled back
+# again -- confirmed live, down to only the single tallest row (the
+# multi-line wrapped answer cell) still spilling over.
+#
+# At that point, switched from eyeballing overflow amounts to a
+# scale-independent signal: a real export's own dominant body font size
+# (measured directly off the rendered PDF -- font size scales linearly
+# with the actual "fit to page" percentage regardless of how much
+# content there is, unlike row/overflow counts) compared against the
+# same measurement on a real, confirmed-good reference export of the
+# same report (a different round of the same underlying test, never
+# overflowing, its own Question-Level Feedback page filling all the way
+# to a bottom margin matching its top margin almost exactly -- i.e. as
+# tightly filled as this page is meant to get). 0.90 measured 6.31pt,
+# 0.95 measured 6.11pt -- a consistent, linear -4.0pt of font size per
+# +1.0 of factor across the only two live data points gathered since the
+# centering fix (both above). The reference export measured 5.92pt.
+# Solving that line for 5.92 gives `f =~ 0.9975` -- i.e., once the
+# centering fix was in place, the table columns barely need narrowing at
+# all to reach the same fill level as the reference; 1.0's own factor
+# means the block "shrinks" every column to 1.0x its own current width,
+# a pure no-op left in place (rather than special-cased away) so this
+# constant stays the single tuning knob if a live export at 1.0 still
+# doesn't quite match. Still not confirmed against a live export at this
+# specific value -- may need pulling back slightly if it turns out this
+# specific reference wasn't as tightly filled as it looked, since 1.0
+# leaves no further room to reduce scale without this constant going
+# above 1.0 (widening columns past their own original width, which
+# narrow_columns supports mechanically but no case here has ever
+# needed).
+_TABLE_COLUMN_NARROW_FACTOR = 1.0
 # How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
 # get narrowed too, on top of being marked hidden -- see
 # hidden_columns_to_shrink's own docstring for why hiding alone wasn't

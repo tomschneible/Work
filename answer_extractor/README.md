@@ -493,18 +493,34 @@ worked, or to look around the folder tree while debugging.
    the Math tables' last two rows (of 22 each -- the Reading & Writing
    tables, with more rows but no multi-line wrapped answer cells
    inflating a couple of their row heights, fit in full) spilled onto an
-   otherwise-empty extra page, only ~26pt short of fitting. Since a
-   *larger* factor here means *less* narrowing -- a wider natural table
-   width, which forces "fit to page" to pick a smaller scale, and
-   therefore shorter rows, to still fit that width on one page -- the
-   same relationship that fixed 0.82's overshoot implies the gap closes
-   at roughly a 4% smaller scale, wanting roughly a 4% wider natural
-   table width than 0.90 produced. `_TABLE_COLUMN_NARROW_FACTOR` is now
-   0.95 (that estimate plus a small safety margin), still not confirmed
-   against a live export at this specific value -- may need further
-   tuning either direction; see its own comment in
-   `sat_score_report_writer.py` for the arithmetic behind all four
-   values.
+   otherwise-empty extra page, only ~26pt short of fitting. 0.95 pulled
+   back again -- confirmed live, down to only the single tallest row (the
+   multi-line wrapped answer cell) still spilling over.
+
+   At that point, switched from eyeballing overflow amounts to a
+   scale-independent signal instead: a real export's own dominant body
+   font size (measured directly off the rendered PDF -- it scales
+   linearly with the actual "fit to page" percentage regardless of how
+   much content there is, unlike row/overflow counts) compared against
+   the same measurement on a real, confirmed-good reference export of
+   the same report that never overflows, its own Question-Level Feedback
+   page filling all the way down to a bottom margin matching its top
+   margin almost exactly -- as tightly filled as this page is meant to
+   get. 0.90 measured 6.31pt, 0.95 measured 6.11pt: a consistent, linear
+   -4.0pt of font size per +1.0 of factor across the only two live data
+   points gathered since the centering fix (both above). The reference
+   export measured 5.92pt. Solving that line for 5.92 gives `f =~
+   0.9975` -- i.e. once the centering fix was in place, the columns
+   barely need narrowing at all to reach the same fill level as the
+   reference. `_TABLE_COLUMN_NARROW_FACTOR` is now 1.0 (a pure no-op,
+   left in place as the tuning knob rather than special-cased away, in
+   case a live export at 1.0 still doesn't quite match -- 1.0 leaves no
+   further room to reduce scale without this constant going *above* 1.0,
+   widening columns past their own original width, which `narrow_columns`
+   supports mechanically but no case here has ever needed). Still not
+   confirmed against a live export at this specific value; see its own
+   comment in `sat_score_report_writer.py` for the arithmetic behind all
+   five values.
 
    Narrowing far enough also genuinely truncated a block's own title in
    that same real export -- not just visually overlapped by a
