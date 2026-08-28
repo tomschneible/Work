@@ -512,15 +512,26 @@ worked, or to look around the folder tree while debugging.
    export measured 5.92pt. Solving that line for 5.92 gives `f =~
    0.9975` -- i.e. once the centering fix was in place, the columns
    barely need narrowing at all to reach the same fill level as the
-   reference. `_TABLE_COLUMN_NARROW_FACTOR` is now 1.0 (a pure no-op,
-   left in place as the tuning knob rather than special-cased away, in
-   case a live export at 1.0 still doesn't quite match -- 1.0 leaves no
-   further room to reduce scale without this constant going *above* 1.0,
-   widening columns past their own original width, which `narrow_columns`
-   supports mechanically but no case here has ever needed). Still not
-   confirmed against a live export at this specific value; see its own
-   comment in `sat_score_report_writer.py` for the arithmetic behind all
-   five values.
+   reference.
+
+   Confirmed live at 1.0: font size landed at 5.93pt, matching the
+   reference almost exactly -- the font-size-matching approach was
+   right. Still not quite enough, though: not a table row this time,
+   just the page's own trailing footer line (directly below one blank
+   spacer row -- nothing structural) spilled onto its own near-empty
+   extra page. Measured precisely why: the page's actual usable bottom
+   edge sits at ~736pt (mirroring its own ~56pt top margin, and matching
+   where the reference's own footer sits, right at 737pt); at 1.0, the
+   last drawn content on the page ended at 729pt -- only ~7pt of slack,
+   for a footer line that itself needs ~7pt. Matching font size means
+   matching per-row height, so that ~7pt gap reads as accumulated
+   rounding/measurement slop over ~65 rows of content, not a real
+   structural difference from the reference. `_TABLE_COLUMN_NARROW_FACTOR`
+   is now 0.98, a small enough pull back to absorb that without giving up
+   the font-size match 1.0 confirmed. Still not confirmed against a live
+   export at this specific value; see its own comment in
+   `sat_score_report_writer.py` for the arithmetic behind all six
+   values.
 
    Narrowing far enough also genuinely truncated a block's own title in
    that same real export -- not just visually overlapped by a

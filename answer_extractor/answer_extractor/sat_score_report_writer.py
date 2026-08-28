@@ -160,7 +160,26 @@ _CLEAR_BLOCK_WIDTH = 6
 # above 1.0 (widening columns past their own original width, which
 # narrow_columns supports mechanically but no case here has ever
 # needed).
-_TABLE_COLUMN_NARROW_FACTOR = 1.0
+#
+# Confirmed live at 1.0: font size landed at 5.93pt, matching the
+# reference's 5.92pt almost exactly -- the font-size-matching approach
+# was right. But it still wasn't quite enough: not a table row this
+# time, just the page's own trailing footer line (a single row,
+# directly below one blank spacer row -- nothing structural, no manual
+# page break) spilled onto its own near-empty extra page. Measuring
+# precisely *why*, rather than by eye, this time: the page's actual
+# usable bottom edge is ~736pt (mirroring its own ~56pt top margin, and
+# matching where the reference's own footer sits, right at 737pt); at
+# 1.0, this export's last drawn content (a spacer row's own background
+# fill, drawn even though the row itself is empty) ended at 729pt --
+# only ~7pt of slack, for a footer line that itself needs ~7pt. Genuinely
+# that close, not some other overlooked factor: matching font size means
+# matching per-row height, so the ~7pt gap is really just accumulated
+# rounding/measurement slop over ~65 rows' worth of content, not a real
+# structural difference from the reference. 0.98 is a small enough pull
+# back to absorb that without giving up the font-size match this
+# confirmed.
+_TABLE_COLUMN_NARROW_FACTOR = 0.98
 # How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
 # get narrowed too, on top of being marked hidden -- see
 # hidden_columns_to_shrink's own docstring for why hiding alone wasn't
