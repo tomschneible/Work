@@ -301,11 +301,15 @@ def _scan_raw_titles(ws: Worksheet) -> List[Tuple[int, int, str, str]]:
     return raw_titles
 
 
-def _find_header_row(ws: Worksheet, title_row: int, title_col: int) -> int:
+def find_header_row(ws: Worksheet, title_row: int, title_col: int) -> int:
     """The row within _HEADER_SEARCH_ROWS of `title_row` whose
     `title_col + 2` cell reads "Your Answer" -- used by locate_sat_blocks
     to find one block's own header row. Raises ValueError if it can't be
-    found."""
+    found.
+
+    Public (not `_`-prefixed): this convention is layout-independent, so
+    sat_simplified_score_report_writer.py's own block locator reuses it
+    as-is rather than re-deriving it."""
     for candidate_row in range(title_row, title_row + _HEADER_SEARCH_ROWS + 1):
         if ws.cell(row=candidate_row, column=title_col + 2).value == "Your Answer":
             return candidate_row
@@ -338,7 +342,7 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
         if key in blocks_by_key and title_col >= blocks_by_key[key].question_col:
             continue  # a duplicate block further right -- keep the leftmost one already found
 
-        header_row = _find_header_row(ws, title_row, title_col)
+        header_row = find_header_row(ws, title_row, title_col)
         flag_cell = flag_cell_by_col.get(title_col) if module_slot != "module1" else None
 
         blocks_by_key[key] = SatBlock(
@@ -794,14 +798,19 @@ def trailing_rows_to_delete(ws: Worksheet) -> List[Tuple[int, int]]:
     return [(last_content_row, ws.max_row)]
 
 
-def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
+def find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
     """{subject: (row, col)} for every "<Subject> Score" label found (e.g.
     "Reading\n& Writing\nScore", "Math\nScore") -- these templates put the
     label a few rows *below* its own value cell (confirmed against a real
     template: "Total Score" is likewise labeled below the cell that sums
     it), so this searches upward from each label for the nearest cell in
     the same column that already holds a number -- the static placeholder
-    value (e.g. 200) every blank template ships with in that slot."""
+    value (e.g. 200) every blank template ships with in that slot.
+
+    Public (not `_`-prefixed) because this convention isn't specific to
+    the current-format template's own checkbox/duplicate-block layout --
+    sat_simplified_score_report_writer.py's own fill function reuses this
+    as-is rather than re-deriving it."""
     result: Dict[str, Tuple[int, int]] = {}
     for row in ws.iter_rows():
         for cell in row:
@@ -827,7 +836,13 @@ def _find_score_value_cells(ws: Worksheet) -> Dict[str, Tuple[int, int]]:
     return result
 
 
-def _find_name_cell(ws: Worksheet) -> Tuple[int, int]:
+def find_name_cell(ws: Worksheet) -> Tuple[int, int]:
+    """(row, col) of the name placeholder cell (e.g. "Type name here, date
+    below") -- the test date always sits directly below it. Public (not
+    `_`-prefixed) for the same reason find_score_value_cells is: this
+    convention isn't specific to the current-format template, and
+    sat_simplified_score_report_writer.py's own fill function reuses it
+    as-is."""
     for row in ws.iter_rows():
         for cell in row:
             value = cell.value
@@ -923,7 +938,7 @@ def fill_sat_score_report(
         raise ValueError(f"No {sheet_name!r} tab in {template_path} (tabs: {wb.sheetnames})")
     ws = wb[sheet_name]
 
-    name_row, name_col = _find_name_cell(ws)
+    name_row, name_col = find_name_cell(ws)
     writes = [
         CellWrite(sheet_name, name_row, name_col, student_name),
         # date sits directly below name
@@ -931,7 +946,7 @@ def fill_sat_score_report(
     ]
 
     if section_scores:
-        score_cells = _find_score_value_cells(ws)
+        score_cells = find_score_value_cells(ws)
         for subject, score in section_scores.items():
             if subject not in score_cells:
                 raise ValueError(

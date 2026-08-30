@@ -532,9 +532,9 @@ def test_find_score_value_cells_locates_the_value_above_its_label():
     ws["Z10"] = 200
     ws["Z12"] = "Reading\n& Writing\nScore"
 
-    from answer_extractor.sat_score_report_writer import _find_score_value_cells
+    from answer_extractor.sat_score_report_writer import find_score_value_cells
 
-    assert _find_score_value_cells(ws) == {"reading and writing": (10, 26)}
+    assert find_score_value_cells(ws) == {"reading and writing": (10, 26)}
 
 
 def test_fill_sat_score_report_writes_a_given_section_score(tmp_path):
