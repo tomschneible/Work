@@ -59,6 +59,7 @@ def export_filled_report(
     fill_fn: Callable[[str | Path], FillResult],
     temp_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
+    bottom_margin_in: Optional[float] = None,
 ) -> bytes:
     """Return the filled report's PDF bytes. `category_path` is the
     sequence of Drive subfolder names to walk from the templates root to
@@ -109,6 +110,11 @@ def export_filled_report(
     the template it was copied from) -- keeps a working copy from ever
     sitting amid the real templates.
 
+    `bottom_margin_in`, if given, is passed straight through to
+    export_pdf's own `bottom_margin_in` -- see its docstring for what it
+    overrides and why; `None` (the default, used by every caller except
+    SAT's own) leaves the file's own saved bottom margin untouched.
+
     `keep_working_copy` (default True, this org's own choice): whether
     that working Sheet copy is left in place once its PDF has been
     exported, rather than deleted -- kept by default since having the
@@ -151,7 +157,7 @@ def export_filled_report(
             extend_fill(sheets, copy_id, result.header_bar_extension)
             allow_text_overflow(sheets, copy_id, result.overflow_title_cells)
             delete_rows(sheets, copy_id, result.deleted_row_ranges)
-            pdf_bytes = export_pdf(copy_id)
+            pdf_bytes = export_pdf(copy_id, bottom_margin_in=bottom_margin_in)
         except Exception:
             try:
                 delete_file(drive, copy_id)

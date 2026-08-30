@@ -114,6 +114,24 @@ def test_export_pdf_returns_the_downloaded_bytes():
     assert kwargs["params"] == {"format": "pdf"}
 
 
+def test_export_pdf_overrides_bottom_margin_when_given():
+    """bottom_margin_in, when given, is added as this endpoint's own
+    `bottom_margin` query parameter alongside `format` -- see export_pdf's
+    own docstring for why (SAT's own print margin override)."""
+    fake_response = MagicMock()
+    fake_response.headers = {"Content-Type": "application/pdf"}
+    fake_response.content = b"%PDF-fake-content"
+    fake_session = MagicMock()
+    fake_session.get.return_value = fake_response
+
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session):
+        export_pdf("FILE_ID", bottom_margin_in=0.25)
+
+    _, kwargs = fake_session.get.call_args
+    assert kwargs["params"] == {"format": "pdf", "bottom_margin": "0.25"}
+
+
 def test_export_pdf_raises_if_the_response_is_not_actually_a_pdf():
     """This endpoint can return a 200 with an HTML error/login page
     instead of a clean HTTP error for some failure modes -- confirm that

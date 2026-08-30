@@ -131,6 +131,27 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
 
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"
+    assert mocks["export_pdf"].call_args.kwargs["bottom_margin_in"] is None  # omitted -- SAT-only
+
+
+def test_export_filled_report_forwards_a_given_bottom_margin_to_export_pdf():
+    mocks, patchers = _patch_all()
+    fill_fn = MagicMock(return_value=FillResult(cell_writes=[]))
+    try:
+        export_filled_report(
+            drive=MagicMock(),
+            sheets=MagicMock(),
+            templates_root_folder_id="ROOT",
+            category_path=["SAT"],
+            test_code="8",
+            output_name="Jane Student - 2026-03-08",
+            fill_fn=fill_fn,
+            bottom_margin_in=0.25,
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert mocks["export_pdf"].call_args.kwargs["bottom_margin_in"] == 0.25
 
 
 def test_export_filled_report_passes_the_sheets_service_to_write_cells():

@@ -234,7 +234,7 @@ def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
     return buffer.getvalue()
 
 
-def export_pdf(spreadsheet_id: str) -> bytes:
+def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None) -> bytes:
     """The Sheets file at `spreadsheet_id`, rendered to PDF via Sheets'
     own dedicated export endpoint (`docs.google.com/spreadsheets/d/{id}/
     export?format=pdf`) -- the same URL "File > Download > PDF" in the
@@ -246,12 +246,38 @@ def export_pdf(spreadsheet_id: str) -> bytes:
     export does, even though the setting itself is genuinely saved on the
     file correctly -- the exported PDF came out at undistorted, un-shrunk
     size and overflowed onto an extra page regardless. This endpoint,
-    called with no scale/margin/gid overrides of its own, defers to
+    called with no scale/gid overrides of its own, otherwise defers to
     whatever print setup (page range, layout, scale) is already saved on
     the file, the same as Drive's export was meant to -- just apparently
     more faithfully. No `gid` is passed, so this exports the *entire*
     workbook (every visible sheet), matching the Drive-based export it
     replaces.
+
+    `bottom_margin_in`, if given, overrides just the bottom print margin
+    (inches, the same unit Sheets' own print-setup UI uses) via this
+    endpoint's own `bottom_margin` query parameter -- left as `None` (no
+    override, deferring to the saved margin like every other print
+    setting this endpoint doesn't touch) for every caller except SAT's
+    own export path. Exists because matching a reference export's own
+    dominant font size (sat_score_report_writer._TABLE_COLUMN_NARROW_FACTOR)
+    turned out not to guarantee matching its total content height too,
+    even once that factor was re-derived to hit the same font size almost
+    exactly: confirmed live, a 5.92pt-vs-5.92pt match still left a
+    single trailing row spilling onto its own extra page, by an amount
+    that didn't track the visible pixel slack left below the last row the
+    way matching font size (and so per-row height) was expected to --
+    Sheets' own pagination evidently isn't decided against a continuous
+    post-scale pixel budget the way that reasoning assumed. Rather than
+    keep chasing that factor for a fit it doesn't fully control, reclaiming
+    a fixed amount of page height directly (a print setting Sheets exposes
+    on this very endpoint, just never previously passed) sidesteps it
+    entirely -- and does so without touching column width, so unlike that
+    factor, it can't move the font-size match this already got right.
+    `bottom_margin` itself is a widely-used, long-standing query parameter
+    on this same undocumented endpoint (the same family as `format`,
+    `gid`, and `scale`, none of which have a formal spec either) -- not
+    yet confirmed live against this specific template, unlike the rest of
+    this endpoint's own usage here.
 
     Undocumented as a formal Google API (there's no googleapiclient
     wrapper for it) -- authenticated the same way as every other call in
@@ -264,7 +290,10 @@ def export_pdf(spreadsheet_id: str) -> bytes:
     creds = get_credentials()
     session = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export"
-    response = session.get(url, params={"format": "pdf"})
+    params = {"format": "pdf"}
+    if bottom_margin_in is not None:
+        params["bottom_margin"] = str(bottom_margin_in)
+    response = session.get(url, params=params)
     response.raise_for_status()
     content_type = response.headers.get("Content-Type", "")
     if not content_type.startswith("application/pdf"):
