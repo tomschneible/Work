@@ -377,10 +377,33 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     """0-indexed (start_col, end_col) column ranges (end exclusive --
     the shape a Sheets API dimension range needs) covering every
     non-canonical Module 2 column *and* the spacer columns between and
-    after them -- one single contiguous range from the leftmost
-    non-canonical occurrence's own title column through the rightmost
-    occurrence's own last column, empty if there are no non-canonical
-    occurrences at all.
+    after them -- one single contiguous range starting right where the
+    canonical block's own last column ends (visible_table_columns_to_narrow's
+    own end, so the spacer between the two abuts it with no gap) through
+    the rightmost occurrence's own last column, empty if there are no
+    non-canonical occurrences at all.
+
+    The range starts at the *canonical* block's own end, not the first
+    non-canonical occurrence's own title column (an earlier version of
+    this): that left exactly one column -- the spacer between the
+    canonical block and the first non-canonical occurrence -- outside
+    both this range (which started one column later) and
+    visible_table_columns_to_narrow's own range (which stops at the
+    canonical block's own last column), unlike every *other*
+    inter-occurrence spacer and the trailing one, which this range's own
+    contiguous span already swept up (see below). Structurally identical
+    to those other spacers -- confirmed against a real template's own
+    column layout -- so there's no reason for this one alone to be
+    exempt; it was just outside where either neighboring range happened
+    to start/end. Left at full natural width, unlike everything either
+    side of it, it inflated the print area's own natural size the same
+    way the spacers this function already sweeps up used to before this
+    function existed -- diagnosed from a real export's own rendered
+    geometry (extended header bar and real table content both ending
+    ~27-30pt short of the print area's actual right edge, symmetric on
+    both sides from Sheets' own horizontal centering) rather than a live
+    A/B export comparison the way the other lessons in this module were;
+    still worth confirming against one.
 
     Needed *in addition to* blocks_to_clear, not instead of it:
     clearing removes an occurrence's own cell values, but its columns
@@ -421,7 +444,9 @@ def columns_to_hide(ws: Worksheet) -> List[Tuple[int, int]]:
     non_canonical_cols = _non_canonical_module2_cols(ws)
     if not non_canonical_cols:
         return []
-    start = min(non_canonical_cols) - 1
+    canonical_col = _canonical_module2_col(ws)
+    assert canonical_col is not None  # a non-canonical occurrence exists, so canonical must too
+    start = canonical_col - 1 + _CLEAR_BLOCK_WIDTH
     end = max(non_canonical_cols) - 1 + _CLEAR_BLOCK_WIDTH
     return [(start, end)]
 

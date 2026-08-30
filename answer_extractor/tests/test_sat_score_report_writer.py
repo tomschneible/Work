@@ -175,7 +175,7 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
     # One single contiguous range now -- covers the spacer columns between
     # occurrences too, not just each occurrence's own 6-column block (see
     # test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one).
-    assert writes.hidden_column_ranges == [("Student Responses", 14, 34)]
+    assert writes.hidden_column_ranges == [("Student Responses", 13, 34)]
     # Module 1's own title-through-answer (A-C) and domain-through-spacer
     # (E-G), then the canonical Module 2 block's own title-through-answer
     # (H-J) and domain-through-skill (L-M) -- mark_col (D, K) excluded
@@ -189,7 +189,7 @@ def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path
         ("Student Responses", 4, 7, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 7, 10, _TABLE_COLUMN_NARROW_FACTOR),
         ("Student Responses", 11, 13, _TABLE_COLUMN_NARROW_FACTOR),
-        ("Student Responses", 14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
+        ("Student Responses", 13, 34, _HIDDEN_COLUMN_SHRINK_FACTOR),
     ]
     # This fixture's own row 1 has no decorative fill at all -- nothing
     # for header_bar_extension to find or extend.
@@ -227,17 +227,21 @@ def test_blocks_to_clear_hides_every_module_2_block_but_the_canonical_one(tmp_pa
 
 def test_columns_to_hide_hides_every_module_2_block_but_the_canonical_one(tmp_path):
     """One contiguous range spanning every non-canonical occurrence *and*
-    the spacer columns between/after them (O is the canonical block, so
-    the range starts right after it, at V) -- see columns_to_hide's own
-    docstring for why the spacer columns need to be swept up too, not
-    just each occurrence's own 6-column block."""
+    the spacer columns between/after them, starting right where the
+    canonical block's own last column (M) ends -- i.e. at N, the spacer
+    between the canonical block and the next occurrence (O) -- through
+    AH, the last occurrence's own last column. Starting at the canonical
+    block's own end rather than at O itself is what sweeps in that one
+    spacer too, not just the ones between/after the non-canonical
+    occurrences -- see columns_to_hide's own docstring for why it was
+    the one column previously left out."""
     path = tmp_path / "template.xlsx"
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
     ranges = columns_to_hide(ws)
 
-    assert ranges == [(14, 34)]  # V (Lower, canonical) through AH (Lower, duplicate)'s own end
+    assert ranges == [(13, 34)]  # N (the spacer after canonical) through AH's own end
 
 
 def test_columns_to_hide_is_empty_without_any_non_canonical_occurrence():
@@ -281,7 +285,7 @@ def test_hidden_columns_to_shrink_shrinks_the_same_columns_columns_to_hide_hides
     _write_template(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    assert hidden_columns_to_shrink(ws) == [(14, 34, _HIDDEN_COLUMN_SHRINK_FACTOR)]
+    assert hidden_columns_to_shrink(ws) == [(13, 34, _HIDDEN_COLUMN_SHRINK_FACTOR)]
 
 
 def test_header_bar_extension_extends_a_solid_row1_fill_to_the_narrowed_table_width(tmp_path):
