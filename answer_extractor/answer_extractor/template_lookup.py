@@ -72,3 +72,25 @@ def find_template_file(drive: Resource, folder_id: str, test_code: str) -> Dict[
         names = ", ".join(f["name"] for f in candidates)
         raise ValueError(f"More than one template matches test code {test_code!r} in Drive folder {folder_id}: {names}")
     return candidates[0]
+
+
+def find_file_by_exact_name(drive: Resource, folder_id: str, name: str) -> Dict[str, str]:
+    """The single spreadsheet file in `folder_id` named exactly `name`
+    (case-insensitive) -- unlike find_template_file's substring match
+    against a test code, for a template that isn't duplicated per test
+    code at all (the simplified SAT template, which carries no per-test
+    content of its own -- see sat_simplified_score_report_writer.py's own
+    module docstring for why). Raises ValueError if none or more than one
+    match -- either means the file's own name, or which folder was
+    searched, needs fixing in Drive, not something to guess past."""
+    candidates = [
+        f
+        for f in list_folder(drive, folder_id)
+        if f["mimeType"] == _SPREADSHEET_MIME_TYPE and f["name"].strip().lower() == name.strip().lower()
+    ]
+    if not candidates:
+        available = ", ".join(f["name"] for f in list_folder(drive, folder_id)) or "(empty)"
+        raise ValueError(f"No file named {name!r} in Drive folder {folder_id} (found: {available})")
+    if len(candidates) > 1:
+        raise ValueError(f"More than one file named {name!r} in Drive folder {folder_id} -- ambiguous")
+    return candidates[0]

@@ -154,6 +154,67 @@ def test_export_filled_report_forwards_a_given_bottom_margin_to_export_pdf():
     assert mocks["export_pdf"].call_args.kwargs["bottom_margin_in"] == 0.25
 
 
+def test_export_filled_report_uses_a_given_template_id_without_any_lookup():
+    """template_id bypasses resolve_template_folder/find_template_file
+    entirely -- for a template (e.g. the simplified SAT one) that isn't
+    found by category_path/test_code at all."""
+    mocks, patchers = _patch_all()
+    try:
+        result = export_filled_report(
+            drive=MagicMock(),
+            sheets=MagicMock(),
+            templates_root_folder_id=None,
+            category_path=None,
+            test_code=None,
+            output_name="Jane Student - 2026-03-08",
+            fill_fn=MagicMock(return_value=FillResult(cell_writes=[])),
+            template_id="SIMPLIFIED_TEMPLATE_ID",
+        )
+    finally:
+        _stop_all(patchers)
+
+    assert result == b"%PDF-final"
+    mocks["resolve_template_folder"].assert_not_called()
+    mocks["find_template_file"].assert_not_called()
+    mocks["copy_template"].assert_called_once()
+    assert mocks["copy_template"].call_args[0][1] == "SIMPLIFIED_TEMPLATE_ID"
+
+
+def test_export_filled_report_raises_if_given_both_template_id_and_lookup_args():
+    mocks, patchers = _patch_all()
+    try:
+        with pytest.raises(ValueError, match="not both"):
+            export_filled_report(
+                drive=MagicMock(),
+                sheets=MagicMock(),
+                templates_root_folder_id="ROOT",
+                category_path=["SAT"],
+                test_code="8",
+                output_name="report",
+                fill_fn=MagicMock(),
+                template_id="SOME_ID",
+            )
+    finally:
+        _stop_all(patchers)
+
+
+def test_export_filled_report_raises_if_neither_template_id_nor_full_lookup_args_given():
+    mocks, patchers = _patch_all()
+    try:
+        with pytest.raises(ValueError, match="Need either"):
+            export_filled_report(
+                drive=MagicMock(),
+                sheets=MagicMock(),
+                templates_root_folder_id="ROOT",
+                category_path=None,  # incomplete -- test_code given but category_path isn't
+                test_code="8",
+                output_name="report",
+                fill_fn=MagicMock(),
+            )
+    finally:
+        _stop_all(patchers)
+
+
 def test_export_filled_report_passes_the_sheets_service_to_write_cells():
     mocks, patchers = _patch_all()
     sheets_service = MagicMock(name="sheets-service")

@@ -5,7 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from answer_extractor.template_lookup import find_subfolder, find_template_file, resolve_template_folder
+from answer_extractor.template_lookup import (
+    find_file_by_exact_name,
+    find_subfolder,
+    find_template_file,
+    resolve_template_folder,
+)
 
 _FOLDER = "application/vnd.google-apps.folder"
 _SHEET = "application/vnd.google-apps.spreadsheet"
@@ -101,3 +106,43 @@ def test_find_template_file_raises_when_ambiguous():
     with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
         with pytest.raises(ValueError, match="ambiguous|More than one"):
             find_template_file(MagicMock(), "FOLDER", "25MC1")
+
+
+def test_find_file_by_exact_name_matches_case_insensitively():
+    listing = [
+        {"id": "t1", "name": "DSAT Simplified Template", "mimeType": _SHEET},
+        {"id": "t2", "name": "DSAT Simplified Template Notes", "mimeType": _SHEET},
+    ]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
+        result = find_file_by_exact_name(MagicMock(), "FOLDER", "dsat simplified template")
+
+    # exact match only -- the longer, substring-matching neighbor is not picked
+    assert result == {"id": "t1", "name": "DSAT Simplified Template", "mimeType": _SHEET}
+
+
+def test_find_file_by_exact_name_ignores_non_spreadsheet_files():
+    listing = [
+        {"id": "t1", "name": "DSAT Simplified Template", "mimeType": "text/plain"},
+        {"id": "t2", "name": "DSAT Simplified Template", "mimeType": _SHEET},
+    ]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
+        result = find_file_by_exact_name(MagicMock(), "FOLDER", "DSAT Simplified Template")
+
+    assert result["id"] == "t2"
+
+
+def test_find_file_by_exact_name_raises_with_available_names_when_no_match():
+    listing = [{"id": "t1", "name": "DSAT Simplified Template", "mimeType": _SHEET}]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
+        with pytest.raises(ValueError, match="DSAT Simplified Template"):
+            find_file_by_exact_name(MagicMock(), "FOLDER", "Wrong Name")
+
+
+def test_find_file_by_exact_name_raises_when_ambiguous():
+    listing = [
+        {"id": "t1", "name": "DSAT Simplified Template", "mimeType": _SHEET},
+        {"id": "t2", "name": "dsat simplified template", "mimeType": _SHEET},
+    ]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
+        with pytest.raises(ValueError, match="ambiguous"):
+            find_file_by_exact_name(MagicMock(), "FOLDER", "DSAT Simplified Template")

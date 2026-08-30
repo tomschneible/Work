@@ -52,20 +52,36 @@ def _cleanup_delete_is_actionable(exc: Exception) -> bool:
 def export_filled_report(
     drive: Resource,
     sheets: Resource,
-    templates_root_folder_id: str,
-    category_path: List[str],
-    test_code: str,
+    templates_root_folder_id: Optional[str],
+    category_path: Optional[List[str]],
+    test_code: Optional[str],
     output_name: str,
     fill_fn: Callable[[str | Path], FillResult],
     temp_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
     bottom_margin_in: Optional[float] = None,
+    template_id: Optional[str] = None,
 ) -> bytes:
-    """Return the filled report's PDF bytes. `category_path` is the
-    sequence of Drive subfolder names to walk from the templates root to
-    reach the right template file, e.g. ["ACT", "Enhanced"] or ["SAT"];
-    `test_code` is matched against template filenames the same way
-    template_lookup.find_template_file does (e.g. "25MC1"). `fill_fn`
+    """Return the filled report's PDF bytes. Two ways to say which
+    template to duplicate -- give exactly one, not a mix:
+
+    - `templates_root_folder_id`/`category_path`/`test_code` (all three,
+      the original and still the common case): looked up the usual way
+      -- `category_path` is the sequence of Drive subfolder names to
+      walk from the templates root to reach the right template file,
+      e.g. ["ACT", "Enhanced"] or ["SAT"]; `test_code` is matched against
+      template filenames the same way template_lookup.find_template_file
+      does (e.g. "25MC1"). Right for a template made once per test, since
+      it carries real per-test content of its own.
+    - `template_id` alone: the file to duplicate is already known,
+      resolved by the caller however it sees fit -- e.g. the simplified
+      SAT template (sat_simplified_score_report_writer.py), which is
+      found once by a fixed name rather than by test code, since it
+      carries no per-test content of its own to make a new copy of for
+      every test (see that module's own docstring). Raises ValueError if
+      neither form -- or a mix of both -- is given.
+
+    `fill_fn`
     receives a local, read-only path to the duplicated template (already
     downloaded as .xlsx, purely so `fill_fn` can figure out where things
     go) and must return a FillResult -- the caller-specific part of this
@@ -139,9 +155,17 @@ def export_filled_report(
     purpose is likewise always cleaned up (and can't mask anything the
     same way, since nothing downstream of it depends on its content).
     """
-    folder_id = resolve_template_folder(drive, templates_root_folder_id, category_path)
-    template = find_template_file(drive, folder_id, test_code)
-    copy_id = copy_template(drive, template["id"], output_name, parent_folder_id=temp_folder_id)
+    by_lookup = templates_root_folder_id is not None or category_path is not None or test_code is not None
+    if template_id is not None and by_lookup:
+        raise ValueError("Pass either template_id or templates_root_folder_id/category_path/test_code, not both")
+    if template_id is None:
+        if templates_root_folder_id is None or category_path is None or test_code is None:
+            raise ValueError(
+                "Need either template_id, or all three of templates_root_folder_id/category_path/test_code"
+            )
+        folder_id = resolve_template_folder(drive, templates_root_folder_id, category_path)
+        template_id = find_template_file(drive, folder_id, test_code)["id"]
+    copy_id = copy_template(drive, template_id, output_name, parent_folder_id=temp_folder_id)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)
