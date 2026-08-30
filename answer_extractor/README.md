@@ -713,6 +713,76 @@ or one particular sheet/report fails to export on its own, that one falls
 back into the combined `.xlsx` with a warning -- never fails the whole
 batch.
 
+### The simplified SAT/DSAT template (not yet wired in)
+
+Everything in "How a scan becomes a report" above about Module 2 --
+`blocks_to_clear`, `columns_to_hide`, `hidden_columns_to_shrink`,
+`header_bar_extension`, and the whole `_TABLE_COLUMN_NARROW_FACTOR`
+saga -- exists for one reason: the current-format template has to
+physically hold every Module 2 difficulty pair (Higher x2, Lower x2)
+and hide whichever three weren't administered, since which one *was*
+isn't known until a specific student's report is being filled. A
+template with a single Module 2 slot per subject, filled in directly
+once the active variant is known, never needs any of that -- not a
+smaller version of the same machinery, none of it, by construction.
+
+This is in progress, not live yet: `sat_simplified_score_report_writer.py`
+and `google_sat_simplified_score_report_export.py` implement it, tested
+against synthetic fixtures the same way everything else here is, but
+`sat_score_report_pipeline.py` still calls the current-format path
+(`google_sat_score_report_export.export_sat_score_report`). Switching
+`export_sat_report` to `export_simple_sat_score_report` instead is a
+one-line import change with no argument changes (their signatures
+match) -- deliberately left until the template below actually exists in
+Drive, rather than risking today's working DSAT export against one that
+doesn't.
+
+**The current-format template's own role changes, but it doesn't go
+away.** It's still made once per test and still used for hand-grading,
+same as always -- and it *also* becomes the one real source for a
+question's Domain/Skill labels and correct answer, since the simplified
+template never carries that content itself (nothing here duplicates it
+into a second, separately-maintained source -- see
+`sat_score_report_writer.read_reference_questions`'s own docstring).
+Reading it back out of a template already made for another reason, via
+the exact same block-locating logic (`locate_sat_blocks`) that already
+finds these values for consolidation, cost nothing new to build.
+
+**The simplified template itself is not made per test.** Unlike the
+current-format one, it carries no per-test content at all -- no
+Domain/Skill values, no correct answers, nothing that would differ
+between two different DSAT administrations sharing the same module/
+question-count shape. Its layout is fixed by the exam *format*, not by
+which specific test it's grading, so there's exactly one of it, reused
+for every student regardless of test code -- not duplicated the way the
+current-format templates are.
+`google_sat_simplified_score_report_export.SIMPLIFIED_TEMPLATE_NAME`
+(currently `"DSAT Simplified Template"`) is found by exact name, in its
+own `SAT/Simplified` subfolder so
+`find_template_file`'s own substring-against-test-code matching in
+`SAT/` itself is never at risk of also matching it. If a differently-
+shaped exam ever needs its own version (PSAT 10 and PSAT 8/9 run
+shorter modules than the full digital SAT) that becomes a small, fixed
+set of named templates and a lookup keyed off whatever already
+distinguishes them -- still nowhere near one per test code.
+
+**Building the template itself:** same general shape as the
+current-format one's own blocks (a title, then a header row with
+"Correct Answer"/"Your Answer" two and three columns to its right and
+"Domain"/"Skill" four and five columns to its right, then one row per
+question, pre-numbered in the question column same as today), but:
+
+- One Module 2 block per subject, not a Higher/Lower pair -- no flag
+  checkbox above it either (nothing to disambiguate any more).
+- A block's title carries no difficulty -- just e.g. "Reading and
+  Writing Module 2", not "... - Higher Difficulty". The identified
+  difficulty gets appended once a specific student's report is filled
+  (`fill_simple_sat_score_report`), so the exported report still reads
+  the same way the current-format one's own titles do.
+- Correct Answer/Domain/Skill cells stay blank on the template itself --
+  they're filled in from the current-format template's own matching
+  block at export time, never present here beforehand.
+
 ## macOS drag-and-drop app
 
 You can turn this into a real `.app` icon on a Mac: drop scanned bubble
