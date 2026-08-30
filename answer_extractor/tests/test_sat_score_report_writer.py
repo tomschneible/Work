@@ -11,12 +11,14 @@ from answer_extractor.sat_score_report_writer import (
     _HIDDEN_COLUMN_SHRINK_FACTOR,
     _MARK_HEADER_NON_BLANK,
     _TABLE_COLUMN_NARROW_FACTOR,
+    ReferenceQuestion,
     blocks_to_clear,
     columns_to_hide,
     fill_sat_score_report,
     header_bar_extension,
     hidden_columns_to_shrink,
     locate_sat_blocks,
+    read_reference_questions,
     trailing_rows_to_delete,
     visible_table_columns_to_narrow,
 )
@@ -118,6 +120,46 @@ def test_locate_sat_blocks_dedupes_duplicate_pairs_to_the_leftmost(tmp_path):
     assert by_key[("reading and writing", "module1")].flag_cell is None
     assert by_key[("reading and writing", "harder")].flag_cell == (5, 8)
     assert by_key[("reading and writing", "easier")].flag_cell == (5, 15)
+
+
+def test_read_reference_questions_reads_correct_answer_domain_and_skill(tmp_path):
+    """_block only ever writes the Domain/Skill *header* labels, not
+    per-question values (no test needed them before this) -- add a
+    couple directly here rather than changing the shared fixture."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Student Responses"]
+    ws["E6"], ws["F6"] = "Craft and Structure", "Words in Context"  # Module 1 Q1
+    ws["E7"], ws["F7"] = "Information and Ideas", "Central Ideas"  # Module 1 Q2
+    ws["L6"], ws["M6"] = "Expression of Ideas", "Rhetorical Synthesis"  # Harder canonical Q1
+    wb.save(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    module1 = read_reference_questions(ws, "reading and writing", "module1")
+    assert module1[1] == ReferenceQuestion(
+        correct_answer="A", domain="Craft and Structure", skill="Words in Context"
+    )
+    assert module1[2] == ReferenceQuestion(
+        correct_answer="B", domain="Information and Ideas", skill="Central Ideas"
+    )
+
+    harder = read_reference_questions(ws, "reading and writing", "harder")
+    assert harder[1] == ReferenceQuestion(
+        correct_answer="C", domain="Expression of Ideas", skill="Rhetorical Synthesis"
+    )
+    # Q2 never had Domain/Skill poked above -- still reads cleanly as None,
+    # not an error; only a missing *block* raises (see below).
+    assert harder[2] == ReferenceQuestion(correct_answer="D", domain=None, skill=None)
+
+
+def test_read_reference_questions_raises_for_a_block_that_does_not_exist(tmp_path):
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+    ws = openpyxl.load_workbook(path)["Student Responses"]
+
+    with pytest.raises(ValueError, match="math.*module1"):
+        read_reference_questions(ws, "math", "module1")
 
 
 def test_fill_sat_score_report_writes_name_date_and_active_variant_only(tmp_path):

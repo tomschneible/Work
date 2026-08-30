@@ -355,6 +355,74 @@ def locate_sat_blocks(ws: Worksheet) -> List[SatBlock]:
     return list(blocks_by_key.values())
 
 
+@dataclasses.dataclass(frozen=True)
+class ReferenceQuestion:
+    """One question's per-test, per-question facts, as read straight off
+    a block on the *current-format* (checkbox/duplicate-block) template's
+    own "Student Responses" tab -- everything the simplified template's
+    own writer needs that isn't a student's actual answer: the correct-
+    answer key, and the Domain/Skill labels College Board's own report
+    assigns that question. See read_reference_questions for why these
+    come from here rather than a separately-maintained source."""
+
+    correct_answer: object
+    domain: object
+    skill: object
+
+
+def read_reference_questions(ws: Worksheet, subject: str, module_slot: str) -> Dict[int, ReferenceQuestion]:
+    """Every question's ReferenceQuestion for one (subject, module_slot)
+    block on `ws`, keyed by question number -- `ws` is the *current-format*
+    template's own "Student Responses" tab (a local, read-only copy, the
+    same kind every other reader in this module scans), not a sheet being
+    filled.
+
+    Exists for the simplified (no checkboxes, one Module 2 slot per
+    subject) template this project moved to: unlike the answer-key CSV
+    (answer_keys.sat_answer_keys.csv), which only ever needed to carry the
+    correct answer itself, nothing here previously needed a *separate*,
+    hand-maintained source for a question's Domain/Skill labels, because
+    the current-format template already carried them, correctly, on
+    whichever of its own duplicate blocks matched the active variant --
+    fill_sat_score_report simply copies them from there into the
+    canonical column (see its own docstring). The simplified template
+    still needs those same per-question facts, just with nowhere on
+    *itself* to read them from any more (it only ever has the one active
+    block, never the inactive twin sitting unused elsewhere on the same
+    sheet) -- so it reads them from the current-format template for the
+    same test code instead of duplicating them into a new CSV that would
+    need to be kept in sync with it by hand. This is a deliberate choice,
+    not a stopgap: a current-format template is made for every new test
+    code regardless (see README), so it's already the one real,
+    hand-verified source for these facts -- referencing it directly means
+    there's only ever one place a new test's Domain/Skill labels actually
+    live.
+
+    Raises ValueError if `ws` has no block matching (subject, module_slot)
+    at all -- almost always the wrong template file, subject spelling, or
+    module_slot ("module1"/"easier"/"harder") reached this call."""
+    block = next(
+        (b for b in locate_sat_blocks(ws) if b.subject == subject and b.module_slot == module_slot),
+        None,
+    )
+    if block is None:
+        raise ValueError(f"No {subject!r} {module_slot!r} block found on {ws.title!r}")
+
+    questions: Dict[int, ReferenceQuestion] = {}
+    r = block.header_row + 1
+    while True:
+        question = ws.cell(row=r, column=block.question_col).value
+        if question is None:
+            break
+        questions[int(question)] = ReferenceQuestion(
+            correct_answer=ws.cell(row=r, column=block.correct_col).value,
+            domain=ws.cell(row=r, column=block.question_col + 4).value,
+            skill=ws.cell(row=r, column=block.question_col + 5).value,
+        )
+        r += 1
+    return questions
+
+
 def _canonical_module2_col(ws: Worksheet) -> Optional[int]:
     """The single column every subject's real Module 2 answers get
     consolidated into, regardless of which difficulty was actually
