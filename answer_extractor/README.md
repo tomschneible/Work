@@ -527,11 +527,66 @@ worked, or to look around the folder tree while debugging.
    matching per-row height, so that ~7pt gap reads as accumulated
    rounding/measurement slop over ~65 rows of content, not a real
    structural difference from the reference. `_TABLE_COLUMN_NARROW_FACTOR`
-   is now 0.98, a small enough pull back to absorb that without giving up
-   the font-size match 1.0 confirmed. Still not confirmed against a live
-   export at this specific value; see its own comment in
-   `sat_score_report_writer.py` for the arithmetic behind all six
-   values.
+   is now 1.09, a small *widen* rather than a narrow -- see below for
+   why 0.98 stopped being the right value, and its own comment in
+   `sat_score_report_writer.py` for the arithmetic behind every value
+   tried, six that came before this and this one.
+
+   0.98 turned out to depend on a bug elsewhere: `columns_to_hide`'s own
+   contiguous hidden-column range started one column after the canonical
+   block's own last column, not right at it -- leaving exactly one
+   column (the spacer between the two) un-narrowed and un-hidden,
+   quietly propping up every one of the six values above's own headroom
+   without ever being counted in any of their derivations. Fixing that
+   (starting the range at the canonical block's own end instead) let
+   "fit to page" compute a *larger* scale at the same 0.98 -- confirmed
+   live, font size measured 6.32pt there after the fix, not the pre-fix
+   5.99pt, overshooting the reference upward and spilling *more* onto
+   the extra page, not less. Re-deriving the same font-size-matching fit
+   against that new baseline (same slope, since the narrowing mechanism
+   itself didn't change; only its intercept shifts by removing a fixed
+   width) gives `f =~ 1.085` for 5.92pt -- these columns now need
+   widening slightly past their own natural width, not narrowing at all.
+   Rounded to 1.09; confirmed live at that value, font size measured
+   5.92pt, matching the reference essentially exactly.
+
+   Matching font size that closely still didn't guarantee matching the
+   reference's own total page fill, though: the same trailing row still
+   spilled onto its own extra page at 1.09, and by an amount that didn't
+   track the visible pixel slack the way matching font size (and so
+   per-row height) implied it should. Sheets' own pagination evidently
+   isn't decided against a continuous post-scale pixel budget the way
+   that reasoning assumed -- this factor controls how closely the report
+   matches the reference's own density, not reliably whether it fits on
+   one page, and by this point it's doing the first job about as well as
+   it can. A live test of Sheets' own PDF export endpoint accepting a
+   `bottom_margin` query parameter directly (reclaiming page height
+   without touching column width, and so without moving the font-size
+   match at all) went a different way than hoped: passing
+   `bottom_margin=0.25` didn't get ignored or clamped, it made the
+   endpoint itself fail outright (a 500 from the signed
+   `googleusercontent.com` URL it redirects to), taking the whole
+   report's export down with it -- caught by `auto_cli`'s own per-report
+   fallback (into the combined `.xlsx`, with a warning, exactly as
+   designed), but strictly worse than the overflow it was meant to fix.
+   Not necessarily true of every value or every margin parameter this
+   endpoint takes, just this one at this value, confirmed once -- but not
+   worth another live attempt at guessing a working variant blind, so
+   this code path (`export_pdf`'s own `bottom_margin_in`) exists but
+   nothing calls it with a non-`None` value any more.
+
+   The recommended fix for this last gap is a one-time edit to the
+   template file itself, not another per-export code path: reduce its
+   own saved bottom print margin directly (File > Print > Margins >
+   Custom in the Sheets UI, e.g. from its current ~0.75-0.78in down to
+   around 0.25in) and save it. `export_pdf` already defers to whatever
+   print setup is saved on the file for everything it doesn't explicitly
+   override (that's how the "fit to page" scale setting itself has
+   always worked here) -- a template-level margin change reaches every
+   future export automatically, the same way the one-time
+   `hide-gridlines` fix above does, with no code involved and none of
+   the live-export-breaking risk the query-parameter attempt carried.
+   Not yet confirmed live.
 
    Narrowing far enough also genuinely truncated a block's own title in
    that same real export -- not just visually overlapped by a
@@ -602,6 +657,18 @@ worked, or to look around the folder tree while debugging.
      `hidden_columns_to_shrink` (built from the same function) inherits
      the fix automatically. Confirmed live this actually fixed it --
      the org's own next real export centered correctly.
+
+     One spacer still slipped through even this fix, though: the one
+     between the *canonical* block's own last column and the first
+     non-canonical occurrence, since the range above started *at* that
+     occurrence's own title column, one column later than where the
+     canonical block's own end (and `visible_table_columns_to_narrow`'s
+     own range) actually stops. `columns_to_hide` now starts its range
+     right at the canonical block's own end instead, closing that last
+     gap too -- see the font-size-matching narrative below for how this
+     one was actually found (a real export's own rendered geometry, not
+     a live A/B comparison) and what it changed about
+     `_TABLE_COLUMN_NARROW_FACTOR`.
    - Separately, this sheet's own decorative accent bar under "Your
      Question-Level Feedback" (a solid fill spanning a fixed range of
      columns on row 1, confirmed against the real template file to run
