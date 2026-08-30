@@ -176,10 +176,54 @@ _CLEAR_BLOCK_WIDTH = 6
 # that close, not some other overlooked factor: matching font size means
 # matching per-row height, so the ~7pt gap is really just accumulated
 # rounding/measurement slop over ~65 rows' worth of content, not a real
-# structural difference from the reference. 0.98 is a small enough pull
-# back to absorb that without giving up the font-size match this
-# confirmed.
-_TABLE_COLUMN_NARROW_FACTOR = 0.98
+# structural difference from the reference. 0.98 (confirmed live: font
+# size 5.99pt) was a small enough pull back to absorb that gap -- until
+# columns_to_hide's own missing-spacer fix (see its docstring) changed
+# what this factor needed to be, below.
+#
+# That fix removed one column's worth of previously-un-narrowed,
+# un-hidden natural width from the print area -- exactly the kind of
+# width this factor's own derivation above has always had to compensate
+# for, just not this particular piece of it (it was never counted in
+# any of the six values tried above; it simply always happened to be
+# there, quietly propping up the scale headroom every one of those
+# values was calibrated against). Removing it lets "fit to page" compute
+# a *larger* scale than before at the *same* factor -- confirmed live: a
+# real export at the same 0.98, taken after that fix, measured 6.32pt,
+# not 5.99pt -- overshooting the 5.92pt target upward instead of
+# undershooting it, and spilling *more* content onto the extra page than
+# 0.98 did before the fix, not less. Not a new problem, and not this
+# factor being wrong in isolation -- the fix was correct on its own
+# terms (it genuinely removed dead width the print area no longer needs
+# to carry); this factor was simply calibrated against a baseline that
+# included that width, and now needs recalibrating against one that
+# doesn't.
+#
+# Redoing the same font-size-matching fit against that new baseline:
+# the three pre-fix values above (0.90/6.31pt, 0.95/6.11pt, 1.00/5.93pt)
+# fit a line in 1/font vs. factor almost exactly (predicted values
+# within 0.02pt of each measured one), of the form `1/font = intercept +
+# slope * factor` -- expected, since natural width is itself linear in
+# this factor and font size scales linearly with "fit to page"'s own
+# scale, i.e. inversely with natural width. Removing a fixed amount of
+# width (this fix) shifts that line's intercept down by a constant
+# (less natural width at every factor means a bigger 1/font at every
+# factor) without changing its slope (the *narrowing* mechanism itself
+# is unchanged) -- so the post-fix line's slope is the same one already
+# fit from the three pre-fix points, and only its intercept needs
+# re-anchoring, using the one post-fix data point available (0.98 ->
+# 6.32pt) to solve for it. Doing that and solving the resulting line for
+# 5.92pt gives `f =~ 1.085` -- i.e., with the dead spacer gone, these
+# columns now need *widening* slightly past their own natural width to
+# reach the same fill level as the reference, not narrowing at all.
+# Widening past 1.0 is mechanically identical to narrowing as far as
+# narrow_columns is concerned (see its own docstring) -- just never
+# needed before this. Rounded to 1.09; not yet confirmed live at this
+# specific value, unlike the three pre-fix points this line was fit
+# from, and it extrapolates past the 0.90-1.00 range every one of those
+# came from, so treat it as the next data point to confirm, the same as
+# every value before it.
+_TABLE_COLUMN_NARROW_FACTOR = 1.09
 # How much the *hidden* non-canonical Module 2 columns (columns_to_hide)
 # get narrowed too, on top of being marked hidden -- see
 # hidden_columns_to_shrink's own docstring for why hiding alone wasn't
