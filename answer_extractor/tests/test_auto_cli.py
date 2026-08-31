@@ -271,32 +271,6 @@ def test_auto_cli_falls_back_to_the_combined_xlsx_for_one_sheet_that_fails_to_ex
     assert wb.sheetnames == ["Student, Jane 2027 ACT 25MC1 Ja"]  # openpyxl truncates sheet titles to 31 chars
 
 
-def test_auto_cli_prints_a_traceback_when_a_sheet_fails_to_export(tmp_path, capsys):
-    """The one-line summary alone (e.g. "The read operation timed out")
-    doesn't say *which* call inside export_sheet_report failed --
-    copy_template? export_xlsx? write_cells? export_pdf? The full
-    traceback does, and (via mac_droplet.sh's own stderr capture) always
-    lands in "Answer Extractor - Last Run Warnings.txt" even when the
-    droplet's own dialog only has room for a short preview."""
-    image_path = _fake_image(tmp_path)
-    output_path = tmp_path / "combined.xlsx"
-
-    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
-         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
-         patch(
-             "answer_extractor.auto_cli.export_sheet_report",
-             side_effect=TimeoutError("The read operation timed out"),
-         ):
-        exit_code = main(
-            ["--input", str(image_path), "--output", str(output_path), "--report-output-dir", str(tmp_path)]
-        )
-
-    assert exit_code == 0
-    err = capsys.readouterr().err
-    assert "Warning: couldn't export" in err and "The read operation timed out" in err
-    assert "Traceback (most recent call last):" in err
-
-
 def test_auto_cli_mixes_exported_and_combined_sheets_in_one_run(tmp_path):
     exported_result = _act_result("Student, Jane 2027 ACT 25MC1 January 17 2026")
     combined_result = SheetResult(
@@ -374,31 +348,6 @@ def test_auto_cli_falls_back_to_the_combined_xlsx_for_a_sat_report_that_fails_to
     assert wb.sheetnames == ["Score Report Answers"]
     rows = list(wb["Score Report Answers"].iter_rows(min_row=2, values_only=True))
     assert rows == [("Unknown", "Math - Module 1", 1, "B")]
-
-
-def test_auto_cli_prints_a_traceback_when_a_sat_report_fails_to_export(tmp_path, capsys):
-    """See the matching ACT test's own docstring above -- same reasoning,
-    the SAT export loop's own except block."""
-    score_pdf_path = tmp_path / "score.pdf"
-    write_score_report_pdf(score_pdf_path, [(1, "Math", "A", "A", "Correct")])
-    output_path = tmp_path / "combined.xlsx"
-    sat_rows = _sat_rows()
-
-    with patch("answer_extractor.auto_cli.classify_inputs", return_value=([], sat_rows)), \
-         patch("answer_extractor.auto_cli.annotate_rows", return_value=sat_rows), \
-         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
-         patch(
-             "answer_extractor.auto_cli.export_sat_report",
-             side_effect=TimeoutError("The read operation timed out"),
-         ):
-        exit_code = main(
-            ["--input", str(score_pdf_path), "--output", str(output_path), "--report-output-dir", str(tmp_path)]
-        )
-
-    assert exit_code == 0
-    err = capsys.readouterr().err
-    assert "Warning: couldn't export" in err and "The read operation timed out" in err
-    assert "Traceback (most recent call last):" in err
 
 
 def test_auto_cli_never_attempts_sat_export_when_identification_itself_fails(tmp_path):

@@ -35,24 +35,15 @@ unrecognized bubble-sheet template, or any bubble sheet when --template
 forces a fixed one -- still goes into the combined .xlsx exactly as
 before this existed. Anything that fails to export on its own (bad
 filename convention, no matching Drive template, an unidentified Module 2
-difficulty, a cancelled score prompt or date prompt, Google auth not set
-up, a transient network/API error) falls back into the combined .xlsx
-too, with a warning explaining why, rather than failing the whole batch.
-That warning is two lines to stderr, not one: a short one-line summary
-(what mac_droplet.sh's own dialog has room to preview), then the full
-traceback of whatever was actually raised -- which call inside
-export_sheet_report/export_sat_report failed (copy_template?
-export_xlsx? write_cells? export_pdf? ...), not just the exception's own
-short message. The droplet's own stderr capture keeps both in "Answer
-Extractor - Last Run Warnings.txt" on the Desktop regardless of what
-fits in the dialog -- see mac_droplet.sh's own comments.
+difficulty, a cancelled score prompt, Google auth not set up) falls back
+into the combined .xlsx too, with a warning explaining why, rather than
+failing the whole batch.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
-import traceback
 from pathlib import Path
 from typing import List, Tuple
 
@@ -301,16 +292,6 @@ def main(argv: list[str] | None = None) -> int:
                         f"including it in {args.output} instead.",
                         file=sys.stderr,
                     )
-                    # The one-liner above is all the droplet's own dialog
-                    # preview has room for (see mac_droplet.sh's own
-                    # MAX_DIALOG_CHARS), but the *full* stderr text --
-                    # traceback included -- always lands in "Answer
-                    # Extractor - Last Run Warnings.txt" on the Desktop
-                    # too, which is what actually pins down which call
-                    # failed (copy_template? export_xlsx? write_cells?
-                    # export_pdf? ...) rather than just "the read
-                    # operation timed out" with nothing to go on.
-                    print(traceback.format_exc(), file=sys.stderr)
                     to_combine.append(r)
 
             for group in sat_row_groups:
@@ -327,10 +308,6 @@ def main(argv: list[str] | None = None) -> int:
                         f"including it in {args.output} instead.",
                         file=sys.stderr,
                     )
-                    # See the matching comment in the ACT loop above -- the
-                    # full traceback is what actually says which call
-                    # failed, not just the exception's own short message.
-                    print(traceback.format_exc(), file=sys.stderr)
                     score_rows_to_combine.extend(group)
 
     if to_combine:

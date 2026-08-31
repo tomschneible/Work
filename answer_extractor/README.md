@@ -1032,16 +1032,6 @@ Each bubble sheet gets its own tab (see "How it works" below), opening on
 the first one; any score-report PDFs land in a separate "Score Report
 Answers" tab -- all in the same spreadsheet.
 
-**If a sheet falls back to the combined spreadsheet instead of its own
-Sheets report** (a warning dialog pops up, and/or you notice a student
-missing their own PDF), the full detail on *why* -- not just the short
-summary the dialog has room for, the complete error and a traceback of
-exactly which call failed -- is always saved to `Answer Extractor - Last
-Run Warnings.txt` on your Desktop, overwritten each run. A transient
-network error (e.g. "the read operation timed out") almost always just
-needs a re-drop of that one file; anything else in that file (no
-matching Drive template, a cancelled prompt, ...) explains itself.
-
 This program lives in the `answer_extractor/` subdirectory of the
 `tomschneible/Work` repo (a monorepo -- other unrelated programs may live
 in sibling directories at the repo root). All commands and paths below
