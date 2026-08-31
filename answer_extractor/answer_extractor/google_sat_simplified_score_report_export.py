@@ -35,12 +35,12 @@ from .template_lookup import find_file_by_exact_name, find_template_file, resolv
 
 # The one simplified template's own exact file name in Drive -- see this
 # module's own docstring for why there's only one, not one per test code.
-SIMPLIFIED_TEMPLATE_NAME = "DSAT Simplified Template"
-# A subfolder of its own under the templates root (not just "SAT" itself,
-# where the current-format templates live) so find_template_file's own
-# test-code substring matching there is never at risk of also matching
-# this file by accident.
-SIMPLIFIED_TEMPLATE_CATEGORY_PATH = ["SAT", "Simplified"]
+SIMPLIFIED_TEMPLATE_NAME = "DSAT TEMPLATE"
+# A folder of its own directly under the templates root, a sibling of
+# "SAT" (not a subfolder of it) -- so find_template_file's own
+# substring-against-test-code matching inside "SAT" itself is never at
+# risk of also matching this file by accident.
+SIMPLIFIED_TEMPLATE_CATEGORY_PATH = ["SAT Template"]
 
 
 def _load_reference_worksheet(

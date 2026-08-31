@@ -757,14 +757,15 @@ which specific test it's grading, so there's exactly one of it, reused
 for every student regardless of test code -- not duplicated the way the
 current-format templates are.
 `google_sat_simplified_score_report_export.SIMPLIFIED_TEMPLATE_NAME`
-(currently `"DSAT Simplified Template"`) is found by exact name, in its
-own `SAT/Simplified` subfolder so
-`find_template_file`'s own substring-against-test-code matching in
-`SAT/` itself is never at risk of also matching it. If a differently-
-shaped exam ever needs its own version (PSAT 10 and PSAT 8/9 run
-shorter modules than the full digital SAT) that becomes a small, fixed
-set of named templates and a lookup keyed off whatever already
-distinguishes them -- still nowhere near one per test code.
+(currently `"DSAT TEMPLATE"`) is found by exact name, in its own `SAT
+Template` folder -- a sibling of `SAT`, directly under the templates
+root, not a subfolder of it -- so `find_template_file`'s own
+substring-against-test-code matching inside `SAT/` itself is never at
+risk of also matching it. If a differently-shaped exam ever needs its
+own version (PSAT 10 and PSAT 8/9 run shorter modules than the full
+digital SAT) that becomes a small, fixed set of named templates and a
+lookup keyed off whatever already distinguishes them -- still nowhere
+near one per test code.
 
 **Building the template itself:** same general shape as the
 current-format one's own blocks (a title, then a header row with
