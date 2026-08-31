@@ -858,11 +858,30 @@ Also confirmed live: `write_cells`' own batched `values().batchUpdate()`
 fails *entirely* if even one cell in the batch hits a protected range
 (a 400, "You are trying to edit a protected cell or object"), which
 silently hides whether anything else in the same batch would also be
-blocked -- this repair writes one cell at a time instead (see
-`google_sheets_cli.py`'s own docstring), so a protected range shows up
-as an individually-reported failure per cell rather than an opaque
-whole-batch error. If you hit this, check Data -> Protected sheets and
-ranges on the target file.
+blocked. Writing one cell at a time instead fixed that -- but then hit a
+*second* problem, also confirmed live: 216 individual write requests
+with nothing pacing them reliably exceeds Sheets' own 60-writes-per-
+minute-per-user quota (`WriteRequestsPerMinutePerUser`) well before
+finishing -- a real run got 61/216 done before every remaining write
+started coming back `429 RATE_LIMIT_EXCEEDED`.
+
+Fixed by writing in chunks of 20 cells per `batchUpdate` call instead of
+either extreme: one call for everything (216 cells, at most 20% larger
+than what already failed once to a single protected cell) or one call
+per cell (216 requests, well over the per-minute quota). Chunking keeps
+the common case (nothing protected) to about a dozen requests total --
+comfortably under that quota with no pacing needed at all -- while still
+falling back to one write per cell, but *only* for whichever chunk
+itself failed, to isolate exactly which cell(s) in it are the problem --
+the same guarantee the all-individual approach existed to provide, at a
+fraction of the request count. A `429` hit at either level (a chunk, or
+an individual fallback write) is retried automatically with a cooldown
+a little over Sheets' own 60-second quota window, up to a few times,
+before being reported as still rate-limited -- kept distinct in the
+final summary from a genuine protected-cell report, since the fix for
+each is different: just re-run the command for the former (already-
+repaired cells are harmless to write again), change protection in
+Sheets (Data -> Protected sheets and ranges) for the latter.
 
 ```bash
 python -m answer_extractor.google_sheets_cli repair-simplified-calculations \
