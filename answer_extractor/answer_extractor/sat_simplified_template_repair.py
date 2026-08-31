@@ -34,22 +34,29 @@ the simplified template's own Module 2 slot has no flag cell at all
 (there's only ever one occurrence, always administered, nothing to
 gate), so there's nothing left to check.
 
-`repair_calculations_writes` finds every formula in a *reference*
-workbook (any real current-format template -- this scheme is the same
-across every one, not test-specific) matching that flag-gated shape,
-wherever it is (not hardcoded to specific rows: confirmed against a real
-template, 92 cells across "Student Responses" and "Calculations"), and
-returns the repaired version of each as a CellWrite at the *same*
-(sheet, row, column) -- the simplified template's own Domain/Skill label
-columns are confirmed identical in position to the current-format
+`repair_calculations_writes` finds every formula worth restoring in a
+*reference* workbook (any real current-format template -- this scheme is
+the same across every one, not test-specific), not hardcoded to specific
+rows, and returns the repaired version of each as a CellWrite at the
+*same* (sheet, row, column) -- the simplified template's own Domain/Skill
+label columns are confirmed identical in position to the current-format
 template's (both are College Board's own fixed content taxonomy, not
-per-test content), so a straight positional copy is safe. Push the
-result via google_sheets_export.write_cells (its own USER_ENTERED value
-input option means a string starting with "=" lands as a live formula,
-not literal text) directly against the simplified template file --
-never through an .xlsx download/re-upload round trip (see
-google_sheets_export.py's own module docstring, and hide_gridlines' own,
-for why that already corrupted a template once).
+per-test content), so a straight positional copy is safe. Its own
+docstring covers exactly what counts as "worth restoring" and why that's
+deliberately a *wider* net on "Calculations" than everywhere else: a
+first version of this only looked for the flag-gated shape specifically
+(confirmed against a real template, 92 cells that way), which missed
+"Calculations"' own non-flag-gated formulas (e.g. "% of Section",
+`=C2/54`) that got cleared in the very same pass but never referenced a
+flag cell to be caught by that narrower search -- confirmed live, this
+is what a real export's own "0% of section" (instead of the real
+percentage) turned out to be, even after the first 92 were confirmed
+fixed. Push the result via google_sheets_export.write_cells (its own
+USER_ENTERED value input option means a string starting with "=" lands
+as a live formula, not literal text) directly against the simplified
+template file -- never through an .xlsx download/re-upload round trip
+(see google_sheets_export.py's own module docstring, and hide_gridlines'
+own, for why that already corrupted a template once).
 
 Run this once against the simplified template. If a new current-format
 template ever changes this formula scheme, or the simplified template's
@@ -120,18 +127,57 @@ def repair_calculations_writes(reference_wb: Workbook) -> List[CellWrite]:
     read-only via openpyxl -- e.g. `openpyxl.load_workbook(path,
     data_only=False)`; `data_only=False` matters here, unlike most other
     readers in this package, since this needs each cell's own formula
-    text, not its last-cached value). Scans every sheet, not just
-    "Student Responses"/"Calculations" specifically -- confirmed against
-    a real template that both are affected; this doesn't assume no other
-    sheet ever is too. Raises ValueError (via repaired_formula) if any
-    matching formula doesn't repair cleanly."""
+    text, not its last-cached value).
+
+    Two different scopes, deliberately not the same one everywhere:
+
+    - On "Calculations": *every* formula cell, not just ones matching
+      the flag-gated shape. Confirmed against a real template that
+      whoever built the simplified one cleared this whole sheet's own
+      B:E and K:N ranges in one pass, not just the specific cells that
+      referenced the deleted Module 2 columns -- e.g. "% of Section"
+      (`=C2/54`) never referenced a flag cell at all, so the first
+      version of this repair (which only found cells matching the
+      flag-gated shape) never touched it, and it stayed blank -- which
+      is what a real export's own "0% of section" (instead of the real
+      percentage) turned out to be. Safe to restore unconditionally:
+      confirmed this sheet holds no per-student data of its own at all,
+      only formulas and the same fixed Domain/Skill labels confirmed
+      identical in position to the current-format template's (College
+      Board's own content taxonomy, not per-test content) -- and
+      repaired_formula() is a no-op on a formula that was never
+      flag-gated to begin with (nothing for either regex to match),
+      not just on ones that are.
+    - Everywhere else (e.g. "Student Responses"): only formulas matching
+      the flag-gated shape -- deliberately still scoped this narrowly,
+      unlike "Calculations". "Student Responses" holds a real student's
+      own actual answers in `reference_wb`, and a *different* set of
+      formula cells that were never affected by the Module 2 column
+      deletions at all (each active block's own mark_col, e.g. D9:D35 --
+      confirmed still present and correct on the simplified template,
+      since narrowing this repair's own scope everywhere but
+      "Calculations" is exactly what keeps this from ever touching
+      them). The three non-canonical occurrences' own mark_col formulas
+      (Y/AF/AM, confirmed present in `reference_wb` too) are the one
+      category genuinely missing on the simplified template beyond what
+      this restores, and deliberately left alone: those columns' own
+      block no longer exists there at all, nothing on "Calculations" or
+      "Score Report" reads them any more (confirmed: neither has any
+      reference left to Y/AF/AM after repaired_formula's own dead-branch
+      removal), so restoring them would just be writing dead formulas
+      into columns nothing prints.
+
+    Raises ValueError (via repaired_formula) if any matching formula
+    doesn't repair cleanly."""
     writes: List[CellWrite] = []
     for sheet_name in reference_wb.sheetnames:
         ws = reference_wb[sheet_name]
         for row in ws.iter_rows():
             for cell in row:
                 value = cell.value
-                if not (isinstance(value, str) and value.startswith("=") and _FLAG_GATE_MARKER.search(value)):
+                if not (isinstance(value, str) and value.startswith("=")):
+                    continue
+                if sheet_name != "Calculations" and not _FLAG_GATE_MARKER.search(value):
                     continue
                 writes.append(CellWrite(sheet_name, cell.row, cell.column, repaired_formula(value)))
     return writes

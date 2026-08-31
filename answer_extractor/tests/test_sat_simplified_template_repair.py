@@ -76,18 +76,28 @@ def test_repair_calculations_writes_finds_and_repairs_every_matching_cell(tmp_pa
         "if('Student Responses'!O8=TRUE,countifs('Student Responses'!R9:R35,\"✔\","
         "'Student Responses'!S9:S35,\"I&I\"),0)"
     )
+    # Never flag-gated at all -- confirmed live this kind of formula was
+    # *also* cleared when the simplified template's "Calculations" sheet
+    # was built, and needs restoring too, even though it was never part
+    # of the broken-reference pattern in the first place.
+    calc["E2"] = "=C2/54"
     wb.save(str(path))
 
     reference_wb = openpyxl.load_workbook(path, data_only=False)
     writes = repair_calculations_writes(reference_wb)
 
-    assert len(writes) == 2
+    assert len(writes) == 3
     by_coord = {(w.sheet, w.row, w.column): w.value for w in writes}
     assert by_coord[("Student Responses", 26, 4)] == '=COUNTIF($K$9:$K$35, "✔")+COUNTIF($R$9:$R$35, "✔")'
     assert by_coord[("Calculations", 2, 2)] == (
         "=countifs('Student Responses'!K9:K35,\"✔\",'Student Responses'!L9:L35,\"I&I\")+"
         "countifs('Student Responses'!R9:R35,\"✔\",'Student Responses'!S9:S35,\"I&I\")"
     )
-    # A1 (not a formula) and A2 (a real formula, but not this pattern)
-    # never produced a write -- len(writes) == 2 above already confirms
-    # only the two matching cells did.
+    # Restored unchanged -- nothing for either regex to match, so
+    # repaired_formula is a no-op here, same as it would be on any other
+    # ordinary "Calculations" formula.
+    assert by_coord[("Calculations", 2, 5)] == "=C2/54"
+    # A1 (not a formula) and A2 (a real formula, on "Student Responses"
+    # rather than "Calculations", and not the flag-gated pattern) never
+    # produced a write -- len(writes) == 3 above already confirms only
+    # the three matching cells did.
