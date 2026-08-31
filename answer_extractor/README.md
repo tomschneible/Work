@@ -824,28 +824,82 @@ Fixed with a new one-time, Sheets-API-only repair
 (`sat_simplified_template_repair.py`, wired into
 `google_sheets_cli.py`'s `repair-simplified-calculations` command --
 same category as `hide-gridlines` above, a different problem) rather
-than hand-editing each broken cell: it reads every matching formula off
-a real, working *current-format* template (`--reference-file-id` --
-this formula scheme is the same across every current-format template,
-not test-specific, so any working one will do), drops the three dead
-branches and unwraps the one remaining flag check (the simplified
-template's Module 2 slot has no flag cell to gate on -- it's always the
-one administered), and writes the repaired version onto the simplified
-template (`--target-file-id`) at the same cell position -- confirmed
-the two templates' own Domain/Skill label rows line up exactly, so a
-positional copy is safe. Confirmed against a real template pair this
-finds and cleanly repairs 92 formulas (4 on "Student Responses", 88 on
-"Calculations"). Run this once per simplified template; not yet
-confirmed live (the transform itself was verified locally against a
-real, downloaded copy of both files -- pushing the result via the
-Sheets API directly hasn't been, the same status every fix in this
-saga starts at).
+than hand-editing each broken cell: it reads every formula worth
+restoring off a real, working *current-format* template
+(`--reference-file-id` -- this formula scheme is the same across every
+current-format template, not test-specific, so any working one will
+do), drops the three dead branches and unwraps the one remaining flag
+check wherever a formula has one (the simplified template's Module 2
+slot has no flag cell to gate on -- it's always the one administered),
+and writes the repaired version onto the simplified template
+(`--target-file-id`) at the same cell position -- confirmed the two
+templates' own Domain/Skill label rows line up exactly, so a positional
+copy is safe.
+
+Confirmed live in two rounds against a real template pair. First round
+(the flag-gated cells only) found and cleanly repaired 92 formulas (4
+on "Student Responses", 88 on "Calculations") -- confirmed live this
+landed correctly (all 92 succeeded once a protected range blocking the
+first attempt was lifted -- see below), and the exported report's
+question-level counts came out right. But its own summary percentages
+("% of Section," e.g. "0% of section, 10 out of 14 questions correct")
+were still wrong: `Calculations!E2` (`=C2/54`) never referenced a flag
+cell at all, so that first pass never found it, even though it was
+blanked in the very same pass that broke the flag-gated cells -- true
+of the whole "% Correct"/"% of Section" columns on both the Domain and
+Skill tables (confirmed nothing there is test-specific data, so
+restoring all of it unconditionally is safe). The repair now restores
+every formula on "Calculations" -- confirmed against the real reference
+file this is 216 formulas total (4 + 212, i.e. every formula cell that
+sheet has), not just the 92 that happen to reference the deleted
+columns directly.
+
+Also confirmed live: `write_cells`' own batched `values().batchUpdate()`
+fails *entirely* if even one cell in the batch hits a protected range
+(a 400, "You are trying to edit a protected cell or object"), which
+silently hides whether anything else in the same batch would also be
+blocked -- this repair writes one cell at a time instead (see
+`google_sheets_cli.py`'s own docstring), so a protected range shows up
+as an individually-reported failure per cell rather than an opaque
+whole-batch error. If you hit this, check Data -> Protected sheets and
+ranges on the target file.
 
 ```bash
 python -m answer_extractor.google_sheets_cli repair-simplified-calculations \
   --reference-file-id <a working current-format template's file id> \
   --target-file-id <the simplified template's own file id>
 ```
+
+### Two more things confirmed live against the same real export, not code fixes
+
+- **A "Notes" appendix page gets printed that shouldn't be.** Confirmed:
+  "Student Responses"' own I/J columns (Correct Answer/Your Answer,
+  around the Math section) carry real Google Sheets *cell comments* --
+  reminders like "Remember to put the = sign in front of fractions,"
+  meant for a person typing an answer in by hand so Sheets doesn't
+  auto-reformat a fraction. Once the program fills those cells directly
+  via the API, the comments are meaningless, but Sheets' PDF export
+  still prints every comment in the exported range as its own appendix
+  page if the print setup's own "Notes" option (File > Print >
+  Formatting) is turned on. Fix is in Sheets, not code: either turn that
+  option off for the simplified template specifically, or remove the
+  comments from its "Student Responses" tab (they're not read by
+  anything in this pipeline either way -- the current-format template's
+  own copy can keep them, since a human might still type into it by
+  hand).
+- **The cover page splitting across two PDF pages long predates the
+  simplified template.** Confirmed byte-for-byte identical between the
+  simplified template and a real current-format one's own "Cover Page"
+  tab -- nothing in this whole redesign has ever touched it, and this
+  export's own is exactly the same shape a current-format export's
+  always has been. Its own layout: real content (name/date/test) in
+  rows 24-46, then nothing until a footer/disclaimer at row 60 -- a
+  ~13-row gap that reads as intentional (a footer anchored near a
+  standard page's own bottom margin) rather than a structural bug, but
+  it is what pushes the footer onto its own mostly-blank second page.
+  Not investigated further -- pre-existing, not a regression from
+  anything here, and this project has no code path that touches "Cover
+  Page" at all.
 
 ## macOS drag-and-drop app
 
