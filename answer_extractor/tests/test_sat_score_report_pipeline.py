@@ -1,3 +1,4 @@
+import datetime as dt
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,31 +75,39 @@ def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path)
         _row(3, 1, "Math", "B", "Module 1"),
         _row(4, 1, "Math", "D", "Module 2 (Easier)"),
     ]
-    # Prompts fire in sorted-subject order -- "math" before "reading and writing".
-    prompt_fn = MagicMock(side_effect=["620", "590"])
+    # First prompt is the test date (see gui_prompt.py's own module
+    # docstring for why this isn't scan.test_date any more), then scores
+    # fire in _SUBJECT_PROMPT_ORDER -- Reading and Writing before Math
+    # (the exam's own section order), not alphabetically ("math" <
+    # "reading and writing" would otherwise put Math first).
+    prompt_fn = MagicMock(side_effect=["3/8/2026", "590", "620"])
 
     with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake") as export_mock:
         pdf_path = export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
     assert pdf_path == tmp_path / "Student, Jane 2027 DSAT 8 March 8 2026.pdf"
     assert pdf_path.read_bytes() == b"%PDF-fake"
-    assert prompt_fn.call_count == 2
+    assert prompt_fn.call_count == 3
+    assert "test date" in prompt_fn.call_args_list[0][0][0]  # prompted first
+    assert "Reading" in prompt_fn.call_args_list[1][0][0]  # prompted second
+    assert "Math" in prompt_fn.call_args_list[2][0][0]  # prompted third
 
     kwargs = export_mock.call_args.kwargs
     assert kwargs["test_code"] == "8"
     assert kwargs["student_name"] == "Jane Student"
+    assert kwargs["test_date"] == dt.date(2026, 3, 8)  # the prompted date, not the filename's own
     assert kwargs["active_variants"] == {"reading and writing": "harder", "math": "easier"}
     assert kwargs["section_scores"] == {"reading and writing": 590, "math": 620}
 
 
 def test_export_sat_report_reprompts_on_invalid_input_before_succeeding(tmp_path):
     rows = [_row(1, 1, "Math", "B", "Module 1")]
-    prompt_fn = MagicMock(side_effect=["not a number", "9999", "620"])
+    prompt_fn = MagicMock(side_effect=["3/8/2026", "not a number", "9999", "620"])
 
     with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake"):
         export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
-    assert prompt_fn.call_count == 3
+    assert prompt_fn.call_count == 4
 
 
 def test_export_sat_report_raises_when_a_prompt_is_cancelled(tmp_path):

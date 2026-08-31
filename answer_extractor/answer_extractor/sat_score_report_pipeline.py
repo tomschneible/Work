@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from googleapiclient.discovery import Resource
 
 from .google_sat_simplified_score_report_export import export_simple_sat_score_report
-from .gui_prompt import prompt_for_text
+from .gui_prompt import prompt_for_date, prompt_for_text
 from .sat_score_report_writer import SatKey, normalize_subject
 from .scan_filename import parse_scan_filename
 from .score_report import ScoreReportRow
@@ -31,6 +31,13 @@ _MODULE_LABEL_PATTERN = re.compile(
     r"^Module\s+(?P<num>\d+)(?:\s*\((?P<qualifier>Easier|Harder)\))?\s*$", re.IGNORECASE
 )
 _SCORE_MIN, _SCORE_MAX = 200, 800
+# Prompt order for _prompt_for_section_score -- Reading and Writing before
+# Math, matching the exam's own section order (this is the order the
+# student actually sat them in, not alphabetical -- a plain sorted() on
+# normalize_subject's own values put Math first, "math" < "reading and
+# writing", which is backwards from what anyone entering scores in the
+# order the actual score report lists them would expect).
+_SUBJECT_PROMPT_ORDER = ["reading and writing", "math"]
 
 
 def _module_slot_for_label(label: str, section: str) -> str:
@@ -130,18 +137,26 @@ def export_sat_report(
     to export_simple_sat_score_report (see
     google_report_export_common.export_filled_report).
 
-    Prompts once per subject present in `rows` for its scaled section
-    score via `prompt_fn` (a native macOS dialog by default -- see
-    gui_prompt.py), since nothing upstream can compute or extract that
-    value yet (see sat_simplified_score_report_writer.fill_simple_sat_score_report's
-    docstring). Raises ValueError if `rows` is empty, its source
+    Prompts once for the actual test date, then once per subject present
+    in `rows` for its scaled section score, both via `prompt_fn` (a
+    native macOS dialog by default -- see gui_prompt.py) -- the date
+    because this org's own scan/upload filenames turned out not to
+    reliably carry it as trustworthy *data* even when they parse cleanly
+    (see gui_prompt.py's own module docstring for why this moved off
+    scan_filename.ScanFilename.test_date), the section scores because
+    nothing upstream can compute or extract that value at all (see
+    sat_simplified_score_report_writer.fill_simple_sat_score_report's
+    docstring) -- in `_SUBJECT_PROMPT_ORDER` (Reading and Writing, then
+    Math, the exam's own section order), not alphabetically. Raises
+    ValueError if `rows` is empty, its source
     filename isn't an ACT/DSAT/SAT-shaped name for the SAT family, a
-    section's Module 2 difficulty couldn't be identified, or a score
-    prompt was cancelled -- callers processing a batch should catch this
-    per-student and fall back (e.g. into the combined .xlsx export) with
-    a warning, rather than letting one incomplete or unidentified report
-    fail the whole run, the same posture score_report_pipeline.py's
-    export_sheet_report already takes toward a bubble sheet.
+    section's Module 2 difficulty couldn't be identified, or the date or
+    a score prompt was cancelled -- callers processing a batch should
+    catch this per-student and fall back (e.g. into the combined .xlsx
+    export) with a warning, rather than letting one incomplete or
+    unidentified report fail the whole run, the same posture
+    score_report_pipeline.py's export_sheet_report already takes toward a
+    bubble sheet.
     """
     if not rows:
         raise ValueError("No rows given")
@@ -153,10 +168,17 @@ def export_sat_report(
 
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
-    test_date = scan.test_date if scan.day_known else scan.formatted_test_date
+    # Not scan.test_date/formatted_test_date any more -- see gui_prompt.py's
+    # own module docstring for why the filename isn't trusted for this any
+    # more; canonical_filename() below still reads its own date from it
+    # unchanged, this is only about what's actually written into the report.
+    test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
+    if test_date is None:
+        raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
     base_name = scan.canonical_filename()
 
-    subjects = sorted({normalize_subject(row.section) for row in rows})
+    present_subjects = {normalize_subject(row.section) for row in rows}
+    subjects = [s for s in _SUBJECT_PROMPT_ORDER if s in present_subjects]
     section_scores: Dict[str, int] = {}
     for subject in subjects:
         score = _prompt_for_section_score(prompt_fn, scan.student_name, subject)

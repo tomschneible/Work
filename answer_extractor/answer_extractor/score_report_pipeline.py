@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from googleapiclient.discovery import Resource
 
 from .export import write_xlsx
 from .google_score_report_export import export_score_report
+from .gui_prompt import prompt_for_date, prompt_for_text
 from .pipeline import SheetResult
 from .scan_filename import ScanFilename, parse_scan_filename
 from .scoresheet_grid import normalize_section
@@ -75,6 +76,7 @@ def export_sheet_report(
     templates_root_folder_id: str,
     result: SheetResult,
     output_dir: str | Path,
+    prompt_fn: Callable[[str, str], Optional[str]] = prompt_for_text,
     temp_folder_id: Optional[str] = None,
 ) -> ExportOutcome:
     """Produce this one sheet's score-report PDF -- and, if it has review
@@ -82,13 +84,25 @@ def export_sheet_report(
     `temp_folder_id` is passed straight through to export_score_report
     (see google_report_export_common.export_filled_report).
 
+    Prompts once for the actual test date via `prompt_fn` (a native macOS
+    dialog by default -- see gui_prompt.py) -- not
+    scan.test_date/formatted_test_date any more: this org's own scan/
+    upload filenames turned out not to reliably carry the real test date
+    as trustworthy *data* even when they parse cleanly (see gui_prompt.py's
+    own module docstring for the full reasoning, and
+    sat_score_report_pipeline.export_sat_report for the same change on the
+    SAT/DSAT side). output_base_name's own output-file naming convention
+    still reads its date from the input filename, unchanged -- only what's
+    actually written into the report moved off it.
+
     Raises ValueError (from scan_filename.parse_scan_filename or
     template_lookup, surfaced through export_score_report) if the sheet's
-    own filename doesn't match the expected naming convention, or no
-    matching Drive template can be found. Callers processing a batch
-    should catch this per-sheet rather than letting one bad filename fail
-    the whole run -- the same posture process_path_auto already takes
-    toward a sheet whose template can't be identified.
+    own filename doesn't match the expected naming convention, no
+    matching Drive template can be found, or the date prompt was
+    cancelled. Callers processing a batch should catch this per-sheet
+    rather than letting one bad filename (or a cancelled prompt) fail the
+    whole run -- the same posture process_path_auto already takes toward
+    a sheet whose template can't be identified.
     """
     output_dir = Path(output_dir)
     if result.template_name not in _TEMPLATE_NAME_TO_CATEGORY_PATH:
@@ -100,7 +114,9 @@ def export_sheet_report(
     category_path = _TEMPLATE_NAME_TO_CATEGORY_PATH[result.template_name]
     flagged = result.has_review_items
     base_name = output_base_name(scan, flagged)
-    test_date = scan.test_date if scan.day_known else scan.formatted_test_date
+    test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
+    if test_date is None:
+        raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
 
     pdf_bytes = export_score_report(
         drive=drive,

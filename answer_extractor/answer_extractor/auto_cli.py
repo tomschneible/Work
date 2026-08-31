@@ -282,7 +282,9 @@ def main(argv: list[str] | None = None) -> int:
             for r in to_export:
                 try:
                     exported.append(
-                        export_sheet_report(drive, sheets, templates_root_folder_id, r, output_dir, temp_folder_id)
+                        export_sheet_report(
+                            drive, sheets, templates_root_folder_id, r, output_dir, temp_folder_id=temp_folder_id
+                        )
                     )
                 except Exception as exc:
                     print(

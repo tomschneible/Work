@@ -322,13 +322,33 @@ worked, or to look around the folder tree while debugging.
    confidence signal to flag on (a parsed PDF's answers are just correct
    text extraction, not an OMR read), but it does need one piece of input
    nothing upstream can supply: each subject's scaled section score,
-   which a native macOS dialog prompts for once per report (see
+   which a native macOS dialog prompts for once per report, in the exam's
+   own section order (Reading and Writing, then Math -- `_SUBJECT_PROMPT_
+   ORDER`, not alphabetical, which would ask for Math first) (see
    `gui_prompt.py`, and `sat_score_report_pipeline.py`'s
    `answers_from_rows`/`active_variants_from_rows`/`export_sat_report` for
    the rest of that glue). Cancelling a prompt, or a Module 2 whose
    difficulty couldn't be confidently identified, falls that report back
    to the combined `.xlsx` the same as any other export failure.
-5. **A SAT/DSAT report only shows the Module 2 variant actually
+5. **The test date is prompted for too, program-wide -- not read from the
+   file's own name any more.** Used to come straight from
+   `scan_filename.parse_scan_filename`'s own `test_date`/`day_known`
+   (`ScanFilename`'s only source for anything, including this): confirmed
+   this org's own filenames don't reliably carry the *real* test date as
+   trustworthy data even when they parse cleanly (a scan/upload date, a
+   placeholder, or just whatever the person renaming it remembered, not
+   necessarily the actual test date) -- an inconsistency in what people
+   put there, not a parsing failure. `gui_prompt.prompt_for_date` (same
+   native-dialog mechanism as the section-score prompt, re-prompting on
+   anything that isn't a real M/D/YYYY date, e.g. "3/8/2026") replaces it
+   for both `score_report_pipeline.export_sheet_report` (ACT) and
+   `sat_score_report_pipeline.export_sat_report` (SAT/DSAT) -- prompted
+   once per report, before any section-score prompts on the SAT side.
+   `ScanFilename.canonical_filename`'s own *output-file naming*
+   convention is untouched by this and still reads its date from the
+   input filename -- only what's actually written into the report as the
+   Test Date moved off it.
+6. **A SAT/DSAT report only shows the Module 2 variant actually
    administered -- and always in the same place.** The template ships
    with two same-difficulty pairs of Module 2 blocks per subject (Higher
    x2, Lower x2 -- see `sat_score_report_writer.py`'s own module
@@ -691,7 +711,7 @@ worked, or to look around the folder tree while debugging.
      for the exact same reason the table is, and should move right along
      with it once that's fixed, without needing a fix of its own beyond
      what's already here.
-6. **Where files land, and how they're named.** PDFs (and any flagged
+7. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
    report's own filename (and the kept Google Sheet working copy behind

@@ -1,3 +1,4 @@
+import datetime as dt
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -57,9 +58,10 @@ def test_output_base_name_appends_flag_suffix_only_when_flagged():
 def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
+    prompt_fn = MagicMock(return_value="3/8/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
-        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
     assert outcome.pdf_path == tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf"
     assert outcome.pdf_path.read_bytes() == b"%PDF-fake"
@@ -70,17 +72,23 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     assert kwargs["category_path"] == ["ACT", "Enhanced"]
     assert kwargs["test_code"] == "25MC1"
     assert kwargs["student_name"] == "Jane Student"
-    assert kwargs["test_date"] == parse_scan_filename(result.label).test_date
+    # The prompted date, not the filename's own (parse_scan_filename(result.label).test_date
+    # would be January 17 2026 here) -- see gui_prompt.py's own module docstring for why.
+    assert kwargs["test_date"] == dt.date(2026, 3, 8)
     assert kwargs["output_name"] == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+    # output_name/canonical_filename still reads its own date from the
+    # input filename, unchanged -- confirmed by the pdf_path assertion
+    # above still naming the file after "January 17 2026", not "3/8/2026".
 
 
 def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_review_items(tmp_path):
     questions = [QuestionResult("English", 1, "", [], {}, low_confidence=False)]  # blank -> has_review_items
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
     assert result.has_review_items
+    prompt_fn = MagicMock(return_value="3/8/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
-        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
     assert outcome.pdf_path.name == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG.pdf"
     assert outcome.xlsx_path is not None
@@ -88,14 +96,31 @@ def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_rev
     assert outcome.xlsx_path.exists()  # write_xlsx actually ran, not mocked
 
 
-def test_export_sheet_report_passes_a_formatted_string_when_the_day_is_unknown(tmp_path):
+def test_export_sheet_report_uses_the_prompted_date_even_when_the_filename_has_no_day(tmp_path):
+    """Confirmed this org's own filenames don't reliably carry a
+    trustworthy test date even when they parse cleanly (see gui_prompt.py's
+    own module docstring) -- the prompted date is what's written into the
+    report regardless of whether the filename's own day is known at all;
+    a missing day no longer falls back to a "Month Year" string the way
+    scan.formatted_test_date used to produce."""
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions)  # no day
+    prompt_fn = MagicMock(return_value="3/8/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
-        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path)
+        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
-    assert export_mock.call_args.kwargs["test_date"] == "January 2026"
+    assert export_mock.call_args.kwargs["test_date"] == dt.date(2026, 3, 8)
+
+
+def test_export_sheet_report_raises_when_the_date_prompt_is_cancelled(tmp_path):
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
+    prompt_fn = MagicMock(return_value=None)  # Cancel button, or osascript unavailable
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
+        with pytest.raises(ValueError, match="[Nn]o test date"):
+            export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
 
 def test_export_sheet_report_raises_a_clear_error_for_an_unrecognized_template(tmp_path):
