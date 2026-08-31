@@ -79,6 +79,26 @@ jobs, deliberately combined into one command you run locally:
     python -m answer_extractor.google_sheets_cli repair-simplified-calculations \\
       --reference-file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK --target-file-id 1AbCdEfGhIjKlMnOpQrS
 
+  5. Clear leftover hand-grading Notes off the simplified SAT template's
+     own "Student Responses" cells, via sat_simplified_template_repair.
+     find_note_cells + google_sheets_export.clear_notes -- the same
+     category of one-time, Sheets-API-only template fix as hide-gridlines
+     and repair-simplified-calculations, for a third, unrelated problem:
+     confirmed against the real template, 8 cells there still carry
+     reminder notes (e.g. "Remember to put the = sign in front of
+     fractions") meant for a person typing an answer in by hand -- these
+     do nothing once the program fills those cells via the API, but
+     Sheets' own PDF export still appends every note in the printed range
+     as its own extra "Notes" page. Downloads the target itself read-only
+     first (no separate reference file needed, unlike command 4 above --
+     this only needs to know where the target's *own* notes already are)
+     to find them, then clears them live. Run once against the master
+     template so every future per-student duplicate inherits having none
+     to print at all. Takes one or more --file-id values, same batch/
+     per-file failure handling as hide-gridlines.
+
+    python -m answer_extractor.google_sheets_cli clear-notes --file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
+
 The folder/file id is the long token in a Drive URL:
 https://drive.google.com/drive/folders/<this part>?usp=drive_link
 https://docs.google.com/spreadsheets/d/<this part>/edit
@@ -96,8 +116,16 @@ from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 from openpyxl.utils import get_column_letter
 
-from .google_sheets_export import CellWrite, build_services, export_xlsx, hide_gridlines, list_folder, write_cells
-from .sat_simplified_template_repair import repair_calculations_writes
+from .google_sheets_export import (
+    CellWrite,
+    build_services,
+    clear_notes,
+    export_xlsx,
+    hide_gridlines,
+    list_folder,
+    write_cells,
+)
+from .sat_simplified_template_repair import find_note_cells, repair_calculations_writes
 
 # repair-simplified-calculations' own write chunking/retry -- see
 # _write_with_rate_limit_retry and _is_rate_limit_error below, and this
@@ -188,6 +216,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="The simplified SAT template to fix directly (not a copy)",
     )
 
+    clear_notes_parser = subparsers.add_parser(
+        "clear-notes",
+        help="Remove leftover hand-grading Notes from the simplified SAT template's own cells",
+    )
+    clear_notes_parser.add_argument(
+        "--file-id",
+        required=True,
+        nargs="+",
+        help="One or more Drive file ids of the simplified templates to fix directly (not copies)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "list-folder":
@@ -275,6 +314,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "again.",
                 file=sys.stderr,
             )
+        return 1 if failures else 0
+
+    if args.command == "clear-notes":
+        drive, sheets = build_services()
+        failures = 0
+        for file_id in args.file_id:
+            try:
+                wb = openpyxl.load_workbook(io.BytesIO(export_xlsx(drive, file_id)), data_only=False)
+                cells = find_note_cells(wb)
+                if not cells:
+                    print(f"No notes found on {file_id} -- nothing to clear.")
+                    continue
+                clear_notes(sheets, file_id, cells)
+            except Exception as exc:
+                failures += 1
+                print(f"Warning: couldn't clear notes on {file_id}: {exc}", file=sys.stderr)
+            else:
+                print(f"Cleared {len(cells)} note(s) from {file_id}.")
+        if len(args.file_id) > 1:
+            print(f"{len(args.file_id) - failures}/{len(args.file_id)} succeeded.")
         return 1 if failures else 0
 
     return 1

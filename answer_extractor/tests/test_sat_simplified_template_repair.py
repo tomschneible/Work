@@ -1,8 +1,10 @@
 import openpyxl
 import pytest
+from openpyxl.comments import Comment
 
 from answer_extractor.google_sheets_export import CellWrite
 from answer_extractor.sat_simplified_template_repair import (
+    find_note_cells,
     repair_calculations_writes,
     repaired_formula,
 )
@@ -101,3 +103,32 @@ def test_repair_calculations_writes_finds_and_repairs_every_matching_cell(tmp_pa
     # rather than "Calculations", and not the flag-gated pattern) never
     # produced a write -- len(writes) == 3 above already confirms only
     # the three matching cells did.
+
+
+def test_find_note_cells_finds_every_commented_cell_across_every_sheet():
+    wb = openpyxl.Workbook()
+    sr = wb.active
+    sr.title = "Student Responses"
+    sr["I46"].comment = Comment("Remember to put the = sign in front of fractions", "Author")
+    sr["J46"].comment = Comment("Remember to put the = sign in front of fractions", "Author")
+    sr["A1"] = "not commented -- an ordinary value"
+
+    # Not hardcoded to "Student Responses" -- see this function's own
+    # docstring for why a different sheet's own note still needs finding.
+    other = wb.create_sheet("Cover Page")
+    other["B2"].comment = Comment("A note somewhere else entirely", "Author")
+
+    found = find_note_cells(wb)
+
+    assert set(found) == {
+        ("Student Responses", 45, 8),  # I46 -- 0-indexed: row 45, column 8 (I is the 9th column)
+        ("Student Responses", 45, 9),  # J46 -- column 9 (J is the 10th column)
+        ("Cover Page", 1, 1),  # B2
+    }
+
+
+def test_find_note_cells_returns_nothing_for_a_workbook_with_no_notes():
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "plain value, no comment"
+
+    assert find_note_cells(wb) == []

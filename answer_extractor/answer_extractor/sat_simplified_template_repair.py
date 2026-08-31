@@ -1,9 +1,11 @@
-"""One-time repair for the simplified SAT template's own "Calculations"
-and "Student Responses" formulas -- not part of the per-student export
-pipeline at all: a maintenance operation run directly against the
-template file itself, the same category google_sheets_cli.py's
-hide-gridlines command already covers for a different template-level
-fix (see that module's own docstring).
+"""One-time repairs for the simplified SAT template itself -- its own
+"Calculations"/"Student Responses" formulas (repair_calculations_writes),
+and leftover hand-grading Notes on "Student Responses" (find_note_cells).
+Neither is part of the per-student export pipeline at all: both are
+maintenance operations run directly against the template file itself,
+the same category google_sheets_cli.py's hide-gridlines command already
+covers for a different template-level fix (see that module's own
+docstring).
 
 Why this exists: the current-format template's score-summary formulas
 (a subject's total correct/incorrect count on "Student Responses", and
@@ -66,7 +68,7 @@ template's, re-run it against a matching pair.
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Tuple
 
 from openpyxl.workbook import Workbook
 
@@ -181,3 +183,45 @@ def repair_calculations_writes(reference_wb: Workbook) -> List[CellWrite]:
                     continue
                 writes.append(CellWrite(sheet_name, cell.row, cell.column, repaired_formula(value)))
     return writes
+
+
+def find_note_cells(wb: Workbook) -> List[Tuple[str, int, int]]:
+    """Every cell in `wb` carrying a Sheets *Note* -- the plain, single,
+    non-threaded annotation you get from right-click "Insert note" (not
+    Sheets' newer threaded "Comment" feature, which isn't part of the
+    Sheets API and isn't representable in xlsx at all -- an xlsx file has
+    only the one concept, which is what a Sheets Note round-trips to on
+    export/import, so there's no risk of confusing the two here).
+    openpyxl surfaces one as `cell.comment`. Returned as (sheet_name,
+    0-indexed row, 0-indexed column) tuples -- the shape
+    google_sheets_export.clear_notes' own Sheets API request needs;
+    openpyxl's own `cell.row`/`cell.column` are 1-indexed, so both are
+    adjusted by one. `wb` would typically be the *simplified* template's
+    own export_xlsx download (read-only, to locate the notes -- the same
+    file clear_notes then targets live), unlike repair_calculations_writes'
+    `reference_wb`, which is deliberately a *different*, working
+    current-format template -- clearing notes needs no reference at all,
+    just wherever the target file itself already has them.
+
+    Confirmed against the real simplified template: 8 such cells, all on
+    "Student Responses" (I46/J46, I59/J59, I60/J60, I62/J62 -- each pair
+    a hand-grading reminder like "Remember to put the = sign in front of
+    fractions," meant for a person typing an answer in by hand, carried
+    over from the current-format template this was built from). This is
+    what a real export's own unwanted extra "Notes" appendix page turned
+    out to be -- Sheets' PDF export appends every note in the printed
+    range as its own page if the print setup's own Formatting > Notes
+    option is on, and these 8 are meaningless once the program fills
+    those cells directly via the API. Not hardcoded to those coordinates
+    or to "Student Responses" specifically though, same reasoning as
+    repair_calculations_writes' own docstring gives for not hardcoding
+    rows/columns there: a different test's own template could plausibly
+    carry a note somewhere else, and scanning finds it regardless."""
+    found: List[Tuple[str, int, int]] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.comment is not None:
+                    found.append((sheet_name, cell.row - 1, cell.column - 1))
+    return found

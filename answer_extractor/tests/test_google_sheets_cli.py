@@ -1,10 +1,11 @@
-"""Tests for google_sheets_cli's `hide-gridlines` and
-`repair-simplified-calculations` commands -- `list-folder` and the
-OAuth-consent completion are thin, interactive/setup-only wrappers not
-covered here (see the module's own docstring). repair_calculations_writes'
-own transform logic is covered in test_sat_simplified_template_repair.py;
-these only check this command's own wiring (download, dispatch, write,
-report) -- including its own chunking and rate-limit retry around
+"""Tests for google_sheets_cli's `hide-gridlines`,
+`repair-simplified-calculations`, and `clear-notes` commands --
+`list-folder` and the OAuth-consent completion are thin, interactive/
+setup-only wrappers not covered here (see the module's own docstring).
+repair_calculations_writes' and find_note_cells' own transform logic is
+covered in test_sat_simplified_template_repair.py; these only check each
+command's own wiring (download, dispatch, write, report) -- including
+repair-simplified-calculations' own chunking and rate-limit retry around
 write_cells (_write_with_rate_limit_retry, _is_rate_limit_error)."""
 import io
 from unittest.mock import MagicMock, patch
@@ -278,3 +279,67 @@ def test_is_rate_limit_error_is_true_only_for_a_real_429_http_error():
     assert _is_rate_limit_error(_http_error(429)) is True
     assert _is_rate_limit_error(_http_error(400)) is False  # a real HttpError, wrong status
     assert _is_rate_limit_error(Exception("Invalid data[0]: protected cell")) is False  # not an HttpError at all
+
+
+def test_clear_notes_command_downloads_the_target_and_clears_its_notes(capsys):
+    fake_cells = [("Student Responses", 45, 8), ("Student Responses", 45, 9)]
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()) as export_mock, \
+         patch(f"{_MODULE}.find_note_cells", return_value=fake_cells) as find_mock, \
+         patch(f"{_MODULE}.clear_notes") as clear_mock:
+        exit_code = main(["clear-notes", "--file-id", "TEMPLATE_ID"])
+
+    assert exit_code == 0
+    assert export_mock.call_args[0][1] == "TEMPLATE_ID"  # downloaded read-only, to locate the notes
+    find_mock.assert_called_once()
+    assert clear_mock.call_args[0][1] == "TEMPLATE_ID"
+    assert clear_mock.call_args[0][2] == fake_cells
+    assert "Cleared 2 note(s) from TEMPLATE_ID." in capsys.readouterr().out
+
+
+def test_clear_notes_command_passes_the_sheets_service_not_drive():
+    sheets_service = MagicMock(name="sheets-service")
+    drive_service = MagicMock(name="drive-service")
+    with patch(f"{_MODULE}.build_services", return_value=(drive_service, sheets_service)), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()) as export_mock, \
+         patch(f"{_MODULE}.find_note_cells", return_value=[("Student Responses", 0, 0)]), \
+         patch(f"{_MODULE}.clear_notes") as clear_mock:
+        main(["clear-notes", "--file-id", "TEMPLATE_ID"])
+
+    assert export_mock.call_args[0][0] is drive_service  # export_xlsx takes drive, not sheets
+    assert clear_mock.call_args[0][0] is sheets_service  # clear_notes takes sheets, not drive
+
+
+def test_clear_notes_command_reports_when_nothing_to_clear_without_failing(capsys):
+    """Unlike repair-simplified-calculations' empty result (almost
+    certainly the wrong file), a template with no notes left is a
+    perfectly normal outcome -- e.g. this command already ran against it
+    once -- so this doesn't fail the run."""
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()), \
+         patch(f"{_MODULE}.find_note_cells", return_value=[]), \
+         patch(f"{_MODULE}.clear_notes") as clear_mock:
+        exit_code = main(["clear-notes", "--file-id", "TEMPLATE_ID"])
+
+    assert exit_code == 0
+    clear_mock.assert_not_called()
+    assert "No notes found on TEMPLATE_ID" in capsys.readouterr().out
+
+
+def test_clear_notes_command_keeps_going_past_one_files_failure_and_reports_it(capsys):
+    def _fake_export_xlsx(drive, file_id):
+        if file_id == "BAD_ID":
+            raise ValueError("nope")
+        return _xlsx_bytes()
+
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", side_effect=_fake_export_xlsx), \
+         patch(f"{_MODULE}.find_note_cells", return_value=[("Student Responses", 0, 0)]), \
+         patch(f"{_MODULE}.clear_notes"):
+        exit_code = main(["clear-notes", "--file-id", "GOOD_ID", "BAD_ID"])
+
+    assert exit_code == 1  # at least one failure -- worth a non-zero exit, same as hide-gridlines
+    result = capsys.readouterr()
+    assert "Cleared 1 note(s) from GOOD_ID." in result.out
+    assert "BAD_ID" in result.err and "nope" in result.err
+    assert "1/2 succeeded." in result.out

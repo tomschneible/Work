@@ -762,6 +762,62 @@ def delete_rows(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[st
     sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
 
+def clear_notes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int]]) -> None:
+    """Remove the Sheets *Note* (right-click "Insert note" -- the plain,
+    single, non-threaded annotation `CellData.note`; not the newer
+    threaded "Comment" feature, which is a Drive-level concept and isn't
+    part of the Sheets API at all) from each of `cells` -- (sheet_name,
+    0-indexed row, 0-indexed column) -- via one Sheets API `batchUpdate`
+    `repeatCell` request per cell, setting `note` to an empty string. A
+    no-op (no API call at all) if `cells` is empty.
+
+    Exists for the simplified SAT template's own "Student Responses" tab:
+    confirmed against the real template, 8 cells there still carry
+    hand-grading reminder notes (e.g. "Remember to put the = sign in
+    front of fractions") meant for a person typing an answer in by hand
+    -- meaningless once the program fills those cells directly via the
+    API, but Sheets' own PDF export still appends every note in the
+    printed range as its own extra "Notes" page if the print setup's own
+    Formatting > Notes option is on -- confirmed live, this is what a
+    real export's own unwanted extra page turned out to be (see
+    sat_simplified_template_repair.find_note_cells' own docstring for the
+    real coordinates this was confirmed against). Clearing the notes
+    outright fixes this regardless of whatever the target file's own
+    print setup has saved, and -- run once against the master simplified
+    template, same as hide_gridlines -- every future per-student
+    duplicate inherits having no notes to print at all, rather than
+    needing this run again per copy.
+
+    One `get` call resolves every sheet name to its numeric sheetId
+    first, since the batchUpdate request itself only accepts that, not a
+    name. Raises ValueError if a cell names a sheet this spreadsheet
+    doesn't have."""
+    if not cells:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, row, col in cells:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "startRowIndex": row,
+                        "endRowIndex": row + 1,
+                        "startColumnIndex": col,
+                        "endColumnIndex": col + 1,
+                    },
+                    "cell": {"note": ""},
+                    "fields": "note",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
 def hide_gridlines(sheets: Resource, spreadsheet_id: str) -> None:
     """Turn off gridlines on every sheet of `spreadsheet_id` that doesn't
     already have them off, via one Sheets API `batchUpdate` setting each

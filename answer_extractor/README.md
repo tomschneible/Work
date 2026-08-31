@@ -889,36 +889,73 @@ python -m answer_extractor.google_sheets_cli repair-simplified-calculations \
   --target-file-id <the simplified template's own file id>
 ```
 
-### Two more things confirmed live against the same real export, not code fixes
+### Clearing the simplified template's leftover Notes
 
-- **A "Notes" appendix page gets printed that shouldn't be.** Confirmed:
-  "Student Responses"' own I/J columns (Correct Answer/Your Answer,
-  around the Math section) carry real Google Sheets *cell comments* --
-  reminders like "Remember to put the = sign in front of fractions,"
-  meant for a person typing an answer in by hand so Sheets doesn't
-  auto-reformat a fraction. Once the program fills those cells directly
-  via the API, the comments are meaningless, but Sheets' PDF export
-  still prints every comment in the exported range as its own appendix
-  page if the print setup's own "Notes" option (File > Print >
-  Formatting) is turned on. Fix is in Sheets, not code: either turn that
-  option off for the simplified template specifically, or remove the
-  comments from its "Student Responses" tab (they're not read by
-  anything in this pipeline either way -- the current-format template's
-  own copy can keep them, since a human might still type into it by
-  hand).
-- **The cover page splitting across two PDF pages long predates the
-  simplified template.** Confirmed byte-for-byte identical between the
-  simplified template and a real current-format one's own "Cover Page"
-  tab -- nothing in this whole redesign has ever touched it, and this
-  export's own is exactly the same shape a current-format export's
-  always has been. Its own layout: real content (name/date/test) in
-  rows 24-46, then nothing until a footer/disclaimer at row 60 -- a
-  ~13-row gap that reads as intentional (a footer anchored near a
-  standard page's own bottom margin) rather than a structural bug, but
-  it is what pushes the footer onto its own mostly-blank second page.
-  Not investigated further -- pre-existing, not a regression from
-  anything here, and this project has no code path that touches "Cover
-  Page" at all.
+"Student Responses"' own I/J columns (Correct Answer/Your Answer, around
+the Math section) carry real Sheets *Notes* -- the plain, single,
+non-threaded annotation from right-click "Insert note" (not Sheets'
+newer threaded "Comment" feature, which isn't part of the Sheets API and
+isn't representable in xlsx at all): reminders like "Remember to put the
+= sign in front of fractions," meant for a person typing an answer in by
+hand so Sheets doesn't auto-reformat a fraction. Once the program fills
+those cells directly via the API, the notes are meaningless, but Sheets'
+PDF export still appends every note in the exported range as its own
+extra "Notes" page if the print setup's own Formatting > Notes option is
+on -- confirmed live, this is exactly what a real export's own unwanted
+extra page turned out to be.
+
+Fixed the same way as the two template-level repairs above -- a new
+one-time, Sheets-API-only command
+(`sat_simplified_template_repair.find_note_cells` +
+`google_sheets_export.clear_notes`, wired into `google_sheets_cli.py`'s
+`clear-notes` command) rather than turning off that print option or
+deleting the notes by hand: it downloads the target itself read-only
+(no separate reference file needed here, unlike
+`repair-simplified-calculations` -- this only needs to know where the
+target's *own* notes already are) to find every commented cell, then
+clears them live via the Sheets API. Confirmed against the real
+simplified template: 8 such cells, all on "Student Responses" (I46/J46,
+I59/J59, I60/J60, I62/J62). Run once against the master template so
+every future per-student duplicate inherits having none to print at all
+-- the current-format template's own copy is untouched either way, since
+a human might still type into it by hand.
+
+```bash
+python -m answer_extractor.google_sheets_cli clear-notes --file-id <the simplified template's own file id>
+```
+
+### The cover page splitting across two PDF pages
+
+Long predates the simplified template: confirmed byte-for-byte identical
+between the simplified template and a real current-format one's own
+"Cover Page" tab -- nothing in this whole redesign has ever touched it,
+and this export's own is exactly the same shape a current-format
+export's always has been. Its own layout: real content (name/date/test)
+in rows 24-46, then nothing until a footer/disclaimer at row 60 -- a
+~13-row gap that reads as intentional (a footer anchored near a standard
+page's own bottom margin) rather than a structural bug, but it is what
+pushes the footer onto its own mostly-blank second page.
+
+New evidence worth a second look, not yet acted on: manually printing
+the same (already-filled) Sheet via Sheets' own File > Print, rather
+than through `export_pdf`, was reported to show only 4 pages -- no
+Cover Page split -- for the identical content. If that holds up, this
+isn't a content/layout problem at all (the current-format template's
+"Page X of 4" footer text, still present verbatim on the simplified
+template's own Cover Page, already assumes a 4-page report), but a
+mismatch between `export_pdf`'s dedicated-but-undocumented export
+endpoint and Sheets' own interactive print rendering -- the same
+*category* of gap already documented on this endpoint (see its own
+docstring: Drive's generic export, which this replaced, had an
+analogous "fit to page" mismatch; even this dedicated endpoint's own
+pagination "isn't decided against a continuous post-scale pixel budget"
+the way `bottom_margin_in` assumed). Not chased further yet -- pending
+confirmation of exactly what the manual Print dialog's scope/settings
+were, and given a margin-based attempt at a related overflow was already
+tried and rejected once (see the narrow-factor history above: "makes the
+entire page get pulled down (no longer centered)"), this needs a
+concrete param-level fix in hand and live verification before touching
+`export_pdf` again, not another guess.
 
 ## macOS drag-and-drop app
 
