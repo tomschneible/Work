@@ -713,7 +713,7 @@ or one particular sheet/report fails to export on its own, that one falls
 back into the combined `.xlsx` with a warning -- never fails the whole
 batch.
 
-### The simplified SAT/DSAT template (not yet wired in)
+### The simplified SAT/DSAT template
 
 Everything in "How a scan becomes a report" above about Module 2 --
 `blocks_to_clear`, `columns_to_hide`, `hidden_columns_to_shrink`,
@@ -726,16 +726,21 @@ template with a single Module 2 slot per subject, filled in directly
 once the active variant is known, never needs any of that -- not a
 smaller version of the same machinery, none of it, by construction.
 
-This is in progress, not live yet: `sat_simplified_score_report_writer.py`
-and `google_sat_simplified_score_report_export.py` implement it, tested
-against synthetic fixtures the same way everything else here is, but
-`sat_score_report_pipeline.py` still calls the current-format path
-(`google_sat_score_report_export.export_sat_score_report`). Switching
-`export_sat_report` to `export_simple_sat_score_report` instead is a
-one-line import change with no argument changes (their signatures
-match) -- deliberately left until the template below actually exists in
-Drive, rather than risking today's working DSAT export against one that
-doesn't.
+This is the live path now: `sat_score_report_pipeline.py`'s own
+`export_sat_report` calls `google_sat_simplified_score_report_export.
+export_simple_sat_score_report`, not the current-format
+`google_sat_score_report_export.export_sat_score_report` any more.
+That older function (and `sat_score_report_writer.fill_sat_score_report`
+behind it) is still there, still tested, just no longer called from
+this pipeline -- kept rather than deleted in case the simplified path
+needs a fallback while its real template gets shaken out. Cut over
+before a live run against the real Drive file confirmed
+`fill_simple_sat_score_report`'s assumptions about the template's own
+internal layout (name placeholder, undecorated Module 2 title, header
+row shape, score-cell convention) -- a mismatch there fails loudly
+(a clear ValueError, e.g. "No name placeholder cell" or "No reference
+data for ...") rather than silently misplacing anything, but hasn't
+been confirmed live yet.
 
 **The current-format template's own role changes, but it doesn't go
 away.** It's still made once per test and still used for hand-grading,

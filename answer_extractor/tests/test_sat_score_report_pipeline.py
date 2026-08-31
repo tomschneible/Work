@@ -77,7 +77,7 @@ def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path)
     # Prompts fire in sorted-subject order -- "math" before "reading and writing".
     prompt_fn = MagicMock(side_effect=["620", "590"])
 
-    with patch(f"{_MODULE}.export_sat_score_report", return_value=b"%PDF-fake") as export_mock:
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake") as export_mock:
         pdf_path = export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
     assert pdf_path == tmp_path / "Student, Jane 2027 DSAT 8 March 8 2026.pdf"
@@ -95,7 +95,7 @@ def test_export_sat_report_reprompts_on_invalid_input_before_succeeding(tmp_path
     rows = [_row(1, 1, "Math", "B", "Module 1")]
     prompt_fn = MagicMock(side_effect=["not a number", "9999", "620"])
 
-    with patch(f"{_MODULE}.export_sat_score_report", return_value=b"%PDF-fake"):
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake"):
         export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 
     assert prompt_fn.call_count == 3
@@ -105,7 +105,7 @@ def test_export_sat_report_raises_when_a_prompt_is_cancelled(tmp_path):
     rows = [_row(1, 1, "Math", "B", "Module 1")]
     prompt_fn = MagicMock(return_value=None)
 
-    with patch(f"{_MODULE}.export_sat_score_report"):
+    with patch(f"{_MODULE}.export_simple_sat_score_report"):
         with pytest.raises(ValueError, match="cancelled"):
             export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
 

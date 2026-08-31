@@ -1,8 +1,11 @@
 """Bridge between score_report.py's ScoreReportRow objects (already run
 through answer_keys.annotate_rows) and the Drive-backed SAT score-report
-export (google_sat_score_report_export.py) -- the SAT counterpart to
-score_report_pipeline.py, which does the same job for bubble-sheet
-SheetResult objects.
+export (google_sat_simplified_score_report_export.py, the simplified
+template's own path -- see its module docstring, and
+sat_score_report_writer.py's README section, for why this moved off the
+current-format template's own google_sat_score_report_export.py) -- the
+SAT counterpart to score_report_pipeline.py, which does the same job for
+bubble-sheet SheetResult objects.
 
 Everything here operates on one student's rows at a time (all sharing one
 `.source` -- see score_report.group_by_source for splitting a batch), the
@@ -18,7 +21,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from googleapiclient.discovery import Resource
 
-from .google_sat_score_report_export import export_sat_score_report
+from .google_sat_simplified_score_report_export import export_simple_sat_score_report
 from .gui_prompt import prompt_for_text
 from .sat_score_report_writer import SatKey, normalize_subject
 from .scan_filename import parse_scan_filename
@@ -55,7 +58,8 @@ def _module_slot_for_label(label: str, section: str) -> str:
 
 def answers_from_rows(rows: List[ScoreReportRow]) -> Dict[SatKey, str]:
     """{(subject, module_slot, question): answer} for
-    google_sat_score_report_export.export_sat_score_report. Raises
+    google_sat_simplified_score_report_export.export_simple_sat_score_report.
+    Raises
     ValueError (via _module_slot_for_label) if any row's Module 2
     difficulty couldn't be confidently identified."""
     return {
@@ -123,13 +127,13 @@ def export_sat_report(
     `rows` -- every ScoreReportRow for one source file (see
     score_report.group_by_source), already run through
     answer_keys.annotate_rows. `temp_folder_id` is passed straight through
-    to export_sat_score_report (see
+    to export_simple_sat_score_report (see
     google_report_export_common.export_filled_report).
 
     Prompts once per subject present in `rows` for its scaled section
     score via `prompt_fn` (a native macOS dialog by default -- see
     gui_prompt.py), since nothing upstream can compute or extract that
-    value yet (see sat_score_report_writer.fill_sat_score_report's
+    value yet (see sat_simplified_score_report_writer.fill_simple_sat_score_report's
     docstring). Raises ValueError if `rows` is empty, its source
     filename isn't an ACT/DSAT/SAT-shaped name for the SAT family, a
     section's Module 2 difficulty couldn't be identified, or a score
@@ -160,7 +164,7 @@ def export_sat_report(
             raise ValueError(f"No {subject} score was entered for {scan.student_name} -- cancelled")
         section_scores[subject] = score
 
-    pdf_bytes = export_sat_score_report(
+    pdf_bytes = export_simple_sat_score_report(
         drive=drive,
         sheets=sheets,
         templates_root_folder_id=templates_root_folder_id,
