@@ -165,6 +165,67 @@ def test_fill_simple_sat_score_report_writes_name_date_answers_and_reference_dat
     assert result.deleted_row_ranges == ()
 
 
+def test_fill_simple_sat_score_report_regenerates_a_messy_module2_title(tmp_path):
+    """Confirmed against a real template: a Module 2 title cell isn't
+    reliably blank -- it can carry a placeholder ("R & W Module 2 -
+    (Enter Difficulty)") or even a stale, pre-baked difficulty ("Math
+    Module 2 - Higher Difficulty") left over from however the template
+    was built. Both must still be found (the title match is a prefix
+    match, ignoring whatever trails "Module 2") and both must come out
+    with a clean, correctly-regenerated title -- not the placeholder,
+    and not the stale difficulty left in place or doubled up, even when
+    (Math, here) it happens to name the *wrong* difficulty for this
+    particular student."""
+    template_path = tmp_path / "messy_template.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+    ws["A1"] = "Type name here, date below"
+    ws["A2"] = dt.datetime(2024, 1, 1)
+    _simple_block(ws, 1, "Reading and Writing Module 1", questions=[1])
+    _simple_block(ws, 8, "R & W Module 2 - (Enter Difficulty)", questions=[1])
+    _simple_block(ws, 15, "Math Module 1", questions=[1])
+    _simple_block(ws, 22, "Math Module 2 - Higher Difficulty", questions=[1])  # stale, and wrong for this student
+    wb.save(str(template_path))
+
+    reference_path = tmp_path / "reference_template.xlsx"
+    wb2 = openpyxl.Workbook()
+    ws2 = wb2.active
+    ws2.title = "Student Responses"
+    _reference_block(ws2, 1, "Reading and Writing Module 1", [(1, "A", "Craft and Structure", "Words in Context")])
+    _reference_block(
+        ws2, 8, "R & W Module 2 - Higher Difficulty", [(1, "C", "Expression of Ideas", "Rhetorical Synthesis")]
+    )
+    _reference_block(ws2, 15, "Math Module 1", [(1, "B", "Algebra", "Linear Equations")])
+    _reference_block(ws2, 22, "Math Module 2 - Lower Difficulty", [(1, "D", "Problem-Solving", "Ratios")])
+    wb2.save(str(reference_path))
+    reference_ws = openpyxl.load_workbook(reference_path)["Student Responses"]
+
+    result = fill_simple_sat_score_report(
+        template_path,
+        reference_ws,
+        answers={
+            ("reading and writing", "harder", 1): "C",
+            ("math", "easier", 1): "B",  # Lower -- despite the template's own stale text saying Higher; wrong answer
+        },
+        active_variants={"reading and writing": "harder", "math": "easier"},
+        student_name="Jane Student",
+        test_date=dt.date(2026, 3, 8),
+    )
+
+    # Regenerated from each block's own subject text (preserving the
+    # template author's own abbreviation, "R & W") plus the *actual*
+    # identified difficulty -- never the placeholder, and never Math's
+    # own stale "Higher" text.
+    assert _at(result, "H4") == "R & W Module 2 - Higher Difficulty"
+    assert _at(result, "V4") == "Math Module 2 - Lower Difficulty"
+    # The right answer/reference data landed regardless of which title
+    # text happened to be sitting there beforehand.
+    assert _at(result, "J6") == "C"
+    assert _at(result, "X6") == "B"  # this student's own (wrong) answer
+    assert _at(result, "W6") == "D"  # correct-answer key for Math's actual (Lower) variant, from reference_ws
+
+
 def test_fill_simple_sat_score_report_raises_for_an_inactive_variant_answer(tmp_path):
     template_path = tmp_path / "simple_template.xlsx"
     _write_simple_template(template_path)

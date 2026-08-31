@@ -9,13 +9,22 @@ repo's README "Google Sheets score reports" section for the whole
 narrow/hide/clear saga this sidesteps entirely by construction, not by
 patching around it).
 
-A block's title never carries a difficulty on the blank template itself
--- just "<Subject> Module 2", no "- Higher/Lower Difficulty" suffix, since
-that can't be known until a specific student's active variant is. This
-writes the identified difficulty onto the end of whatever title text the
-template already has there, rather than reconstructing the subject's own
-display text from scratch -- its capitalization/abbreviation is the
-template author's own choice, not something to guess at here.
+A block's title can't reliably carry the right difficulty on the blank
+template itself -- it isn't known until a specific student's active
+variant is -- so this always *regenerates* a Module 2 block's own title
+from its own subject text (e.g. "R & W", "Math" -- read once, verbatim,
+from whatever the template's title cell already has as its own subject
+prefix, so its capitalization/abbreviation stays the template author's
+own choice) plus "Module 2" plus the identified difficulty, rather than
+reading-and-appending to whatever's already in that cell. Confirmed
+against a real template that the existing text there isn't safe to build
+on: it can be a placeholder ("R & W Module 2 - (Enter Difficulty)") or
+even a specific difficulty already sitting there from however the
+template was built ("Math Module 2 - Higher Difficulty") -- appending
+onto either would leave the title wrong or doubled-up, so the title
+match itself (_TITLE_PATTERN) only requires the "<subject> Module <N>"
+prefix, ignoring whatever trails it, and the fill always overwrites the
+whole cell.
 
 Per-question facts this template doesn't carry itself -- a question's
 correct answer, Domain, and Skill -- come from
@@ -55,11 +64,21 @@ from .sat_score_report_writer import (
     read_reference_questions,
 )
 
-_TITLE_PATTERN = re.compile(r"^(?P<subject>.+?)\s+Module\s+(?P<module_num>1|2)\s*$", re.IGNORECASE)
+# The subject+module prefix is matched as a *prefix*, not the whole
+# string -- confirmed against a real template: a Module 2 title cell
+# isn't necessarily bare "<Subject> Module 2", it can carry a trailing
+# placeholder ("R & W Module 2 - (Enter Difficulty)") or even a specific
+# difficulty already sitting there from however the template was built
+# ("Math Module 2 - Higher Difficulty") -- neither is assumed to mean
+# anything (fill_simple_sat_score_report always regenerates the title
+# from `subject` alone rather than trusting or appending to whatever
+# trails it here). Module 1's own titles are never decorated this way in
+# practice, but nothing stops matching a trailing something there too.
+_TITLE_PATTERN = re.compile(r"^(?P<subject>.+?)\s+Module\s+(?P<module_num>1|2)\b", re.IGNORECASE)
 # "harder"/"easier" (answer_keys.annotate_rows' own vocabulary, and
 # active_variants' own values) -> the suffix appended to a Module 2
-# block's own title once its variant is known. Matches the wording
-# sat_score_report_writer._DIFFICULTY_TO_SLOT maps *from* on the
+# block's own regenerated title once its variant is known. Matches the
+# wording sat_score_report_writer._DIFFICULTY_TO_SLOT maps *from* on the
 # current-format template ("Higher"/"Lower Difficulty"), so a report
 # built from either template reads the same way.
 _SLOT_TO_DIFFICULTY_SUFFIX = {"harder": " - Higher Difficulty", "easier": " - Lower Difficulty"}
@@ -75,6 +94,7 @@ class SimpleSatBlock:
     (see this module's own docstring)."""
 
     subject: str
+    subject_text: str  # subject exactly as written on the template (e.g. "R & W"), before normalize_subject
     module_slot: str  # "module1" | "module2"
     title_row: int
     header_row: int
@@ -98,13 +118,15 @@ def locate_simple_sat_blocks(ws: Worksheet) -> List[SimpleSatBlock]:
             match = _TITLE_PATTERN.match(value.strip())
             if not match:
                 continue
-            subject = normalize_subject(match.group("subject"))
+            subject_text = match.group("subject").strip()
+            subject = normalize_subject(subject_text)
             module_slot = "module1" if match.group("module_num") == "1" else "module2"
             title_row, title_col = cell.row, cell.column
             header_row = find_header_row(ws, title_row, title_col)
             blocks.append(
                 SimpleSatBlock(
                     subject=subject,
+                    subject_text=subject_text,
                     module_slot=module_slot,
                     title_row=title_row,
                     header_row=header_row,
@@ -193,9 +215,18 @@ def fill_simple_sat_score_report(
             effective_slot = active_variants.get(block.subject)
             if effective_slot is None:
                 raise ValueError(f"No active variant given for {block.subject!r} -- can't fill its Module 2 block")
-            title_text = ws.cell(row=block.title_row, column=block.question_col).value
+            # Regenerated from block.subject_text + "Module 2" + the
+            # difficulty, not read-and-appended: confirmed against a real
+            # template that what's already in this cell isn't trustworthy
+            # boilerplate to build on -- it can be a placeholder ("R & W
+            # Module 2 - (Enter Difficulty)") or even a specific
+            # difficulty already sitting there from however the template
+            # was built ("Math Module 2 - Higher Difficulty"), and
+            # appending onto either would leave the title wrong or
+            # doubled-up.
             suffix = _SLOT_TO_DIFFICULTY_SUFFIX[effective_slot]
-            writes.append(CellWrite(sheet_name, block.title_row, block.question_col, f"{title_text}{suffix}"))
+            title_text = f"{block.subject_text} Module 2{suffix}"
+            writes.append(CellWrite(sheet_name, block.title_row, block.question_col, title_text))
 
         reference_questions = read_reference_questions(reference_ws, block.subject, effective_slot)
 
