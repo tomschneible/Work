@@ -25,6 +25,7 @@ from answer_extractor.google_sheets_export import (
     list_folder,
     narrow_columns,
     replace_content,
+    set_font_sizes,
     write_cells,
 )
 
@@ -762,6 +763,75 @@ def test_clear_notes_raises_for_an_unknown_sheet_name():
 
     with pytest.raises(ValueError, match="Cover Page"):
         clear_notes(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 0)])
+
+
+def test_set_font_sizes_resolves_sheet_names_and_sends_one_batch_update():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 111, "title": "Student Responses"}},
+            {"properties": {"sheetId": 222, "title": "Cover Page"}},
+        ]
+    }
+
+    set_font_sizes(
+        sheets,
+        "SPREADSHEET_ID",
+        [("Student Responses", 5, 1, 12.0), ("Cover Page", 0, 0, 10.0)],
+    )
+
+    sheets.spreadsheets.return_value.get.assert_called_once_with(
+        spreadsheetId="SPREADSHEET_ID", fields="sheets.properties"
+    )
+    _, kwargs = sheets.spreadsheets.return_value.batchUpdate.call_args
+    assert kwargs["spreadsheetId"] == "SPREADSHEET_ID"
+    assert kwargs["body"]["requests"] == [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": 111,
+                    "startRowIndex": 5,
+                    "endRowIndex": 6,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 2,
+                },
+                "cell": {"userEnteredFormat": {"textFormat": {"fontSize": 12.0}}},
+                "fields": "userEnteredFormat.textFormat.fontSize",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": 222,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 1,
+                },
+                "cell": {"userEnteredFormat": {"textFormat": {"fontSize": 10.0}}},
+                "fields": "userEnteredFormat.textFormat.fontSize",
+            }
+        },
+    ]
+    sheets.spreadsheets.return_value.batchUpdate.return_value.execute.assert_called_once()
+
+
+def test_set_font_sizes_is_a_no_op_for_an_empty_list():
+    sheets = MagicMock()
+
+    set_font_sizes(sheets, "SPREADSHEET_ID", [])
+
+    sheets.spreadsheets.assert_not_called()
+
+
+def test_set_font_sizes_raises_for_an_unknown_sheet_name():
+    sheets = MagicMock()
+    sheets.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 111, "title": "Student Responses"}}]
+    }
+
+    with pytest.raises(ValueError, match="Cover Page"):
+        set_font_sizes(sheets, "SPREADSHEET_ID", [("Cover Page", 0, 0, 12.0)])
 
 
 def test_extend_fill_resolves_sheet_names_and_converts_argb_hex_to_a_color_object():

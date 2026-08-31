@@ -143,7 +143,14 @@ class FillResult:
     fill color across the columns it now needs to cover the table's own
     (narrower) width again. See
     sat_score_report_writer.header_bar_extension for the full reasoning
-    and why this doesn't just hardcode a color."""
+    and why this doesn't just hardcode a color. `font_size_cells` is
+    unrelated to any of the above (no narrowing involved) -- (sheet_name,
+    0-indexed row, 0-indexed column, font size in points), the shape
+    set_font_sizes' own Sheets API request needs -- used by the simplified
+    SAT template's own fill_fn to copy a reference cell's own font size
+    onto a cell that otherwise has no explicit override of its own; see
+    set_font_sizes' own docstring for why. Empty for every fill_fn except
+    the simplified SAT one's."""
 
     cell_writes: List[CellWrite]
     cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
@@ -152,6 +159,7 @@ class FillResult:
     narrowed_column_ranges: Sequence[Tuple[str, int, int, float]] = ()
     header_bar_extension: Sequence[Tuple[str, int, str, int, int]] = ()
     overflow_title_cells: Sequence[Tuple[str, int, int]] = ()
+    font_size_cells: Sequence[Tuple[str, int, int, float]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -844,6 +852,53 @@ def clear_notes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str
                     },
                     "cell": {"note": ""},
                     "fields": "note",
+                }
+            }
+        )
+    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+
+def set_font_sizes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int, float]]) -> None:
+    """Set an explicit font size (points) on each of `cells` -- (sheet_name,
+    0-indexed row, 0-indexed column, font size) -- via one Sheets API
+    `batchUpdate` `repeatCell` request per cell. A no-op (no API call at
+    all) if `cells` is empty.
+
+    Exists for the simplified SAT template's own "Student Responses" tab:
+    confirmed against a real template pair, the current-format template's
+    own correct_col explicitly overrides its font size (12pt) while the
+    simplified template's matching cells never got that override, so they
+    silently fall back to the workbook's own shared default (10pt, both
+    templates') instead of matching the reference's look (see
+    sat_score_report_writer.ReferenceQuestion's own docstring for the full
+    reasoning, and why this is scoped to just correct_col -- domain/skill/
+    the student's own answer have no such override on the reference
+    either, so there's nothing confirmed different to copy for them).
+
+    One `get` call resolves every sheet name to its numeric sheetId first,
+    since the batchUpdate request itself only accepts that, not a name.
+    Raises ValueError if a cell names a sheet this spreadsheet doesn't
+    have."""
+    if not cells:
+        return
+    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+    requests = []
+    for sheet_name, row, col, font_size in cells:
+        if sheet_name not in sheet_id_by_title:
+            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id_by_title[sheet_name],
+                        "startRowIndex": row,
+                        "endRowIndex": row + 1,
+                        "startColumnIndex": col,
+                        "endColumnIndex": col + 1,
+                    },
+                    "cell": {"userEnteredFormat": {"textFormat": {"fontSize": font_size}}},
+                    "fields": "userEnteredFormat.textFormat.fontSize",
                 }
             }
         )

@@ -800,6 +800,17 @@ question, pre-numbered in the question column same as today), but:
 - Correct Answer/Domain/Skill cells stay blank on the template itself --
   they're filled in from the current-format template's own matching
   block at export time, never present here beforehand.
+- correct_col's own font size is filled in from the reference too, the
+  same trip: confirmed against a real template pair, the current-format
+  template's own correct_col explicitly overrides its font size (12pt),
+  but the simplified template's matching cells never got that override
+  when it was built, so they silently fell back to the workbook's own
+  smaller shared default (10pt, both templates') instead. Copied
+  per-question (ReferenceQuestion.correct_answer_font_size ->
+  FillResult.font_size_cells -> google_sheets_export.set_font_sizes),
+  and only when the reference's own cell actually has an explicit size
+  to copy -- nowhere else on the row, since nothing else (the student's
+  own answer, Domain, Skill) was confirmed to have this same gap.
 
 ### Repairing the simplified template's own formulas
 

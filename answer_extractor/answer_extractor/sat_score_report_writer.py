@@ -367,11 +367,27 @@ class ReferenceQuestion:
     own writer needs that isn't a student's actual answer: the correct-
     answer key, and the Domain/Skill labels College Board's own report
     assigns that question. See read_reference_questions for why these
-    come from here rather than a separately-maintained source."""
+    come from here rather than a separately-maintained source.
+
+    `correct_answer_font_size` is the reference's own correct_col font
+    size (points, or None if that cell has no explicit override and just
+    inherits the sheet's default) -- confirmed against a real template
+    pair this is explicitly set (12pt) on the current-format template's
+    own correct_col but never carried over when the simplified template
+    was built, so its own matching cells silently fall back to the
+    workbook's shared default (10pt, both templates') instead of matching
+    the reference's own look. Not carried for `domain`/`skill`/the
+    student's own answer: confirmed those have no explicit override on
+    the reference either (both already inherit the same default the
+    simplified template's matching cells do), so there's nothing to
+    copy for them -- copying only what's actually confirmed different is
+    what sat_simplified_score_report_writer.fill_simple_sat_score_report
+    does with this field (see its own docstring)."""
 
     correct_answer: object
     domain: object
     skill: object
+    correct_answer_font_size: Optional[float]
 
 
 def read_reference_questions(ws: Worksheet, subject: str, module_slot: str) -> Dict[int, ReferenceQuestion]:
@@ -422,6 +438,7 @@ def read_reference_questions(ws: Worksheet, subject: str, module_slot: str) -> D
             correct_answer=ws.cell(row=r, column=block.correct_col).value,
             domain=ws.cell(row=r, column=block.question_col + 4).value,
             skill=ws.cell(row=r, column=block.question_col + 5).value,
+            correct_answer_font_size=ws.cell(row=r, column=block.correct_col).font.size,
         )
         r += 1
     return questions

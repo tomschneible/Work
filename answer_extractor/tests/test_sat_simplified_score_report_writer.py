@@ -3,6 +3,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+from openpyxl.styles import Font
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from answer_extractor.google_sheets_export import FillResult
@@ -163,6 +164,59 @@ def test_fill_simple_sat_score_report_writes_name_date_answers_and_reference_dat
     assert result.narrowed_column_ranges == ()
     assert result.header_bar_extension == ()
     assert result.deleted_row_ranges == ()
+    # font_size_cells isn't this test's concern -- see the dedicated test
+    # below (a bare openpyxl.Workbook(), as _write_reference_template
+    # builds, already gives every untouched cell some non-None size of
+    # its own, unlike a real Sheets-exported file's, so asserting an
+    # empty result here would just be an artifact of that, not a real
+    # behavior worth pinning down).
+
+
+def test_fill_simple_sat_score_report_copies_the_reference_correct_columns_own_font_size(tmp_path):
+    """Confirmed against a real template pair: the current-format
+    template's own correct_col explicitly overrides its font size, but
+    the simplified template's matching cells never got that override --
+    see ReferenceQuestion's own docstring. Copied per question, onto
+    correct_col specifically -- nowhere else, since nothing else was
+    confirmed to differ, and only where the reference itself actually has
+    an explicit size to copy."""
+    template_path = tmp_path / "simple_template.xlsx"
+    _write_simple_template(template_path)
+    reference_path = tmp_path / "reference_template.xlsx"
+    _write_reference_template(reference_path)
+    wb = openpyxl.load_workbook(reference_path)
+    ws = wb["Student Responses"]
+    # A bare openpyxl.Workbook()'s own default style already gives every
+    # cell some non-None size of its own (unlike a real Sheets-exported
+    # file's, where an untouched cell's own size reads as None) -- forced
+    # to None explicitly here so the untouched cells below actually
+    # exercise the "no override, nothing to copy" case, not an artifact
+    # of how this fixture happens to be built.
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.font = Font(size=None)
+    ws["B6"].font = Font(size=12)  # Module 1 Q1's own correct_col cell
+    # Q2 (B7) and Module 2's own Q1 (I6) deliberately left alone --
+    # still read as unset, no write for either.
+    wb.save(str(reference_path))
+    reference_ws = openpyxl.load_workbook(reference_path)["Student Responses"]
+
+    result = fill_simple_sat_score_report(
+        template_path,
+        reference_ws,
+        answers={
+            ("reading and writing", "module1", 1): "A",
+            ("reading and writing", "module1", 2): "B",
+            ("reading and writing", "harder", 1): "C",
+        },
+        active_variants={"reading and writing": "harder"},
+        student_name="Jane Student",
+        test_date=dt.date(2026, 3, 8),
+    )
+
+    # (sheet, 0-indexed row, 0-indexed column, font size) -- the shape
+    # set_font_sizes' own Sheets API request needs. B6 -> row 5, col 1.
+    assert result.font_size_cells == [("Student Responses", 5, 1, 12.0)]
 
 
 def test_fill_simple_sat_score_report_regenerates_a_messy_module2_title(tmp_path):

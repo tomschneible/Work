@@ -37,6 +37,7 @@ def _patch_all(**overrides):
         extend_fill=MagicMock(),
         allow_text_overflow=MagicMock(),
         delete_rows=MagicMock(),
+        set_font_sizes=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
     )
@@ -61,6 +62,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     fake_header_bar_extension = [("Student Responses", 0, "FF0497D4", 14, 20)]
     fake_overflow_title_cells = [("Student Responses", 3, 7)]
     fake_deleted_row_ranges = [("Student Responses", 64, 996)]
+    fake_font_size_cells = [("Student Responses", 5, 1, 12.0)]
     fill_fn = MagicMock(
         return_value=FillResult(
             cell_writes=fake_writes,
@@ -70,6 +72,7 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
             header_bar_extension=fake_header_bar_extension,
             overflow_title_cells=fake_overflow_title_cells,
             deleted_row_ranges=fake_deleted_row_ranges,
+            font_size_cells=fake_font_size_cells,
         )
     )
     try:
@@ -128,6 +131,10 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks["delete_rows"].assert_called_once()
     assert mocks["delete_rows"].call_args[0][1] == "COPY_ID"
     assert mocks["delete_rows"].call_args[0][2] == fake_deleted_row_ranges
+
+    mocks["set_font_sizes"].assert_called_once()
+    assert mocks["set_font_sizes"].call_args[0][1] == "COPY_ID"
+    assert mocks["set_font_sizes"].call_args[0][2] == fake_font_size_cells
 
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"

@@ -33,7 +33,14 @@ off the *current-format* template for the same test, rather than
 duplicated into a second, separately-maintained source (see that
 function's own docstring for why a current-format template -- made once
 per test regardless, and kept for hand-grading -- is already the one
-real source for them).
+real source for them). The same read also carries the reference's own
+correct_col font size, copied onto the simplified template's matching
+cell via FillResult.font_size_cells whenever it's set -- confirmed
+against a real template pair that this cell explicitly overrides its own
+font size on the current-format template but never got that override
+carried over when the simplified template was built, so it otherwise
+falls back to the workbook's own smaller shared default instead of
+matching the reference's look (see ReferenceQuestion's own docstring).
 
 Unlike the current-format template, this one carries no per-test content
 of its own -- its shape is fixed by the exam format's own question
@@ -49,7 +56,7 @@ import dataclasses
 import datetime as dt
 import re
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import List, Mapping, Optional, Tuple
 
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
@@ -207,6 +214,7 @@ def fill_simple_sat_score_report(
             row, col = score_cells[subject]
             writes.append(CellWrite(sheet_name, row, col, score))
 
+    font_size_cells: List[Tuple[str, int, int, float]] = []
     remaining = dict(answers)
     for block in locate_simple_sat_blocks(ws):
         if block.module_slot == "module1":
@@ -247,10 +255,19 @@ def fill_simple_sat_score_report(
             writes.append(CellWrite(sheet_name, r, block.answer_col, answer_value))
             writes.append(CellWrite(sheet_name, r, block.question_col + 4, reference.domain))
             writes.append(CellWrite(sheet_name, r, block.question_col + 5, reference.skill))
+            if reference.correct_answer_font_size is not None:
+                # 0-indexed, unlike CellWrite's row/column above -- this
+                # is the shape set_font_sizes' own Sheets API request
+                # needs (see FillResult.font_size_cells' own docstring).
+                # None (no explicit override on the reference either --
+                # confirmed not the case for correct_col in practice, but
+                # cheap to guard) is skipped rather than writing a
+                # meaningless font size of "None".
+                font_size_cells.append((sheet_name, r - 1, block.correct_col - 1, reference.correct_answer_font_size))
             r += 1
 
     if remaining:
         unmatched = ", ".join(f"{subject} {slot} {question}" for subject, slot, question in sorted(remaining))
         raise ValueError(f"{template_path}!{sheet_name} has no answer block for: {unmatched}")
 
-    return FillResult(cell_writes=writes)
+    return FillResult(cell_writes=writes, font_size_cells=font_size_cells)
