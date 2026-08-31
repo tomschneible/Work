@@ -1,11 +1,26 @@
-"""Tests for google_sheets_cli's `hide-gridlines` command -- `list-folder`
-and the OAuth-consent completion are thin, interactive/setup-only
-wrappers not covered here (see the module's own docstring)."""
+"""Tests for google_sheets_cli's `hide-gridlines` and
+`repair-simplified-calculations` commands -- `list-folder` and the
+OAuth-consent completion are thin, interactive/setup-only wrappers not
+covered here (see the module's own docstring). repair_calculations_writes'
+own transform logic is covered in test_sat_simplified_template_repair.py;
+these only check this command's own wiring (download, dispatch, write,
+report)."""
+import io
 from unittest.mock import MagicMock, patch
 
+import openpyxl
+
 from answer_extractor.google_sheets_cli import main
+from answer_extractor.google_sheets_export import CellWrite
 
 _MODULE = "answer_extractor.google_sheets_cli"
+
+
+def _xlsx_bytes() -> bytes:
+    wb = openpyxl.Workbook()
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def test_hide_gridlines_command_calls_through_with_the_given_file_id():
@@ -65,3 +80,58 @@ def test_hide_gridlines_command_prints_a_summary_line_for_multiple_files(capsys)
         main(["hide-gridlines", "--file-id", "ID_ONE", "ID_TWO"])
 
     assert "2/2 succeeded." in capsys.readouterr().out
+
+
+def test_repair_simplified_calculations_downloads_reference_and_writes_to_target(capsys):
+    fake_writes = [
+        CellWrite("Student Responses", 26, 4, "=REPAIRED_TOTAL()"),
+        CellWrite("Calculations", 2, 2, "=REPAIRED_DOMAIN()"),
+    ]
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()) as export_mock, \
+         patch(f"{_MODULE}.repair_calculations_writes", return_value=fake_writes) as repair_mock, \
+         patch(f"{_MODULE}.write_cells") as write_mock:
+        exit_code = main(
+            [
+                "repair-simplified-calculations",
+                "--reference-file-id",
+                "REF_ID",
+                "--target-file-id",
+                "TARGET_ID",
+            ]
+        )
+
+    assert exit_code == 0
+    assert export_mock.call_args[0][1] == "REF_ID"  # the reference, downloaded read-only
+    repair_mock.assert_called_once()  # given the workbook export_xlsx's bytes loaded into
+    assert write_mock.call_args[0][1] == "TARGET_ID"  # writes pushed to the target, not the reference
+    assert write_mock.call_args[0][2] == fake_writes
+    out = capsys.readouterr().out
+    assert "2" in out and "TARGET_ID" in out
+
+
+def test_repair_simplified_calculations_passes_the_sheets_service_not_drive():
+    sheets_service = MagicMock(name="sheets-service")
+    drive_service = MagicMock(name="drive-service")
+    with patch(f"{_MODULE}.build_services", return_value=(drive_service, sheets_service)), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()) as export_mock, \
+         patch(f"{_MODULE}.repair_calculations_writes", return_value=[CellWrite("S", 1, 1, "=X()")]), \
+         patch(f"{_MODULE}.write_cells") as write_mock:
+        main(["repair-simplified-calculations", "--reference-file-id", "REF_ID", "--target-file-id", "TARGET_ID"])
+
+    assert export_mock.call_args[0][0] is drive_service  # export_xlsx takes drive, not sheets
+    assert write_mock.call_args[0][0] is sheets_service  # write_cells takes sheets, not drive
+
+
+def test_repair_simplified_calculations_reports_and_fails_when_nothing_matches(capsys):
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()), \
+         patch(f"{_MODULE}.repair_calculations_writes", return_value=[]), \
+         patch(f"{_MODULE}.write_cells") as write_mock:
+        exit_code = main(
+            ["repair-simplified-calculations", "--reference-file-id", "REF_ID", "--target-file-id", "TARGET_ID"]
+        )
+
+    assert exit_code == 1
+    write_mock.assert_not_called()  # nothing to push -- and never touch the target on an empty result
+    assert "REF_ID" in capsys.readouterr().out

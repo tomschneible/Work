@@ -37,6 +37,21 @@ jobs, deliberately combined into one command you run locally:
     python -m answer_extractor.google_sheets_cli hide-gridlines --file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK
     python -m answer_extractor.google_sheets_cli hide-gridlines --file-id ID_ONE ID_TWO ID_THREE
 
+  4. Repair the simplified SAT template's own "Student Responses"/
+     "Calculations" formulas, via sat_simplified_template_repair.py --
+     the same category of one-time, Sheets-API-only template fix as
+     hide-gridlines, for a different problem (see that module's own
+     docstring for the full why: the simplified template's Module 2
+     column deletions broke every score-summary/Domain/Skill-breakdown
+     formula that used to also count the three difficulty pairs that
+     template no longer has). `--reference-file-id` is any real,
+     working *current-format* template (its formula scheme is the same
+     across every one, not test-specific) -- read-only, never modified;
+     `--target-file-id` is the simplified template actually being fixed.
+
+    python -m answer_extractor.google_sheets_cli repair-simplified-calculations \\
+      --reference-file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK --target-file-id 1AbCdEfGhIjKlMnOpQrS
+
 The folder/file id is the long token in a Drive URL:
 https://drive.google.com/drive/folders/<this part>?usp=drive_link
 https://docs.google.com/spreadsheets/d/<this part>/edit
@@ -44,10 +59,14 @@ https://docs.google.com/spreadsheets/d/<this part>/edit
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from typing import List, Optional
 
-from .google_sheets_export import build_services, hide_gridlines, list_folder
+import openpyxl
+
+from .google_sheets_export import build_services, export_xlsx, hide_gridlines, list_folder, write_cells
+from .sat_simplified_template_repair import repair_calculations_writes
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -66,6 +85,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         required=True,
         nargs="+",
         help="One or more Drive file ids of the templates to fix directly (not copies)",
+    )
+
+    repair_parser = subparsers.add_parser(
+        "repair-simplified-calculations",
+        help="Repair the simplified SAT template's own score-summary/Domain/Skill formulas",
+    )
+    repair_parser.add_argument(
+        "--reference-file-id",
+        required=True,
+        help="A real, working current-format SAT template -- read-only, never modified",
+    )
+    repair_parser.add_argument(
+        "--target-file-id",
+        required=True,
+        help="The simplified SAT template to fix directly (not a copy)",
     )
 
     args = parser.parse_args(argv)
@@ -94,6 +128,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         if len(args.file_id) > 1:
             print(f"{len(args.file_id) - failures}/{len(args.file_id)} succeeded.")
         return 1 if failures else 0
+
+    if args.command == "repair-simplified-calculations":
+        drive, sheets = build_services()
+        reference_wb = openpyxl.load_workbook(
+            io.BytesIO(export_xlsx(drive, args.reference_file_id)), data_only=False
+        )
+        writes = repair_calculations_writes(reference_wb)
+        if not writes:
+            print(
+                f"No matching formulas found in {args.reference_file_id} -- "
+                "double check it's a real current-format template, not the simplified one."
+            )
+            return 1
+        write_cells(sheets, args.target_file_id, writes)
+        by_sheet: dict[str, int] = {}
+        for w in writes:
+            by_sheet[w.sheet] = by_sheet.get(w.sheet, 0) + 1
+        breakdown = ", ".join(f"{n} on {sheet!r}" for sheet, n in by_sheet.items())
+        print(f"Repaired {len(writes)} formulas on {args.target_file_id} ({breakdown}).")
+        return 0
 
     return 1
 

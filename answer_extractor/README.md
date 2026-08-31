@@ -733,14 +733,24 @@ export_simple_sat_score_report`, not the current-format
 That older function (and `sat_score_report_writer.fill_sat_score_report`
 behind it) is still there, still tested, just no longer called from
 this pipeline -- kept rather than deleted in case the simplified path
-needs a fallback while its real template gets shaken out. Cut over
-before a live run against the real Drive file confirmed
-`fill_simple_sat_score_report`'s assumptions about the template's own
-internal layout (name placeholder, undecorated Module 2 title, header
-row shape, score-cell convention) -- a mismatch there fails loudly
-(a clear ValueError, e.g. "No name placeholder cell" or "No reference
-data for ...") rather than silently misplacing anything, but hasn't
-been confirmed live yet.
+needs a fallback while its real template gets shaken out.
+
+Confirmed live against a real template and a real student, in two
+rounds. First round: the title match failed for every Module 2 block --
+confirmed the real template's own title cells aren't reliably blank the
+way building it from a blank slate might suggest (a placeholder like
+"R & W Module 2 - (Enter Difficulty)", or even a stale, pre-baked
+difficulty like "Math Module 2 - Higher Difficulty" from however the
+template was built) -- `_TITLE_PATTERN` now matches the
+"<subject> Module <N>" prefix only, ignoring whatever trails it, and a
+Module 2 title is always regenerated from its own subject text (e.g.
+"R & W", preserving the template author's own abbreviation) plus the
+identified difficulty, never read-and-appended to what was already
+there. Second round: the answers landed correctly (confirmed on the
+exported PDF's own question-level page), but every score summary and
+Domain/Skill breakdown came out blank -- see "Repairing the simplified
+template's own formulas" below for why and the fix; that's a one-time
+fix to the template file itself, not a code change.
 
 **The current-format template's own role changes, but it doesn't go
 away.** It's still made once per test and still used for hand-grading,
@@ -780,14 +790,62 @@ question, pre-numbered in the question column same as today), but:
 
 - One Module 2 block per subject, not a Higher/Lower pair -- no flag
   checkbox above it either (nothing to disambiguate any more).
-- A block's title carries no difficulty -- just e.g. "Reading and
-  Writing Module 2", not "... - Higher Difficulty". The identified
-  difficulty gets appended once a specific student's report is filled
-  (`fill_simple_sat_score_report`), so the exported report still reads
-  the same way the current-format one's own titles do.
+- A block's title doesn't need to be blank -- it isn't trusted either
+  way (see the "confirmed live" paragraph above): `fill_simple_sat_score_
+  report` always regenerates it from its own subject text (whatever's
+  written before "Module 2" -- e.g. "R & W", preserving the template
+  author's own abbreviation) plus the identified difficulty, so the
+  exported report still reads the same way the current-format one's own
+  titles do regardless of what the cell held beforehand.
 - Correct Answer/Domain/Skill cells stay blank on the template itself --
   they're filled in from the current-format template's own matching
   block at export time, never present here beforehand.
+
+### Repairing the simplified template's own formulas
+
+The current-format template's score summaries (a subject's total
+correct/incorrect count on "Student Responses") and its per-Domain/
+per-Skill breakdown table (on "Calculations") are built for four Module
+2 occurrences per subject: one column always counted, three more each
+gated behind a boolean flag cell (`if($O$8=TRUE, ..., 0)` and its
+`$V$8`/`$AC$8`/`$AJ$8` counterparts). Deleting the three non-canonical
+occurrences' own columns to build the simplified template breaks every
+formula that referenced them -- confirmed against a real template, the
+deleted columns read `#REF!`, and since a spreadsheet error propagates
+through addition, every summary and Domain/Skill count built on top
+comes out blank. This is exactly what "the answers are right but none
+of the calculations got pulled over" looks like from the filled
+report's own side: the exported PDF's question-level page reads
+"Student Responses" directly and is unaffected; the score-report page's
+own totals and per-Domain/Skill breakdown read through these broken
+formulas and show nothing.
+
+Fixed with a new one-time, Sheets-API-only repair
+(`sat_simplified_template_repair.py`, wired into
+`google_sheets_cli.py`'s `repair-simplified-calculations` command --
+same category as `hide-gridlines` above, a different problem) rather
+than hand-editing each broken cell: it reads every matching formula off
+a real, working *current-format* template (`--reference-file-id` --
+this formula scheme is the same across every current-format template,
+not test-specific, so any working one will do), drops the three dead
+branches and unwraps the one remaining flag check (the simplified
+template's Module 2 slot has no flag cell to gate on -- it's always the
+one administered), and writes the repaired version onto the simplified
+template (`--target-file-id`) at the same cell position -- confirmed
+the two templates' own Domain/Skill label rows line up exactly, so a
+positional copy is safe. Confirmed against a real template pair this
+finds and cleanly repairs 92 formulas (4 on "Student Responses", 88 on
+"Calculations"). Run this once per simplified template; not yet
+confirmed live (the transform itself was verified locally against a
+real, downloaded copy of both files -- pushing the result via the
+Sheets API directly hasn't been, the same status every fix in this
+saga starts at).
+
+```bash
+python -m answer_extractor.google_sheets_cli repair-simplified-calculations \
+  --reference-file-id <a working current-format template's file id> \
+  --target-file-id <the simplified template's own file id>
+```
 
 ## macOS drag-and-drop app
 
