@@ -936,26 +936,46 @@ in rows 24-46, then nothing until a footer/disclaimer at row 60 -- a
 page's own bottom margin) rather than a structural bug, but it is what
 pushes the footer onto its own mostly-blank second page.
 
-New evidence worth a second look, not yet acted on: manually printing
-the same (already-filled) Sheet via Sheets' own File > Print, rather
-than through `export_pdf`, was reported to show only 4 pages -- no
-Cover Page split -- for the identical content. If that holds up, this
-isn't a content/layout problem at all (the current-format template's
-"Page X of 4" footer text, still present verbatim on the simplified
-template's own Cover Page, already assumes a 4-page report), but a
-mismatch between `export_pdf`'s dedicated-but-undocumented export
-endpoint and Sheets' own interactive print rendering -- the same
-*category* of gap already documented on this endpoint (see its own
-docstring: Drive's generic export, which this replaced, had an
-analogous "fit to page" mismatch; even this dedicated endpoint's own
-pagination "isn't decided against a continuous post-scale pixel budget"
-the way `bottom_margin_in` assumed). Not chased further yet -- pending
-confirmation of exactly what the manual Print dialog's scope/settings
-were, and given a margin-based attempt at a related overflow was already
-tried and rejected once (see the narrow-factor history above: "makes the
-entire page get pulled down (no longer centered)"), this needs a
-concrete param-level fix in hand and live verification before touching
-`export_pdf` again, not another guess.
+The user's own manual File > Print of the same (already-filled) Sheet --
+rather than through `export_pdf` -- was reported to show only 4 pages, no
+Cover Page split, for the identical content. That ruled out a
+content/layout problem (the current-format template's "Page X of 4"
+footer text, still present verbatim on the simplified template's own
+Cover Page, already assumes a 4-page report) in favor of a mismatch
+between `export_pdf`'s dedicated-but-undocumented export endpoint and
+Sheets' own interactive print rendering -- confirmed via a local read of
+the real simplified template: "Fit to page" is *already* Cover Page's own
+saved scale setting (also true of Score Report and Content), so this
+isn't a case of the wrong setting being saved, just of `export_pdf` not
+applying it the way the interactive UI does -- the same *category* of
+gap already documented on this endpoint (see its own docstring: Drive's
+generic export, which this replaced, had an analogous "fit to page"
+mismatch; even this dedicated endpoint's own pagination "isn't decided
+against a continuous post-scale pixel budget" the way `bottom_margin_in`
+assumed).
+
+Fix in progress, not yet confirmed live: `export_pdf` gained a
+`fit_to_page` parameter (see its own docstring) that adds this endpoint's
+own `scale=4` ("Fit to Page," per outside reverse-engineering of this
+endpoint's parameters -- there's no official spec) to force that scale
+explicitly rather than deferring to whatever's saved, threaded through
+`export_filled_report` the same way `bottom_margin_in` already was, and
+passed as `True` only by the simplified SAT export path
+(`google_sat_simplified_score_report_export.export_simple_sat_score_report`).
+
+This is a workbook-wide override, not a Cover-Page-specific one -- there's
+no per-sheet `scale` when, as here, no `gid` narrows the export to one
+sheet -- and confirmed via the same local read: "Student Responses" (the
+Question-Level Feedback page) is deliberately saved at a fixed, hand-set
+54% scale instead of "Fit to page" (this is almost certainly what all of
+this project's own narrow-factor history above was tuning towards in the
+first place). Turning `fit_to_page` on overrides that page's own scale
+too, not just Cover Page's, so verifying this fix means checking *both*
+pages in the same real export -- if Question-Level Feedback regresses,
+the next step is exporting Cover Page (and Score Report/Content) as their
+own separate `gid`-scoped `export_pdf` call with `fit_to_page=True`,
+leaving Student Responses' own call untouched, and merging the results
+into one PDF, rather than a workbook-wide override.
 
 ## macOS drag-and-drop app
 

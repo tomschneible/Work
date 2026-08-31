@@ -87,6 +87,13 @@ def test_export_simple_sat_score_report_finds_the_one_simplified_template_by_exa
     assert export_kwargs["template_id"] == "SIMPLE_ID"
     assert export_kwargs["output_name"] == "Jane Student - 2026-03-08"
 
+    # Cover Page splits across two PDF pages despite "Fit to page" already
+    # being its own saved setting -- forcing that scale explicitly on
+    # export is a next attempt at closing that gap (see export_pdf's own
+    # docstring). Simplified-SAT-only, same as SAT's own bottom_margin_in
+    # was for the current-format path.
+    assert export_kwargs["fit_to_page"] is True
+
 
 def test_export_simple_sat_score_report_fill_fn_calls_fill_simple_sat_score_report_with_its_bound_arguments():
     fake_ws = object()

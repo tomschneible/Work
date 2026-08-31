@@ -234,7 +234,7 @@ def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
     return buffer.getvalue()
 
 
-def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None) -> bytes:
+def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fit_to_page: bool = False) -> bytes:
     """The Sheets file at `spreadsheet_id`, rendered to PDF via Sheets'
     own dedicated export endpoint (`docs.google.com/spreadsheets/d/{id}/
     export?format=pdf`) -- the same URL "File > Download > PDF" in the
@@ -279,6 +279,36 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None) ->
     yet confirmed live against this specific template, unlike the rest of
     this endpoint's own usage here.
 
+    `fit_to_page`, if true, adds this same endpoint's own `scale=4`
+    ("Fit to Page" -- values 1-4 are Normal/Fit-Width/Fit-Height/Fit-Page,
+    per outside reverse-engineering of this endpoint's own parameters;
+    there's no official spec for any of them, same as `bottom_margin`
+    above) to force that scale explicitly rather than deferring to
+    whatever's already saved. Exists for the simplified SAT template's
+    own Cover Page: confirmed via a local read of the real template,
+    "Fit to page" is *already* the saved setting there (and on Score
+    Report and Content) -- yet a real export with no scale override still
+    split it across two PDF pages. That gap between "already configured
+    to fit" and "still doesn't, via this endpoint" is the same category
+    of mismatch this whole function exists to route around in the first
+    place (see this function's own docstring above on why Drive's generic
+    export was replaced with this dedicated one) -- just not fully closed
+    by switching endpoints alone, apparently. Passing `scale=4` explicitly
+    is a next attempt at making this endpoint actually apply what's
+    already configured, rather than something newly invented here.
+
+    Not yet confirmed live. Also not free of risk: `scale` applies to the
+    *entire* export (there's no per-sheet override when, as here, no
+    `gid` narrows the call to one sheet), and at least one sheet in this
+    same workbook -- "Student Responses" (the Question-Level Feedback
+    page) -- is deliberately saved at a fixed, hand-set 54% scale instead
+    of "Fit to page" (see sat_score_report_writer's own narrow-factor
+    history for why that page's own sizing got so much dedicated
+    attention). Passing `fit_to_page=True` overrides that page's own
+    saved scale too, not just Cover Page's -- a caller turning this on
+    needs to verify *both* pages in the same real export, not just the
+    one this was written to fix.
+
     Undocumented as a formal Google API (there's no googleapiclient
     wrapper for it) -- authenticated the same way as every other call in
     this module (`google_auth.get_credentials`), just via a raw
@@ -293,6 +323,8 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None) ->
     params = {"format": "pdf"}
     if bottom_margin_in is not None:
         params["bottom_margin"] = str(bottom_margin_in)
+    if fit_to_page:
+        params["scale"] = "4"
     response = session.get(url, params=params)
     response.raise_for_status()
     content_type = response.headers.get("Content-Type", "")

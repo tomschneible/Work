@@ -91,7 +91,16 @@ def export_simple_sat_score_report(
     `test_code` is used only to find the current-format template to read
     reference data from (via _load_reference_worksheet) -- the
     simplified template itself is always SIMPLIFIED_TEMPLATE_NAME,
-    regardless of test_code (see this module's own docstring)."""
+    regardless of test_code (see this module's own docstring).
+
+    Passes `fit_to_page=True` through to export_filled_report/export_pdf
+    -- confirmed live the simplified template's own Cover Page splits
+    across two PDF pages despite "Fit to page" already being its own
+    saved setting; forcing that scale explicitly on export is a next
+    attempt at closing that gap (see export_pdf's own docstring for the
+    full reasoning, its own not-yet-confirmed-live status, and the risk
+    it carries: this is a workbook-wide override, so it also overrides
+    "Student Responses"' own fixed 54% scale, not just Cover Page's)."""
     reference_ws = _load_reference_worksheet(drive, templates_root_folder_id, test_code, sheet_name)
 
     simplified_folder_id = resolve_template_folder(
@@ -118,4 +127,5 @@ def export_simple_sat_score_report(
         ),
         temp_folder_id=temp_folder_id,
         template_id=simplified_template["id"],
+        fit_to_page=True,
     )

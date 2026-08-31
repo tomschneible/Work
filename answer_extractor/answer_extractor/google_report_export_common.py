@@ -60,6 +60,7 @@ def export_filled_report(
     temp_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
     bottom_margin_in: Optional[float] = None,
+    fit_to_page: bool = False,
     template_id: Optional[str] = None,
 ) -> bytes:
     """Return the filled report's PDF bytes. Two ways to say which
@@ -131,6 +132,13 @@ def export_filled_report(
     overrides and why; `None` (the default, used by every caller except
     SAT's own) leaves the file's own saved bottom margin untouched.
 
+    `fit_to_page`, likewise, is passed straight through to export_pdf's
+    own `fit_to_page` -- see its docstring for what it overrides, why,
+    and the risk it carries (a workbook-wide override, not scoped to
+    whichever sheet motivated it). `False` (the default, used by every
+    caller except the simplified SAT template's own) leaves every
+    sheet's own saved scale untouched.
+
     `keep_working_copy` (default True, this org's own choice): whether
     that working Sheet copy is left in place once its PDF has been
     exported, rather than deleted -- kept by default since having the
@@ -181,7 +189,7 @@ def export_filled_report(
             extend_fill(sheets, copy_id, result.header_bar_extension)
             allow_text_overflow(sheets, copy_id, result.overflow_title_cells)
             delete_rows(sheets, copy_id, result.deleted_row_ranges)
-            pdf_bytes = export_pdf(copy_id, bottom_margin_in=bottom_margin_in)
+            pdf_bytes = export_pdf(copy_id, bottom_margin_in=bottom_margin_in, fit_to_page=fit_to_page)
         except Exception:
             try:
                 delete_file(drive, copy_id)
