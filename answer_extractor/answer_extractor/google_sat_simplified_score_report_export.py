@@ -122,6 +122,7 @@ def export_simple_sat_score_report(
             active_variants,
             student_name,
             test_date,
+            test_code,
             section_scores=section_scores,
             sheet_name=sheet_name,
         ),

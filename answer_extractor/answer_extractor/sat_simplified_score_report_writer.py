@@ -111,6 +111,33 @@ class SimpleSatBlock:
     mark_col: int
 
 
+def _find_test_number_cell(wb) -> tuple[str, int, int]:
+    """(sheet_name, row, column) of the "Score Report" tab's own "Digital
+    SAT <placeholder>" cell -- searched by its own "Digital SAT" text
+    prefix (confirmed against a real template: "Digital SAT (test
+    number)") rather than a hardcoded coordinate, the same reasoning
+    _TITLE_PATTERN's own search uses. Since this template is singular
+    (see this module's own docstring), the whole cell always gets
+    overwritten with the actual test number substituted in -- never
+    appended to, same as a Module 2 block's own title, and for the same
+    reason: confirmed against a real template this placeholder isn't
+    trustworthy boilerplate to build on (the current-format template's
+    own copy has a real number hand-typed in its place, e.g. "Digital SAT
+    #4" -- this template only ever has the generic placeholder).
+
+    Raises ValueError if the "Score Report" tab is missing, or has no
+    such cell."""
+    sheet_name = "Score Report"
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f"No {sheet_name!r} tab in this workbook (tabs: {wb.sheetnames})")
+    ws = wb[sheet_name]
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.strip().startswith("Digital SAT"):
+                return sheet_name, cell.row, cell.column
+    raise ValueError(f"No 'Digital SAT' placeholder cell found on {sheet_name!r}")
+
+
 def locate_simple_sat_blocks(ws: Worksheet) -> List[SimpleSatBlock]:
     """Every block on the simplified template's own "Student Responses"
     tab -- exactly one Module 1 and one Module 2 per subject. Raises
@@ -153,6 +180,7 @@ def fill_simple_sat_score_report(
     active_variants: Mapping[str, str],
     student_name: str,
     test_date: dt.date | str,
+    test_code: str,
     section_scores: Optional[Mapping[str, int]] = None,
     sheet_name: str = "Student Responses",
 ) -> FillResult:
@@ -163,6 +191,12 @@ def fill_simple_sat_score_report(
     what `active_variants`/`answers`/`section_scores` mean, all shared
     verbatim; the difference here is entirely about *where things go*,
     not what they mean.
+
+    `test_code` (e.g. "4") also fills in the "Score Report" tab's own
+    "Digital SAT <placeholder>" cell as "Digital SAT #4" -- see
+    _find_test_number_cell's own docstring for why this template can't
+    just have that hand-typed in the way a current-format template's own
+    copy does.
 
     `reference_ws` is the *current-format* template's own "Student
     Responses" tab for the same test, loaded read-only the same way
@@ -197,10 +231,12 @@ def fill_simple_sat_score_report(
     ws = wb[sheet_name]
 
     name_row, name_col = find_name_cell(ws)
+    test_number_sheet, test_number_row, test_number_col = _find_test_number_cell(wb)
     writes = [
         CellWrite(sheet_name, name_row, name_col, student_name),
         # date sits directly below name
         CellWrite(sheet_name, name_row + 1, name_col, format_date_for_sheets(test_date)),
+        CellWrite(test_number_sheet, test_number_row, test_number_col, f"Digital SAT #{test_code}"),
     ]
 
     if section_scores:

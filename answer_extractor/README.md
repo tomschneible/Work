@@ -811,6 +811,13 @@ question, pre-numbered in the question column same as today), but:
   and only when the reference's own cell actually has an explicit size
   to copy -- nowhere else on the row, since nothing else (the student's
   own answer, Domain, Skill) was confirmed to have this same gap.
+- "Score Report"'s own "Digital SAT (test number)" placeholder gets
+  overwritten wholesale with the real test number substituted in (e.g.
+  "Digital SAT #4"), the same "search by text, regenerate the whole
+  cell, don't trust or append to what's there" approach as a Module 2
+  block's own title -- a current-format template's own copy has this
+  hand-typed in for its one test code; the simplified template, being
+  singular across every test code, can't.
 
 ### Repairing the simplified template's own formulas
 

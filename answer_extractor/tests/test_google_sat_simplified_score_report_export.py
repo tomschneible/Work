@@ -126,6 +126,7 @@ def test_export_simple_sat_score_report_fill_fn_calls_fill_simple_sat_score_repo
         {"math": "harder"},
         "Jane Student",
         dt.datetime(2026, 3, 8),
+        "8",  # test_code -- also fills in "Score Report"'s own "Digital SAT #8" placeholder
         section_scores={"math": 620},
         sheet_name="Student Responses",
     )

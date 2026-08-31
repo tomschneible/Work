@@ -50,6 +50,9 @@ def _write_simple_template(path: Path) -> None:
     _simple_block(ws, 8, "Reading and Writing Module 2", questions=[1, 2])
     ws["AN10"] = 200
     ws["AN12"] = "Reading\n& Writing\nScore"
+    score_report = wb.create_sheet("Score Report")
+    score_report["V3"] = "Test:"
+    score_report["X3"] = "Digital SAT (test number)"  # confirmed against a real template's own placeholder
     wb.save(str(path))
 
 
@@ -129,11 +132,16 @@ def test_fill_simple_sat_score_report_writes_name_date_answers_and_reference_dat
         active_variants={"reading and writing": "harder"},
         student_name="Jane Student",
         test_date=dt.date(2026, 3, 8),
+        test_code="4",
         section_scores={"reading and writing": 690},
     )
 
     assert _at(result, "A1") == "Jane Student"
     assert _at(result, "A2") == "2026-03-08"
+    # "Score Report"'s own placeholder, regenerated wholesale with the
+    # actual test number substituted in -- see _find_test_number_cell's
+    # own docstring for why the placeholder isn't trusted either.
+    assert _at(result, "X3", sheet="Score Report") == "Digital SAT #4"
 
     # Module 1 -- correct answer/Domain/Skill from reference_ws, your
     # answer from `answers`.
@@ -212,6 +220,7 @@ def test_fill_simple_sat_score_report_copies_the_reference_correct_columns_own_f
         active_variants={"reading and writing": "harder"},
         student_name="Jane Student",
         test_date=dt.date(2026, 3, 8),
+        test_code="4",
     )
 
     # (sheet, 0-indexed row, 0-indexed column, font size) -- the shape
@@ -240,6 +249,7 @@ def test_fill_simple_sat_score_report_regenerates_a_messy_module2_title(tmp_path
     _simple_block(ws, 8, "R & W Module 2 - (Enter Difficulty)", questions=[1])
     _simple_block(ws, 15, "Math Module 1", questions=[1])
     _simple_block(ws, 22, "Math Module 2 - Higher Difficulty", questions=[1])  # stale, and wrong for this student
+    wb.create_sheet("Score Report")["X3"] = "Digital SAT (test number)"
     wb.save(str(template_path))
 
     reference_path = tmp_path / "reference_template.xlsx"
@@ -265,6 +275,7 @@ def test_fill_simple_sat_score_report_regenerates_a_messy_module2_title(tmp_path
         active_variants={"reading and writing": "harder", "math": "easier"},
         student_name="Jane Student",
         test_date=dt.date(2026, 3, 8),
+        test_code="4",
     )
 
     # Regenerated from each block's own subject text (preserving the
@@ -295,6 +306,7 @@ def test_fill_simple_sat_score_report_raises_for_an_inactive_variant_answer(tmp_
             active_variants={"reading and writing": "harder"},
             student_name="Jane Student",
             test_date=dt.date(2026, 3, 8),
+            test_code="4",
         )
 
 
@@ -313,6 +325,33 @@ def test_fill_simple_sat_score_report_raises_without_an_active_variant(tmp_path)
             active_variants={},  # Module 2 exists on the template, but no variant was identified
             student_name="Jane Student",
             test_date=dt.date(2026, 3, 8),
+            test_code="4",
+        )
+
+
+def test_fill_simple_sat_score_report_raises_when_score_report_has_no_placeholder(tmp_path):
+    template_path = tmp_path / "simple_template.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Student Responses"
+    ws["A1"] = "Type name here, date below"
+    ws["A2"] = dt.datetime(2024, 1, 1)
+    _simple_block(ws, 1, "Reading and Writing Module 1", questions=[1])
+    wb.create_sheet("Score Report")  # no "Digital SAT ..." placeholder cell at all
+    wb.save(str(template_path))
+    reference_path = tmp_path / "reference_template.xlsx"
+    _write_reference_template(reference_path)
+    reference_ws = openpyxl.load_workbook(reference_path)["Student Responses"]
+
+    with pytest.raises(ValueError, match="Digital SAT"):
+        fill_simple_sat_score_report(
+            template_path,
+            reference_ws,
+            answers={},
+            active_variants={},
+            student_name="Jane Student",
+            test_date=dt.date(2026, 3, 8),
+            test_code="4",
         )
 
 
@@ -334,4 +373,5 @@ def test_fill_simple_sat_score_report_raises_when_reference_ws_lacks_the_block(t
             active_variants={"reading and writing": "harder"},
             student_name="Jane Student",
             test_date=dt.date(2026, 3, 8),
+            test_code="4",
         )
