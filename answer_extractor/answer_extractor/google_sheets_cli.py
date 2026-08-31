@@ -48,6 +48,15 @@ jobs, deliberately combined into one command you run locally:
      working *current-format* template (its formula scheme is the same
      across every one, not test-specific) -- read-only, never modified;
      `--target-file-id` is the simplified template actually being fixed.
+     Writes one cell at a time, not one big batch: confirmed live against
+     a real template with a protected range on it, a single blocked cell
+     fails a batched values().batchUpdate() call *entirely* (a 400,
+     "trying to edit a protected cell"), silently hiding whether anything
+     else in the same batch would also be blocked -- writing individually
+     means one blocked cell is reported and skipped the same way
+     hide-gridlines already handles one bad file id, so a single run
+     surfaces every protected cell needing attention in Sheets (Data ->
+     Protected sheets and ranges) at once, not one discovered per retry.
 
     python -m answer_extractor.google_sheets_cli repair-simplified-calculations \\
       --reference-file-id 1BqZHAVfpbHMW-g0HB5sn10GV3g3eCihK --target-file-id 1AbCdEfGhIjKlMnOpQrS
@@ -64,6 +73,7 @@ import sys
 from typing import List, Optional
 
 import openpyxl
+from openpyxl.utils import get_column_letter
 
 from .google_sheets_export import build_services, export_xlsx, hide_gridlines, list_folder, write_cells
 from .sat_simplified_template_repair import repair_calculations_writes
@@ -141,13 +151,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "double check it's a real current-format template, not the simplified one."
             )
             return 1
-        write_cells(sheets, args.target_file_id, writes)
+        failures = 0
         by_sheet: dict[str, int] = {}
         for w in writes:
-            by_sheet[w.sheet] = by_sheet.get(w.sheet, 0) + 1
-        breakdown = ", ".join(f"{n} on {sheet!r}" for sheet, n in by_sheet.items())
-        print(f"Repaired {len(writes)} formulas on {args.target_file_id} ({breakdown}).")
-        return 0
+            coord = f"{w.sheet}!{get_column_letter(w.column)}{w.row}"
+            try:
+                write_cells(sheets, args.target_file_id, [w])
+            except Exception as exc:
+                failures += 1
+                print(f"Warning: couldn't repair {coord}: {exc}", file=sys.stderr)
+            else:
+                by_sheet[w.sheet] = by_sheet.get(w.sheet, 0) + 1
+        succeeded = len(writes) - failures
+        breakdown = ", ".join(f"{n} on {sheet!r}" for sheet, n in by_sheet.items()) or "none"
+        print(f"Repaired {succeeded}/{len(writes)} formulas on {args.target_file_id} ({breakdown}).")
+        if failures:
+            print(
+                f"{failures} cell(s) couldn't be written -- likely a protected range on the target "
+                "(Data -> Protected sheets and ranges in Sheets). Fix protection for the cells listed "
+                "above and re-run; already-repaired cells are harmless to write again.",
+                file=sys.stderr,
+            )
+        return 1 if failures else 0
 
     return 1
 

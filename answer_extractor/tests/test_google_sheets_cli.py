@@ -104,10 +104,13 @@ def test_repair_simplified_calculations_downloads_reference_and_writes_to_target
     assert exit_code == 0
     assert export_mock.call_args[0][1] == "REF_ID"  # the reference, downloaded read-only
     repair_mock.assert_called_once()  # given the workbook export_xlsx's bytes loaded into
-    assert write_mock.call_args[0][1] == "TARGET_ID"  # writes pushed to the target, not the reference
-    assert write_mock.call_args[0][2] == fake_writes
+    # One write_cells call per cell, not one big batch -- see this
+    # command's own docstring for why (one protected cell shouldn't hide
+    # whether the rest of the batch would have succeeded).
+    assert [call.args[1] for call in write_mock.call_args_list] == ["TARGET_ID", "TARGET_ID"]
+    assert [call.args[2] for call in write_mock.call_args_list] == [[fake_writes[0]], [fake_writes[1]]]
     out = capsys.readouterr().out
-    assert "2" in out and "TARGET_ID" in out
+    assert "2/2" in out and "TARGET_ID" in out
 
 
 def test_repair_simplified_calculations_passes_the_sheets_service_not_drive():
@@ -134,4 +137,33 @@ def test_repair_simplified_calculations_reports_and_fails_when_nothing_matches(c
 
     assert exit_code == 1
     write_mock.assert_not_called()  # nothing to push -- and never touch the target on an empty result
-    assert "REF_ID" in capsys.readouterr().out
+
+
+def test_repair_simplified_calculations_keeps_going_past_one_cells_failure_and_reports_it(capsys):
+    """A protected cell fails its own write_cells call -- confirmed live
+    this doesn't fail the whole batch any more (that used to hide
+    whether anything else was also blocked): the other cells still get
+    written, and the failure is reported by its own coordinate."""
+    fake_writes = [
+        CellWrite("Calculations", 2, 2, "=REPAIRED_ONE()"),  # B2
+        CellWrite("Calculations", 2, 3, "=REPAIRED_TWO()"),  # C2 -- this one is "protected"
+        CellWrite("Student Responses", 26, 4, "=REPAIRED_THREE()"),  # D26
+    ]
+
+    def _fake_write_cells(sheets, file_id, cells):
+        if cells[0].sheet == "Calculations" and cells[0].column == 3:
+            raise Exception("Invalid data[0]: You are trying to edit a protected cell or object.")
+
+    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()), \
+         patch(f"{_MODULE}.repair_calculations_writes", return_value=fake_writes), \
+         patch(f"{_MODULE}.write_cells", side_effect=_fake_write_cells) as write_mock:
+        exit_code = main(
+            ["repair-simplified-calculations", "--reference-file-id", "REF_ID", "--target-file-id", "TARGET_ID"]
+        )
+
+    assert exit_code == 1  # at least one failure -- worth a non-zero exit, same as hide-gridlines
+    assert len(write_mock.call_args_list) == 3  # all three attempted, not stopped after the failure
+    result = capsys.readouterr()
+    assert "2/3" in result.out
+    assert "Calculations!C2" in result.err
