@@ -10,6 +10,7 @@ from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
 from answer_extractor.template import Template
+from tests.sat_scoresheet_pdf_synth import SatGroup, write_sat_scoresheet_pdf
 from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Block, Row, write_scoresheet_pdf
 from tests.synth import render_sheet
 
@@ -292,6 +293,72 @@ def test_two_scoresheet_pdfs_compare_directly_first_as_ours(tmp_path):
     by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
     assert by_key[("English", 1)][4] == "✔"
     assert by_key[("English", 2)][4] == "✘"
+
+
+def _write_sat_scoresheet_pdf(path, module1_rows):
+    """module1_rows: list of (question, correct, your_answer) tuples for
+    Math Module 1 -- Module 2 is a single fixed row, same shape
+    _write_scoresheet_pdf's own Math filler group has."""
+    write_sat_scoresheet_pdf(
+        path,
+        [
+            [
+                SatGroup("Math Module 1", [Row(q, correct, yours) for q, correct, yours in module1_rows]),
+                SatGroup("Math Module 2", [Row(1, "F", "F")]),
+            ],
+        ],
+    )
+
+
+@pdf_pytestmark
+def test_two_sat_scoresheet_pdfs_compare_directly_first_as_ours(tmp_path):
+    """The SAT/DSAT counterpart to test_two_scoresheet_pdfs_compare_directly_
+    first_as_ours above -- same dispatch, a different PDF shape
+    (sat_score_report_pdf_reader.py, not score_report_pdf_reader.py)."""
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "their_report.pdf"
+    _write_sat_scoresheet_pdf(ours_path, [(1, "F", "F"), (2, "A", "B")])  # Q2: silent miss if B differs
+    _write_sat_scoresheet_pdf(reference_path, [(1, "F", "F"), (2, "A", "A")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    assert wb.sheetnames == ["Comparison"]
+    by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_key[("Math Module 1", 1)][4] == "✔"
+    assert by_key[("Math Module 1", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_an_act_pdf_and_a_sat_pdf_can_still_be_compared_against_each_other(tmp_path):
+    """Neither PDF reader knows about the other's shape, but
+    _is_scoresheet_pdf/_load_pdf_answers try both readers independently
+    per file -- so a mismatched pair (comparing the wrong two reports
+    together, which is a user mistake this tool has no way to detect) is
+    still accepted and compared, not rejected for being "different
+    shapes". Confirmed here with an English/Math ACT report against a
+    Math-only SAT report -- nothing overlaps, so nothing "matches", but
+    not every row comes back the same severity: "ours" (ACT)'s own keys,
+    absent from the SAT reference entirely, are "unmatched" ("?"); the
+    SAT reference's own keys, which ACT has no answer for at all (not
+    even a wrong one), come back "flagged" ("✘") instead -- same
+    compare() behavior a same-shape pair would get for a question the
+    reference names that "ours" is silently missing altogether."""
+    act_path = tmp_path / "act_report.pdf"
+    sat_path = tmp_path / "sat_report.pdf"
+    _write_scoresheet_pdf(act_path, [(1, "F", "F")])
+    _write_sat_scoresheet_pdf(sat_path, [(1, "A", "A")])
+
+    output_path = tmp_path / "out.xlsx"
+    exit_code = main(["--input", str(act_path), str(sat_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    wb = load_workbook(output_path)
+    by_section = {row[0]: row[4] for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_section["English"] == "?" and by_section["Mathematics"] == "?"  # ACT's own -- not in the SAT reference
+    assert by_section["Math Module 1"] == "✘" and by_section["Math Module 2"] == "✘"  # SAT's -- "ours" has nothing
 
 
 @pdf_pytestmark

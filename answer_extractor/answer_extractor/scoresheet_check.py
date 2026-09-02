@@ -32,16 +32,27 @@ scan above) lives in scoresheet_grid.py, shared with score_report_writer.py,
 which fills in a template's own "Your Answer" cells rather than reading a
 vendor's back out.
 
-A third shape can stand in for either side: a rendered ScoreSheet PDF (this
-pipeline's own export, or a report someone already has), parsed by
-score_report_pdf_reader.py into the same {(section, question): answer}
-shape parse_reference_scoresheet produces from a .xlsx -- see
+A third shape can stand in for either side: a rendered score-report PDF
+(this pipeline's own export, or a report someone already has) -- either
+ACT's own ScoreSheet-style grid (score_report_pdf_reader.py) or SAT/DSAT's
+own "Your Question-Level Feedback" grid (sat_score_report_pdf_reader.py),
+each parsed into the same {(section, question): answer} shape
+parse_reference_scoresheet produces from a .xlsx -- see
 load_reference_answers/load_our_answers, which pick the right parser by
-file extension so callers (e.g. compare_cli) don't need to care whether a
-given side is a .xlsx or a .pdf. A PDF side carries no flag/low-confidence
-data (nothing in a finished report says which answers the pipeline itself
-was unsure of), so it's always treated as unflagged -- any mismatch against
-it comes out as "silent_miss", same as it would for an unflagged xlsx cell.
+file extension (and, for a .pdf, by trying each reader in turn -- see
+_load_pdf_answers) so callers (e.g. compare_cli) don't need to care
+whether a given side is a .xlsx, an ACT PDF, or a SAT/DSAT PDF. A PDF
+side carries no flag/low-confidence data (nothing in a finished report
+says which answers the pipeline itself was unsure of), so it's always
+treated as unflagged -- any mismatch against it comes out as
+"silent_miss", same as it would for an unflagged xlsx cell.
+
+A SAT/DSAT PDF's own section keys carry both subject *and* module (e.g.
+"reading and writing module 1") -- see sat_score_report_pdf_reader.py's
+own module docstring for why. _SECTION_ORDER lists those alongside ACT's
+own four so compare()'s own row ordering groups a SAT/DSAT comparison by
+section too, not just by raw question number across every section at
+once.
 """
 from __future__ import annotations
 
@@ -56,12 +67,22 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .detect import QuestionResult
 from .export import BLANK_FILL, MULTIPLE_FILL, PATTERN_INFERRED_FILL, UNREADABLE_FILL, flag_for
+from .sat_score_report_pdf_reader import parse_sat_score_report_pdf
 from .score_report_pdf_reader import parse_scoresheet_pdf
 from .scoresheet_grid import QuestionKey, iter_block_questions, locate_answer_blocks, normalize_section
 
 _OMITTED_MARKS = {"ø", "o", "omitted", "-"}
 
-_SECTION_ORDER = ["english", "mathematics", "reading", "science"]
+_SECTION_ORDER = [
+    "english",
+    "mathematics",
+    "reading",
+    "science",
+    "reading and writing module 1",
+    "reading and writing module 2",
+    "math module 1",
+    "math module 2",
+]
 
 
 def parse_reference_scoresheet(
@@ -154,24 +175,46 @@ def _is_pdf(path: str | Path) -> bool:
     return str(path).lower().endswith(".pdf")
 
 
-def load_reference_answers(path: str | Path, sheet_name: str = "ScoreSheet") -> Dict[QuestionKey, str]:
-    """parse_reference_scoresheet for a .xlsx, or parse_scoresheet_pdf for
-    a .pdf -- picked by file extension so callers can take either kind of
-    reference report without knowing in advance which one they have.
-    `sheet_name` is ignored for a .pdf."""
-    if _is_pdf(path):
+def _load_pdf_answers(path: str | Path) -> Dict[QuestionKey, str]:
+    """Try the ACT-shaped reader first, then the SAT/DSAT-shaped one --
+    whichever actually matches this PDF's own layout, so
+    load_reference_answers/load_our_answers don't need to know in advance
+    which kind of report a given .pdf is. Raises ValueError naming both
+    readers' own failure reasons if neither recognizes it, rather than
+    picking one arbitrarily to surface (a bare "not ACT-shaped" would be
+    just as unhelpful as a bare "not SAT/DSAT-shaped" for a PDF that's
+    actually neither, or genuinely not a score report at all)."""
+    try:
         return parse_scoresheet_pdf(path)
+    except Exception as act_exc:
+        try:
+            return parse_sat_score_report_pdf(path)
+        except Exception as sat_exc:
+            raise ValueError(
+                f"{path} doesn't match either PDF shape this tool understands "
+                f"(ACT ScoreSheet: {act_exc}; SAT/DSAT Question-Level Feedback: {sat_exc})"
+            ) from sat_exc
+
+
+def load_reference_answers(path: str | Path, sheet_name: str = "ScoreSheet") -> Dict[QuestionKey, str]:
+    """parse_reference_scoresheet for a .xlsx, or _load_pdf_answers (an
+    ACT or SAT/DSAT-shaped reader, whichever matches) for a .pdf -- picked
+    by file extension so callers can take either kind of reference report
+    without knowing in advance which one they have. `sheet_name` is
+    ignored for a .pdf."""
+    if _is_pdf(path):
+        return _load_pdf_answers(path)
     return parse_reference_scoresheet(path, sheet_name=sheet_name)
 
 
 def load_our_answers(path: str | Path, tab_name: Optional[str] = None) -> Dict[QuestionKey, OurAnswer]:
-    """parse_program_output for a .xlsx, or parse_scoresheet_pdf (wrapped
-    as unflagged OurAnswers -- see module docstring) for a .pdf. `tab_name`
+    """parse_program_output for a .xlsx, or _load_pdf_answers (wrapped as
+    unflagged OurAnswers -- see module docstring) for a .pdf. `tab_name`
     is ignored for a .pdf."""
     if _is_pdf(path):
         return {
             key: OurAnswer(answer=answer, flag=None, low_confidence=False)
-            for key, answer in parse_scoresheet_pdf(path).items()
+            for key, answer in _load_pdf_answers(path).items()
         }
     return parse_program_output(path, tab_name=tab_name)
 

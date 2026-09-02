@@ -1097,9 +1097,10 @@ export ANSWER_EXTRACTOR_TEMPLATE=~/Work/answer_extractor/templates/default_templ
 
 A second droplet for when you already have an independently-scored
 reference report for a student (a vendor's scoring spreadsheet, or a
-rendered ScoreSheet-style PDF -- including this pipeline's own PDF export)
-and want to check this tool's read against it. It auto-detects which of
-three things you're doing from what you drop:
+rendered ScoreSheet-style PDF -- including this pipeline's own PDF export,
+either ACT's own layout or SAT/DSAT's) and want to check this tool's read
+against it. It auto-detects which of three things you're doing from what
+you drop:
 
 - **Scan + compare**: drop the scanned bubble sheet *and* a reference
   (spreadsheet or PDF) together. Scans as normal, then adds a color-coded
@@ -1126,9 +1127,18 @@ each group of blocks -- see `answer_extractor/scoresheet_check.py`'s
 module docstring for the exact shape expected. If your vendor's tab is
 named something else, add `--reference-tab "Whatever It's Called"` to the
 script invocation in the Automator step below. A reference **PDF** needs
-no special tab or filename -- any rendered report using that same
-column-group layout (this pipeline's own export included) is recognized
-automatically; see `answer_extractor/score_report_pdf_reader.py`.
+no special tab or filename -- any rendered report using either of two
+column-group layouts is recognized automatically, tried in this order:
+ACT's own `Question | Correct Answer | Your Answer | (mark) | Category`
+shape (`answer_extractor/score_report_pdf_reader.py`), then SAT/DSAT's own
+"Your Question-Level Feedback" shape -- `Question | Correct Answer | Your
+Answer | (mark) | Domain | Skill`, one subject's own two modules sharing
+a header row instead of two different subjects
+(`answer_extractor/sat_score_report_pdf_reader.py`). Two PDFs don't need
+to be the same shape to compare against each other (comparing a matching
+pair is on you, same as everything else this tool can't tell from the
+files themselves) -- confirmed live against a real generated report, 98
+answers, byte-for-byte matched comparing that report against itself.
 
 This droplet is for the common case of **one scan (or one pre-existing/
 finished report) plus one reference at a time** -- drop more comparable
@@ -1187,16 +1197,22 @@ python -m answer_extractor.compare_cli \
 `--ours` and `--reference` each accept **either a `.pdf` or a `.xlsx`**,
 in any combination, picked automatically by file extension:
 
-- **`.pdf`**: a rendered ScoreSheet-style report -- this pipeline's own
-  PDF export (`google_score_report_export.py`), or any other report using
-  the same repeated `Question | Correct Answer | Your Answer | (mark) |
-  Category` column-group layout, one section title (`English`/`Math`/
-  `Reading`/`Science`) governing each group of blocks. Parsed straight off
-  the rendered text/positions (`answer_extractor/score_report_pdf_reader.py`)
-  -- no `.xlsx` needed. A PDF carries no flag/low-confidence data (nothing
-  in a finished report says which answers the pipeline itself was unsure
-  of), so on the `--ours` side any mismatch against it always comes out as
-  an unflagged "silent miss".
+- **`.pdf`**: a rendered score-report grid -- this pipeline's own PDF
+  export (`google_score_report_export.py`/
+  `google_sat_simplified_score_report_export.py`), or any other report
+  using either of two layouts, tried in order: ACT's own repeated
+  `Question | Correct Answer | Your Answer | (mark) | Category`
+  column-group shape, one section title (`English`/`Math`/`Reading`/
+  `Science`) governing each group of blocks
+  (`answer_extractor/score_report_pdf_reader.py`); or SAT/DSAT's own
+  "Your Question-Level Feedback" shape -- `Question | Correct Answer |
+  Your Answer | (mark) | Domain | Skill`, one subject's own two modules
+  sharing a header row (`answer_extractor/sat_score_report_pdf_reader.py`).
+  Parsed straight off the rendered text/positions -- no `.xlsx` needed. A
+  PDF carries no flag/low-confidence data (nothing in a finished report
+  says which answers the pipeline itself was unsure of), so on the
+  `--ours` side any mismatch against it always comes out as an unflagged
+  "silent miss".
 - **`.xlsx`**: same as before -- `--ours` is one tab of this tool's own
   exported spreadsheet (`--ours-tab` to pick a non-default tab out of a
   multi-sheet batch export), `--reference` is a vendor spreadsheet with a

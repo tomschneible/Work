@@ -16,6 +16,7 @@ from answer_extractor.scoresheet_check import (
     parse_program_output,
     parse_reference_scoresheet,
 )
+from tests.sat_scoresheet_pdf_synth import SatGroup, write_sat_scoresheet_pdf
 from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Block, Row, write_scoresheet_pdf
 
 
@@ -278,6 +279,64 @@ def test_load_our_answers_still_reads_xlsx(tmp_path):
     _write_our_output(path)
 
     assert load_our_answers(path) == parse_program_output(path)
+
+
+def _write_sat_scoresheet_pdf(path: Path) -> None:
+    write_sat_scoresheet_pdf(
+        path,
+        [
+            [
+                SatGroup(
+                    "Reading and Writing Module 1",
+                    [Row(1, "A", "A"), Row(2, "B", "C"), Row(3, "C", None)],
+                ),
+                SatGroup("Reading and Writing Module 2", [Row(1, "F", "F"), Row(2, "G", "H")]),
+            ],
+        ],
+    )
+
+
+@pdf_pytestmark
+def test_load_reference_answers_also_picks_the_sat_pdf_parser(tmp_path):
+    """load_reference_answers doesn't know in advance which PDF shape a
+    given file is -- _load_pdf_answers tries the ACT reader first, then
+    falls back to the SAT/DSAT one, same as _is_scoresheet_pdf does in
+    auto_compare_cli.py."""
+    path = tmp_path / "reference.pdf"
+    _write_sat_scoresheet_pdf(path)
+
+    assert load_reference_answers(path) == {
+        ("reading and writing module 1", 1): "A",
+        ("reading and writing module 1", 2): "C",
+        ("reading and writing module 1", 3): "",
+        ("reading and writing module 2", 1): "F",
+        ("reading and writing module 2", 2): "H",
+    }
+
+
+@pdf_pytestmark
+def test_load_our_answers_also_wraps_a_sat_pdf_as_unflagged_answers(tmp_path):
+    path = tmp_path / "ours.pdf"
+    _write_sat_scoresheet_pdf(path)
+
+    result = load_our_answers(path)
+
+    assert result[("reading and writing module 1", 1)] == OurAnswer(answer="A", flag=None, low_confidence=False)
+    assert result[("reading and writing module 1", 3)] == OurAnswer(answer="", flag=None, low_confidence=False)
+
+
+@pdf_pytestmark
+def test_load_reference_answers_raises_naming_both_readers_when_neither_matches(tmp_path):
+    import fitz
+
+    path = tmp_path / "blank.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(path))
+    doc.close()
+
+    with pytest.raises(ValueError, match="ACT ScoreSheet.*SAT/DSAT Question-Level Feedback"):
+        load_reference_answers(path)
 
 
 @pdf_pytestmark

@@ -17,17 +17,22 @@ whatever you drop:
 3. Direct comparison: two already-finished score reports, checked directly
    against each other with nothing to scan at all -- e.g. this pipeline's
    own generated PDF report against a report you already had for that
-   student. Each side can independently be a rendered ScoreSheet-style PDF
-   (this pipeline's own export, or any other report using the same
+   student. Each side can independently be a rendered ACT ScoreSheet-style
+   PDF (this pipeline's own export, or any other report using the same
    repeated Question/Correct Answer/Your Answer/Category column-group
-   layout -- see score_report_pdf_reader.py) or a spreadsheet with a
+   layout -- see score_report_pdf_reader.py), a rendered SAT/DSAT "Your
+   Question-Level Feedback" PDF (same idea, different column-group shape
+   -- see sat_score_report_pdf_reader.py), or a spreadsheet with a
    "ScoreSheet" tab; a spreadsheet always plays the reference role (same
    as modes 1-2), a PDF plays whichever role isn't already taken by a
    spreadsheet, and with two PDFs and nothing else to disambiguate, the
    first one given on the command line (leftmost on the Automator drop,
    in whatever order Finder passes dropped files) is treated as "ours" and
    the second as "reference" -- the printed summary always names which
-   file played which role, so it's never a silent guess.
+   file played which role, so it's never a silent guess. The two PDFs
+   don't need to be the same shape (an ACT report against a SAT/DSAT one
+   is accepted the same as any other pair) -- comparing a matching pair is
+   what makes the result meaningful, not something this tool enforces.
 
     python -m answer_extractor.auto_compare_cli \\
         --input sheet.pdf reference.xlsx --template ... --output out.xlsx
@@ -62,6 +67,7 @@ from .answer_keys import annotate_rows, load_answer_keys
 from .auto_cli import classify_inputs, scan_bubble_sheets, template_breakdown
 from .export import add_bubble_sheet_answers_sheet
 from .pipeline import SheetResult
+from .sat_score_report_pdf_reader import parse_sat_score_report_pdf
 from .score_report_export import add_score_report_answers_sheet
 from .score_report_pdf_reader import parse_scoresheet_pdf
 from .scoresheet_check import (
@@ -77,9 +83,12 @@ _XLSX_SUFFIXES = {".xlsx", ".xlsm"}
 
 
 def _is_scoresheet_pdf(path: Path) -> bool:
-    """Whether `path` is a rendered ScoreSheet-style report (this
-    pipeline's own PDF export, or any other report using the same
-    column-group layout) -- as opposed to a text-based score-report PDF
+    """Whether `path` is a rendered score-report grid this tool can
+    compare directly -- ACT's own ScoreSheet-style layout
+    (score_report_pdf_reader.py) or SAT/DSAT's own "Your Question-Level
+    Feedback" layout (sat_score_report_pdf_reader.py), each this
+    pipeline's own PDF export or any other report using the same
+    column-group layout -- as opposed to a text-based score-report PDF
     meant to be scanned (e.g. a raw "Score Details" PDF, handled by
     auto_cli.classify_inputs instead), or not a PDF this tool understands
     at all."""
@@ -87,6 +96,11 @@ def _is_scoresheet_pdf(path: Path) -> bool:
         return False
     try:
         parse_scoresheet_pdf(path)
+        return True
+    except Exception:
+        pass
+    try:
+        parse_sat_score_report_pdf(path)
         return True
     except Exception:
         return False
