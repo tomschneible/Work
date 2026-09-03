@@ -16,6 +16,13 @@
 # whatever scan was dropped (same convention as mac_droplet.sh), and opens
 # it, with GUI error/success feedback since an Automator app has no visible
 # terminal to print to.
+#
+# On a Mac where dropping two files together still launches this app once
+# per file instead of once with both (confirmed live -- a real,
+# reproducible Finder/Automator behavior, not anything wrong with this
+# script; see auto_compare_cli.py's own module docstring), a run can exit
+# successfully having written nothing at all yet -- see the $OUTPUT
+# existence check below.
 
 set -euo pipefail
 
@@ -87,15 +94,27 @@ if [ "$STATUS" -ne 0 ]; then
   fail "Scan failed:\n$RUN_OUTPUT"
 fi
 
-# auto_compare_cli prints "Wrote <path>: ..." on one line, then (only if a
-# reference was found and matched to exactly one scanned sheet) a
-# comparison summary line -- surface that in the notification when present
-# so you know at a glance whether anything needs a second look, without
-# opening the file first.
-SUMMARY_LINE="$(echo "$RUN_OUTPUT" | sed -n '2p')"
-if [ -n "$SUMMARY_LINE" ]; then
-  notify "$(basename "$OUTPUT") -- $SUMMARY_LINE"
+# A successful run doesn't always mean $OUTPUT was actually written --
+# auto_compare_cli's own mode 3 can exit 0 having only recorded one half
+# of a two-file drop that Finder/Automator split into separate launches
+# (see its own module docstring, _PENDING_COMPARE_MARKER) and written
+# nothing at all yet, waiting for the second file. Only try to open (and
+# only claim to have written) an $OUTPUT that's actually there -- opening
+# a path that doesn't exist would fail the whole script here, the same
+# reasoning mac_droplet.sh's own combined-.xlsx handling already applies.
+if [ -e "$OUTPUT" ]; then
+  # auto_compare_cli prints "Wrote <path>: ..." on one line, then (only if
+  # a reference was found and matched to exactly one scanned sheet) a
+  # comparison summary line -- surface that in the notification when
+  # present so you know at a glance whether anything needs a second look,
+  # without opening the file first.
+  SUMMARY_LINE="$(echo "$RUN_OUTPUT" | sed -n '2p')"
+  if [ -n "$SUMMARY_LINE" ]; then
+    notify "$(basename "$OUTPUT") -- $SUMMARY_LINE"
+  else
+    notify "Wrote $(basename "$OUTPUT")"
+  fi
+  open "$OUTPUT"
 else
-  notify "Wrote $(basename "$OUTPUT")"
+  notify "$RUN_OUTPUT"
 fi
-open "$OUTPUT"

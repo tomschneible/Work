@@ -52,11 +52,31 @@ This is meant for the common one-student-at-a-time case, not batch
 comparison -- more comparable candidates than a mode above can pair up,
 or mixing a comparison pair with something to actually scan, is a clear
 error rather than a guess at which files go together.
+
+Mode 3's own two-PDF case tolerates one more real-world wrinkle: dropping
+two files together (one Finder multi-selection, dragged in a single
+motion) onto an Automator droplet built around this script can still
+launch the underlying app once *per file* instead of once with both --
+confirmed live on a real Mac (macOS Tahoe), and not specific to this
+script (the unrelated plain scan droplet split the same way on the same
+machine, and rebuilding the droplet from scratch didn't change it) --
+so it's a real OS/Finder/Automator behavior this code has no way to fix
+directly, not a bug in the comparison logic itself. Since a droplet
+delivering the same two files as separate launches would otherwise leave
+mode 3 permanently unusable on a Mac with this behavior (each launch only
+ever sees one file, so "found a PDF but nothing to compare it against"
+every time), a lone ScoreSheet-shaped PDF is instead remembered (see
+_PENDING_COMPARE_MARKER) and automatically paired with the next one
+dropped shortly after -- same result as if Finder had delivered both
+together.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -80,6 +100,26 @@ from .scoresheet_check import (
 )
 
 _XLSX_SUFFIXES = {".xlsx", ".xlsm"}
+
+# Confirmed live on a real Mac (macOS Tahoe): dropping two files together
+# (selected as one Finder multi-selection, dragged in one motion) onto an
+# Automator-built droplet app -- this one *and* the unrelated plain scan
+# droplet, so it isn't anything about this script -- can still launch the
+# app once *per file* instead of once with both, with no way found to stop
+# it (a from-scratch rebuild of the droplet didn't help either). Since mode
+# 3's own lone-PDF case used to just fail outright ("found a ScoreSheet-
+# shaped PDF but nothing to compare it against") whenever that happens, two
+# people can never actually use a direct-PDF-comparison droplet on a Mac
+# with this behavior at all -- so instead of depending on a Finder/
+# Automator fix neither this code nor its user has any control over, a
+# lone comparable PDF is remembered here (a small marker file, not
+# in-memory -- each split launch is its own separate process, so nothing
+# in memory would survive between them) and automatically paired with the
+# *next* one dropped within _PENDING_COMPARE_TIMEOUT_SECONDS -- the same
+# result as if Finder had delivered both together, just built to tolerate
+# it not doing that. See _pair_with_pending_drop.
+_PENDING_COMPARE_MARKER = Path(tempfile.gettempdir()) / "answer_extractor_pending_compare.json"
+_PENDING_COMPARE_TIMEOUT_SECONDS = 90
 
 
 def _is_scoresheet_pdf(path: Path) -> bool:
@@ -185,6 +225,34 @@ def _assign_comparison_roles(
     # and nothing else -- order given on the command line decides, and the
     # caller always prints which file played which role.
     return scoresheet_pdfs[0], scoresheet_pdfs[1]
+
+
+def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
+    """See _PENDING_COMPARE_MARKER's own comment for why this exists at
+    all. If a still-fresh marker from an earlier, separate launch exists
+    (and doesn't just name this same file again -- a launch retried or
+    somehow duplicated shouldn't pair a file with itself), clears it and
+    returns that earlier file, so the caller can run the comparison
+    exactly as if both had arrived in one drop. Otherwise records
+    `candidate` as the new pending file (overwriting whatever was there
+    -- an unpaired file from over _PENDING_COMPARE_TIMEOUT_SECONDS ago is
+    stale, not still waiting) and returns None.
+
+    A corrupt or unreadable marker is treated the same as no marker at
+    all -- this is a convenience for a real, confirmed OS quirk, not
+    something worth ever failing a comparison over."""
+    try:
+        if _PENDING_COMPARE_MARKER.exists():
+            recorded = json.loads(_PENDING_COMPARE_MARKER.read_text())
+            recorded_path = Path(recorded["path"])
+            age_seconds = time.time() - recorded["timestamp"]
+            if age_seconds <= _PENDING_COMPARE_TIMEOUT_SECONDS and recorded_path != candidate:
+                _PENDING_COMPARE_MARKER.unlink(missing_ok=True)
+                return recorded_path
+    except Exception:
+        pass
+    _PENDING_COMPARE_MARKER.write_text(json.dumps({"path": str(candidate), "timestamp": time.time()}))
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -301,6 +369,40 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if scoresheet_pdf_paths and not (bubble_paths or score_rows):
+        if len(scoresheet_pdf_paths) == 1:
+            # Exactly one ScoreSheet-shaped PDF and nothing else -- see
+            # _PENDING_COMPARE_MARKER's own comment for why this might be
+            # one half of a two-file drop that got split into separate
+            # launches, not really "nothing to compare against" at all.
+            lone = scoresheet_pdf_paths[0]
+            partner = _pair_with_pending_drop(lone)
+            if partner is not None:
+                # `partner` was dropped first (it's the one _pair_with_
+                # pending_drop already had recorded) and `lone` second --
+                # same "first given is ours, second is reference"
+                # convention _assign_comparison_roles already uses when
+                # both arrive in one drop.
+                reference = load_reference_answers(lone, sheet_name=args.reference_tab)
+                ours = load_our_answers(partner)
+                rows = compare(reference, ours)
+                wb = Workbook()
+                del wb["Sheet"]
+                add_comparison_sheet(wb, rows)
+                wb.save(args.output)
+                print(
+                    f"Wrote {args.output}: compared {partner.name} (ours) against {lone.name} "
+                    "(reference) -- dropped separately, paired automatically."
+                )
+                print(summarize(rows))
+                return 0
+            print(
+                f"Got {lone.name} -- drop the file to compare it against within "
+                f"{_PENDING_COMPARE_TIMEOUT_SECONDS} seconds (this Mac's own Finder/Automator is "
+                "splitting the two-file drop into two separate launches instead of delivering them "
+                "together -- see this module's own docstring). Nothing written yet.",
+                file=sys.stderr,
+            )
+            return 0
         names = ", ".join(p.name for p in scoresheet_pdf_paths)
         print(
             f"Found a ScoreSheet-shaped PDF ({names}) but nothing to compare it against.",

@@ -1,11 +1,14 @@
+import json
 import os
+import time
+from unittest.mock import patch
 
 import cv2
 import openpyxl
 import pytest
 from openpyxl import load_workbook
 
-from answer_extractor.auto_compare_cli import main
+from answer_extractor.auto_compare_cli import _pair_with_pending_drop, main
 from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
@@ -18,6 +21,8 @@ pdf_pytestmark = pytest.mark.skipif(
     not os.path.exists(MARK_FONT_PATH),
     reason=f"synthetic PDF fixtures need a Unicode-capable font at {MARK_FONT_PATH} (fonts-dejavu-core)",
 )
+
+_MODULE = "answer_extractor.auto_compare_cli"
 
 _TEMPLATE_YAML = """
 page:
@@ -361,6 +366,129 @@ def test_an_act_pdf_and_a_sat_pdf_can_still_be_compared_against_each_other(tmp_p
     assert by_section["Math Module 1"] == "✘" and by_section["Math Module 2"] == "✘"  # SAT's -- "ours" has nothing
 
 
+def test_pair_with_pending_drop_records_the_first_file_and_returns_none(tmp_path):
+    marker = tmp_path / "pending.json"
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        result = _pair_with_pending_drop(tmp_path / "a.pdf")
+
+    assert result is None
+    assert json.loads(marker.read_text())["path"] == str(tmp_path / "a.pdf")
+
+
+def test_pair_with_pending_drop_pairs_a_second_file_with_a_fresh_marker(tmp_path):
+    marker = tmp_path / "pending.json"
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        _pair_with_pending_drop(tmp_path / "a.pdf")
+        result = _pair_with_pending_drop(tmp_path / "b.pdf")
+
+    assert result == tmp_path / "a.pdf"
+    assert not marker.exists()  # cleared once paired -- doesn't linger to pair a third file too
+
+
+def test_pair_with_pending_drop_ignores_a_stale_marker(tmp_path):
+    from answer_extractor.auto_compare_cli import _PENDING_COMPARE_TIMEOUT_SECONDS
+
+    marker = tmp_path / "pending.json"
+    marker.write_text(
+        json.dumps({"path": str(tmp_path / "a.pdf"), "timestamp": time.time() - _PENDING_COMPARE_TIMEOUT_SECONDS - 1})
+    )
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        result = _pair_with_pending_drop(tmp_path / "b.pdf")
+
+    assert result is None  # too old to still be "waiting" -- treated as a new first file instead
+    assert json.loads(marker.read_text())["path"] == str(tmp_path / "b.pdf")
+
+
+def test_pair_with_pending_drop_does_not_pair_a_file_with_itself(tmp_path):
+    marker = tmp_path / "pending.json"
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        _pair_with_pending_drop(tmp_path / "a.pdf")
+        result = _pair_with_pending_drop(tmp_path / "a.pdf")  # same path again -- e.g. a retried launch
+
+    assert result is None
+
+
+def test_pair_with_pending_drop_treats_a_corrupt_marker_as_no_marker(tmp_path):
+    marker = tmp_path / "pending.json"
+    marker.write_text("not valid json at all")
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        result = _pair_with_pending_drop(tmp_path / "b.pdf")
+
+    assert result is None
+    assert json.loads(marker.read_text())["path"] == str(tmp_path / "b.pdf")
+
+
+@pdf_pytestmark
+def test_a_lone_dropped_pdf_waits_for_its_pending_partner_instead_of_failing(tmp_path):
+    """See auto_compare_cli.py's own module docstring on why: on a Mac
+    where Finder/Automator splits a two-file drop into two separate
+    launches of this same script (one file each), the first of the two
+    used to be a hard failure ("found a ScoreSheet-shaped PDF but nothing
+    to compare it against"). Now it just waits for its pair."""
+    lone_path = tmp_path / "lone_report.pdf"
+    _write_scoresheet_pdf(lone_path, [(1, "F", "F")])
+    output_path = tmp_path / "out.xlsx"
+    marker = tmp_path / "pending.json"
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        exit_code = main(["--input", str(lone_path), "--output", str(output_path)])
+
+    assert exit_code == 0  # not a failure -- this is expected, ordinary progress
+    assert not output_path.exists()  # nothing to compare yet -- nothing written
+    assert marker.exists()
+
+
+@pdf_pytestmark
+def test_a_second_lone_pdf_dropped_shortly_after_completes_the_comparison(tmp_path):
+    """The first file dropped (recorded, then paired) plays "ours"; the
+    second (the one that completes the pair) plays "reference" -- same
+    "first given is ours" convention a same-drop pair already uses."""
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "their_report.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F"), (2, "A", "B")])  # Q2: silent miss if B differs
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F"), (2, "A", "A")])
+    output_path = tmp_path / "out.xlsx"
+    marker = tmp_path / "pending.json"
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        first_exit = main(["--input", str(ours_path), "--output", str(output_path)])
+        assert first_exit == 0
+        assert not output_path.exists()
+
+        second_exit = main(["--input", str(reference_path), "--output", str(output_path)])
+
+    assert second_exit == 0
+    assert not marker.exists()
+    wb = load_workbook(output_path)
+    by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
+    assert by_key[("English", 1)][4] == "✔"
+    assert by_key[("English", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_a_stale_pending_partner_is_not_reused_for_a_new_drop(tmp_path):
+    from answer_extractor.auto_compare_cli import _PENDING_COMPARE_TIMEOUT_SECONDS
+
+    old_path = tmp_path / "old_report.pdf"
+    _write_scoresheet_pdf(old_path, [(1, "F", "F")])
+    new_path = tmp_path / "new_report.pdf"
+    _write_scoresheet_pdf(new_path, [(1, "F", "F")])
+    output_path = tmp_path / "out.xlsx"
+    marker = tmp_path / "pending.json"
+    marker.write_text(
+        json.dumps({"path": str(old_path), "timestamp": time.time() - _PENDING_COMPARE_TIMEOUT_SECONDS - 1})
+    )
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        exit_code = main(["--input", str(new_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    assert not output_path.exists()  # too stale to pair with -- treated as a fresh first file instead
+    assert json.loads(marker.read_text())["path"] == str(new_path)
+
+
 @pdf_pytestmark
 def test_existing_output_plus_scoresheet_pdf_compares_without_rescanning(tmp_path):
     """A pre-existing export (always "ours" -- same convention as the
@@ -454,14 +582,20 @@ def test_too_many_comparable_candidates_is_an_error(tmp_path):
 
 
 @pdf_pytestmark
-def test_lone_scoresheet_pdf_with_nothing_else_is_an_error(tmp_path):
+def test_lone_scoresheet_pdf_with_nothing_else_now_waits_instead_of_erroring(tmp_path):
+    """Superseded by the pending-pair mechanism (see
+    test_a_lone_dropped_pdf_waits_for_its_pending_partner_instead_of_failing
+    for the full behavior with a properly isolated marker) -- kept here,
+    patching the marker the same way, specifically to document that this
+    used to be a hard error and deliberately no longer is."""
     pdf_path = tmp_path / "reference.pdf"
     _write_scoresheet_pdf(pdf_path, [(1, "F", "F")])
 
     output_path = tmp_path / "out.xlsx"
-    exit_code = main(["--input", str(pdf_path), "--output", str(output_path)])
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", tmp_path / "pending.json"):
+        exit_code = main(["--input", str(pdf_path), "--output", str(output_path)])
 
-    assert exit_code == 1
+    assert exit_code == 0
     assert not output_path.exists()
 
 

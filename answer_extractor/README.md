@@ -1119,6 +1119,20 @@ you drop:
   first one dropped is treated as "ours" and the second as "reference" --
   the success notification always names which file played which role.
 
+  **On some Macs, dropping two files together still launches this app
+  once per file instead of once with both** -- confirmed live (not
+  specific to this droplet -- the plain scan droplet above split the same
+  way on the same machine, and rebuilding this app from scratch didn't
+  change it), so it's a real Finder/Automator behavior outside this
+  project's control, not a bug in the comparison itself. The two-PDF case
+  tolerates it: the first file dropped is remembered for 90 seconds, and
+  automatically paired with the next one if it arrives within that
+  window -- drop the two files as you normally would (together, if that's
+  what you've been trying), and if this Mac splits them, the *second*
+  launch's own notification will show the completed comparison instead of
+  the first one's "waiting for its pair" message. If nothing shows up
+  within 90 seconds, drop the second file again to restart the pairing.
+
 A reference **spreadsheet** must have a tab named `ScoreSheet` (the vendor
 export this was built against uses that name) containing repeated
 `Question | Correct Answer | Your Answer | (mark) | Category` column
