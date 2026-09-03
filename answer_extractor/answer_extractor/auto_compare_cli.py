@@ -69,6 +69,22 @@ every time), a lone ScoreSheet-shaped PDF is instead remembered (see
 _PENDING_COMPARE_MARKER) and automatically paired with the next one
 dropped shortly after -- same result as if Finder had delivered both
 together.
+
+Whatever the output's directory and extension end up being (Desktop,
+.xlsx -- mac_droplet_compare.sh's own job), the *filename* always leads
+with the student's own name when either compared file's name follows
+this pipeline's "LastName, FirstName ..." scan-filename convention
+(scan_filename.py) -- see _resolve_output_path. This matters most for
+modes 2-3: mac_droplet_compare.sh has to guess a filename before Python
+even runs, and in the pending-pair case above, each separate launch only
+ever sees one of the two files being compared -- so its guess is only
+ever based on whichever one happened to arrive second, which may not be
+the one actually worth naming the file after (a reference report from
+outside this pipeline, for instance, may not follow the naming
+convention at all). Python's own choice, made once both files are known,
+overrides that guess whenever it can do better; mac_droplet_compare.sh
+reads the real path back from this module's own "Wrote <path>: ..."
+line rather than trusting its guess.
 """
 from __future__ import annotations
 
@@ -88,6 +104,7 @@ from .auto_cli import classify_inputs, scan_bubble_sheets, template_breakdown
 from .export import add_bubble_sheet_answers_sheet
 from .pipeline import SheetResult
 from .sat_score_report_pdf_reader import parse_sat_score_report_pdf
+from .scan_filename import parse_scan_filename
 from .score_report_export import add_score_report_answers_sheet
 from .score_report_pdf_reader import parse_scoresheet_pdf
 from .scoresheet_check import (
@@ -255,6 +272,60 @@ def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
     return None
 
 
+def _student_name_for_output(ours_path: Path, reference_path: Path) -> Optional[str]:
+    """"LastName, FirstName" parsed from whichever of the two compared
+    files' names follows this pipeline's own scan-filename convention
+    (scan_filename.parse_scan_filename) first -- ours checked before
+    reference, so a reference that doesn't happen to follow the
+    convention (e.g. a vendor-supplied report) doesn't stop the output
+    from being named after the student when the ours side does. None if
+    neither parses -- _resolve_output_path falls back to the caller's own
+    guess in that case, rather than inventing a name from nothing.
+
+    Checking both sides (not just ours) matters most for the pending-pair
+    case (_PENDING_COMPARE_MARKER): each of the two separate launches that
+    deliver the pair only ever sees one file, so mac_droplet_compare.sh's
+    own --output guess is only ever based on whichever one happened to
+    arrive second -- which could be either side."""
+    for p in (ours_path, reference_path):
+        try:
+            parsed = parse_scan_filename(p.stem)
+        except ValueError:
+            continue
+        return f"{parsed.last_name}, {parsed.first_name}"
+    return None
+
+
+def _next_available_path(path: Path) -> Path:
+    """Same "don't clobber, number like Finder/Chrome downloads"
+    convention the shell droplet wrappers already apply to their own
+    --output guess (mac_droplet.sh, mac_droplet_compare.sh) -- needed
+    again here since _resolve_output_path can end up picking a different
+    filename than whatever the caller already numbered against."""
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        candidate = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def _resolve_output_path(requested: Path, ours_path: Path, reference_path: Path) -> Path:
+    """The path to actually save the comparison workbook to: `requested`
+    (mac_droplet_compare.sh's own guess, computed before Python even
+    runs, from whichever file(s) that one launch happened to see) left
+    unchanged, unless _student_name_for_output recognizes one of the two
+    files actually being compared -- then the output leads with that
+    student's own name instead, in the same directory and with the same
+    extension `requested` already had."""
+    student = _student_name_for_output(ours_path, reference_path)
+    if student is None:
+        return requested
+    return _next_available_path(requested.with_name(f"{student} comparison{requested.suffix}"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -343,9 +414,10 @@ def main(argv: list[str] | None = None) -> int:
             wb = Workbook()
             del wb["Sheet"]
         add_comparison_sheet(wb, rows)
-        wb.save(args.output)
+        output_path = _resolve_output_path(Path(args.output), ours_path, reference_path_final)
+        wb.save(output_path)
         print(
-            f"Wrote {args.output}: compared {ours_path.name} (ours) against "
+            f"Wrote {output_path}: compared {ours_path.name} (ours) against "
             f"{reference_path_final.name} (reference)."
         )
         print(summarize(rows))
@@ -388,9 +460,10 @@ def main(argv: list[str] | None = None) -> int:
                 wb = Workbook()
                 del wb["Sheet"]
                 add_comparison_sheet(wb, rows)
-                wb.save(args.output)
+                output_path = _resolve_output_path(Path(args.output), partner, lone)
+                wb.save(output_path)
                 print(
-                    f"Wrote {args.output}: compared {partner.name} (ours) against {lone.name} "
+                    f"Wrote {output_path}: compared {partner.name} (ours) against {lone.name} "
                     "(reference) -- dropped separately, paired automatically."
                 )
                 print(summarize(rows))

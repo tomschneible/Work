@@ -1186,13 +1186,25 @@ different script and name):
 bubble sheet and a reference, (b) a spreadsheet this tool already exported
 and a reference, or (c) two already-finished reports (PDF and/or
 spreadsheet) to compare directly -- onto the app's icon together. The
-output is named after whichever dropped file isn't a spreadsheet with the
-reference tab (so for two PDFs, it's named after whichever one you dropped
-first). It writes and opens the spreadsheet the same way the plain droplet
-does, and the success notification includes a one-line summary (e.g. "171
-questions compared: 171 match, 0 flagged mismatch, 0 silent miss") so you
-know at a glance whether anything needs a second look before you even open
-the file.
+output is named after the student ("LastName, FirstName comparison.xlsx")
+whenever either compared file's name follows this pipeline's own scan
+filename convention (`LastName, FirstName GradYear ACT/SAT/DSAT TestCode
+Month [Day] Year...` -- see `answer_extractor/scan_filename.py`), checking
+the scanned/"ours" file before the reference so a reference file that
+doesn't follow that convention (e.g. an as-downloaded vendor report)
+doesn't get in the way. This is also what makes the two-PDF pending-pair
+case above name the file correctly even though the launch that actually
+writes it only ever saw one of the two files -- the other file's name is
+still checked, not just whichever one happened to arrive second. If
+neither file's name is recognized, it falls back to a name based on
+whichever dropped file isn't a spreadsheet with the reference tab (so for
+two unrecognized PDFs, whichever one you dropped first), same as before.
+Either way, it writes and opens the spreadsheet the same way the plain
+droplet does, never overwriting an existing file of the same name (adding
+"(2)", "(3)", ... like Finder/Chrome downloads do instead), and the
+success notification includes a one-line summary (e.g. "171 questions
+compared: 171 match, 0 flagged mismatch, 0 silent miss") so you know at a
+glance whether anything needs a second look before you even open the file.
 
 ## Comparing two score reports directly (`compare_cli`)
 

@@ -12,10 +12,12 @@
 # instead), and whichever dropped spreadsheet has a "ScoreSheet" tab (an
 # independently-scored reference, e.g. from a test-prep vendor) is compared
 # against the scanned answers, adding a color-coded "Comparison" tab to the
-# same output workbook. Writes the spreadsheet to the Desktop, named after
-# whatever scan was dropped (same convention as mac_droplet.sh), and opens
-# it, with GUI error/success feedback since an Automator app has no visible
-# terminal to print to.
+# same output workbook. Writes the spreadsheet to the Desktop and opens it,
+# named after the student when either compared file's name follows this
+# pipeline's own scan-filename convention (auto_compare_cli.py's own
+# _resolve_output_path -- otherwise falls back to a name based on whatever
+# was dropped, same convention as mac_droplet.sh), with GUI error/success
+# feedback since an Automator app has no visible terminal to print to.
 #
 # On a Mac where dropping two files together still launches this app once
 # per file instead of once with both (confirmed live -- a real,
@@ -94,15 +96,23 @@ if [ "$STATUS" -ne 0 ]; then
   fail "Scan failed:\n$RUN_OUTPUT"
 fi
 
-# A successful run doesn't always mean $OUTPUT was actually written --
+# A successful run doesn't always mean anything was actually written --
 # auto_compare_cli's own mode 3 can exit 0 having only recorded one half
 # of a two-file drop that Finder/Automator split into separate launches
 # (see its own module docstring, _PENDING_COMPARE_MARKER) and written
-# nothing at all yet, waiting for the second file. Only try to open (and
-# only claim to have written) an $OUTPUT that's actually there -- opening
-# a path that doesn't exist would fail the whole script here, the same
-# reasoning mac_droplet.sh's own combined-.xlsx handling already applies.
-if [ -e "$OUTPUT" ]; then
+# nothing at all yet, waiting for the second file. And when something IS
+# written, it isn't always at $OUTPUT above -- auto_compare_cli leads the
+# filename with the student's own name when it can parse one from either
+# compared file (_resolve_output_path), which $OUTPUT above can't already
+# reflect since it's only ever a guess from whichever file(s) this one
+# launch happened to see (in the pending-pair case, only ever one of the
+# two). Its first line of output always names the real path
+# ("Wrote <path>: ...") -- trust that over our own guess, and only try to
+# open (and only claim to have written) a path that's actually there,
+# same reasoning mac_droplet.sh's own combined-.xlsx handling already
+# applies.
+ACTUAL_OUTPUT="$(echo "$RUN_OUTPUT" | sed -n '1s/^Wrote \(.*\): .*/\1/p')"
+if [ -n "$ACTUAL_OUTPUT" ] && [ -e "$ACTUAL_OUTPUT" ]; then
   # auto_compare_cli prints "Wrote <path>: ..." on one line, then (only if
   # a reference was found and matched to exactly one scanned sheet) a
   # comparison summary line -- surface that in the notification when
@@ -110,11 +120,11 @@ if [ -e "$OUTPUT" ]; then
   # without opening the file first.
   SUMMARY_LINE="$(echo "$RUN_OUTPUT" | sed -n '2p')"
   if [ -n "$SUMMARY_LINE" ]; then
-    notify "$(basename "$OUTPUT") -- $SUMMARY_LINE"
+    notify "$(basename "$ACTUAL_OUTPUT") -- $SUMMARY_LINE"
   else
-    notify "Wrote $(basename "$OUTPUT")"
+    notify "Wrote $(basename "$ACTUAL_OUTPUT")"
   fi
-  open "$OUTPUT"
+  open "$ACTUAL_OUTPUT"
 else
   notify "$RUN_OUTPUT"
 fi

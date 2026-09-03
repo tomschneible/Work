@@ -8,7 +8,12 @@ import openpyxl
 import pytest
 from openpyxl import load_workbook
 
-from answer_extractor.auto_compare_cli import _pair_with_pending_drop, main
+from answer_extractor.auto_compare_cli import (
+    _next_available_path,
+    _pair_with_pending_drop,
+    _student_name_for_output,
+    main,
+)
 from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
 from answer_extractor.pipeline import SheetResult
@@ -366,6 +371,96 @@ def test_an_act_pdf_and_a_sat_pdf_can_still_be_compared_against_each_other(tmp_p
     assert by_section["Math Module 1"] == "✘" and by_section["Math Module 2"] == "✘"  # SAT's -- "ours" has nothing
 
 
+def test_student_name_for_output_prefers_ours_over_reference(tmp_path):
+    ours_path = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    reference_path = tmp_path / "Diaz, Ana 2026 DSAT 3 March 3 2026.pdf"
+    assert _student_name_for_output(ours_path, reference_path) == "Rivera, Sam"
+
+
+def test_student_name_for_output_falls_back_to_reference_when_ours_does_not_parse(tmp_path):
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "Diaz, Ana 2026 DSAT 3 March 3 2026.pdf"
+    assert _student_name_for_output(ours_path, reference_path) == "Diaz, Ana"
+
+
+def test_student_name_for_output_is_none_when_neither_file_parses(tmp_path):
+    assert _student_name_for_output(tmp_path / "our_report.pdf", tmp_path / "their_report.pdf") is None
+
+
+def test_next_available_path_returns_the_path_unchanged_when_nothing_is_there(tmp_path):
+    path = tmp_path / "out.xlsx"
+    assert _next_available_path(path) == path
+
+
+def test_next_available_path_numbers_past_existing_files_like_finder_downloads(tmp_path):
+    (tmp_path / "out.xlsx").write_text("x")
+    (tmp_path / "out (2).xlsx").write_text("x")
+    assert _next_available_path(tmp_path / "out.xlsx") == tmp_path / "out (3).xlsx"
+
+
+@pdf_pytestmark
+def test_output_is_named_after_the_student_when_the_ours_file_follows_the_naming_convention(tmp_path):
+    """_resolve_output_path overrides mac_droplet_compare.sh's own
+    --output guess with the student's name, parsed from "ours" here (see
+    _student_name_for_output for the ours-before-reference preference)."""
+    ours_path = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    reference_path = tmp_path / "vendor_answer_key.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+    requested_output = tmp_path / "requested_name.xlsx"
+
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(requested_output)])
+
+    assert exit_code == 0
+    assert not requested_output.exists()  # renamed, not written where mac_droplet_compare.sh guessed
+    actual_output = tmp_path / "Rivera, Sam comparison.xlsx"
+    assert actual_output.exists()
+    load_workbook(actual_output)  # a real, readable workbook landed there
+
+
+@pdf_pytestmark
+def test_output_is_named_after_the_reference_file_when_only_it_follows_the_convention(tmp_path):
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+    requested_output = tmp_path / "requested_name.xlsx"
+
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(requested_output)])
+
+    assert exit_code == 0
+    assert (tmp_path / "Rivera, Sam comparison.xlsx").exists()
+
+
+@pdf_pytestmark
+def test_output_keeps_the_requested_name_when_neither_file_follows_the_convention(tmp_path):
+    ours_path = tmp_path / "our_report.pdf"
+    reference_path = tmp_path / "their_report.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+    requested_output = tmp_path / "requested_name.xlsx"
+
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(requested_output)])
+
+    assert exit_code == 0
+    assert requested_output.exists()
+
+
+@pdf_pytestmark
+def test_a_student_named_output_conflict_is_numbered_like_finder_downloads(tmp_path):
+    ours_path = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    reference_path = tmp_path / "vendor_answer_key.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+    (tmp_path / "Rivera, Sam comparison.xlsx").write_text("already here")
+    requested_output = tmp_path / "requested_name.xlsx"
+
+    exit_code = main(["--input", str(ours_path), str(reference_path), "--output", str(requested_output)])
+
+    assert exit_code == 0
+    assert (tmp_path / "Rivera, Sam comparison (2).xlsx").exists()
+
+
 def test_pair_with_pending_drop_records_the_first_file_and_returns_none(tmp_path):
     marker = tmp_path / "pending.json"
     with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
@@ -465,6 +560,35 @@ def test_a_second_lone_pdf_dropped_shortly_after_completes_the_comparison(tmp_pa
     by_key = {(row[0], row[1]): row for row in wb["Comparison"].iter_rows(min_row=2, values_only=True)}
     assert by_key[("English", 1)][4] == "✔"
     assert by_key[("English", 2)][4] == "✘"
+
+
+@pdf_pytestmark
+def test_the_pending_pair_output_is_named_after_whichever_file_parses_not_just_the_second_one(tmp_path):
+    """This is the case _resolve_output_path checking *both* files (not
+    just "ours") matters most for: mac_droplet_compare.sh's own --output
+    guess for the second launch is only ever based on that one file (see
+    this module's own docstring) -- here that's the generic-named
+    reference, so without the fix the output would land under a name
+    that doesn't identify the student at all."""
+    ours_path = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    reference_path = tmp_path / "vendor_answer_key.pdf"
+    _write_scoresheet_pdf(ours_path, [(1, "F", "F")])
+    _write_scoresheet_pdf(reference_path, [(1, "F", "F")])
+    marker = tmp_path / "pending.json"
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        first_exit = main(["--input", str(ours_path), "--output", str(tmp_path / "first_guess.xlsx")])
+        assert first_exit == 0
+
+        # This second launch never saw ours_path at all -- its own guess
+        # (what mac_droplet_compare.sh would pass as --output) can only
+        # be based on reference_path, the one file it did see.
+        second_requested = tmp_path / "vendor_answer_key_comparison.xlsx"
+        second_exit = main(["--input", str(reference_path), "--output", str(second_requested)])
+
+    assert second_exit == 0
+    assert not second_requested.exists()
+    assert (tmp_path / "Rivera, Sam comparison.xlsx").exists()
 
 
 @pdf_pytestmark
