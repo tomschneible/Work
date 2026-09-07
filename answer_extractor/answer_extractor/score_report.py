@@ -56,6 +56,18 @@ def _parse_your_answer(raw: str) -> str:
     return raw
 
 
+def _looks_like_answer_value(line: str) -> bool:
+    """Whether `line` reads as part of an answer cell's own text rather
+    than a section name -- section names on these reports ("Math",
+    "Reading and Writing") are always purely alphabetic, while every
+    answer-cell continuation line confirmed so far (a grid-in question's
+    correct-answer cell can list several accepted equivalent values, e.g.
+    a fraction plus its rounded decimal bounds, wrapping onto more than
+    one line) carries at least one digit. Used to tell a wrapped
+    correct-answer continuation apart from the section name above it."""
+    return any(c.isdigit() for c in line)
+
+
 def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
     """Parse one score-report PDF into a flat list of answer rows, in the
     order questions appear in the "Questions Overview" table.
@@ -63,13 +75,28 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
     Each row's rightmost column is a "Review" link, which -- unlike the
     surrounding fields -- never changes text and never spans more than one
     line, making it a reliable anchor. From each "Review" occurrence, walk
-    backward: the "Your Answer" and "Correct Answer" cells are always the
-    two lines immediately before it, and the section name is whatever
-    non-numeric line(s) precede those, terminated by the question number.
-    Scanning backward from a fixed anchor (rather than forward with fixed
-    offsets) naturally handles section names that wrap to one or two lines
-    and doesn't care what, if anything, follows "Review" (e.g. a "Domain"
+    backward: the "Your Answer" cell comes first, then "Correct Answer",
+    then the section name, terminated by the question number. Scanning
+    backward from a fixed anchor (rather than forward with fixed offsets)
+    naturally handles section names that wrap to one or two lines and
+    doesn't care what, if anything, follows "Review" (e.g. a "Domain"
     column present in some report layouts but not others).
+
+    "Your Answer" and "Correct Answer" are normally exactly one line each
+    (e.g. "A" and "A; Correct"), but confirmed on a real DSAT report, a
+    grid-in (student-produced response) question's own numeric/fractional
+    answer can wrap either cell onto an extra line -- "Your Answer" came
+    through as two separate lines ("11/28;" then "Correct", instead of one
+    "11/28; Correct" line) as often as it stayed on one, and "Correct
+    Answer" likewise, listing accepted decimal equivalents alongside the
+    fraction ("11/28", ".3928, .3929,"). Both are handled by walking
+    backward from a known terminator instead of assuming a fixed offset:
+    "Your Answer" ends at "Omitted", or a line already containing ";", or
+    (the wrapped case) a bare "Correct"/"Incorrect" preceded by lines back
+    to the one ending in ";"; "Correct Answer" is whatever answer-shaped
+    lines (_looks_like_answer_value) sit above that, back to the first one
+    that doesn't -- the section name itself, which (unlike every answer
+    value seen so far) is always purely alphabetic.
     """
     path = Path(path)
     lines = [line.strip() for line in _extract_lines(path)]
@@ -81,7 +108,32 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
         if line != "Review" or j < 3:
             continue
 
-        k = j - 3
+        m = j - 1
+        if lines[m] == "Omitted":
+            your_answer = ""
+        elif ";" in lines[m]:
+            your_answer = _parse_your_answer(lines[m])
+        elif lines[m] in ("Correct", "Incorrect"):
+            p = m - 1
+            while p >= 0 and not lines[p].rstrip().endswith(";"):
+                p -= 1
+            if p < 0:
+                continue  # No value found for the split status word -- not a real row.
+            your_answer = _parse_your_answer(" ".join(lines[p : m + 1]))
+            m = p
+        else:
+            continue  # Not a "Your Answer" shape this parser recognizes -- not a real row.
+
+        k = m - 1
+        if k < 0:
+            continue
+        correct_parts = [lines[k]]
+        k -= 1
+        while k >= 0 and _looks_like_answer_value(lines[k]):
+            correct_parts.append(lines[k])
+            k -= 1
+        correct_answer = " ".join(reversed(correct_parts))
+
         section_parts: List[str] = []
         while k >= 0 and not lines[k].isdigit():
             section_parts.append(lines[k])
@@ -91,8 +143,6 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
 
         question = int(lines[k])
         section = " ".join(reversed(section_parts))
-        correct_answer = lines[j - 2]
-        your_answer = _parse_your_answer(lines[j - 1])
 
         if previous_question is not None and question <= previous_question:
             module += 1

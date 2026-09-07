@@ -60,6 +60,54 @@ def test_parse_handles_grid_in_numeric_and_fraction_answers(tmp_path):
     assert answers == {17: "11/28", 19: "54", 21: "73"}
 
 
+def test_parse_handles_a_grid_in_answer_wrapped_across_two_pdf_lines(tmp_path):
+    """Confirmed on a real DSAT report: a grid-in (student-produced
+    response) question's fraction answer split its "Your Answer" cell
+    across two physical PDF lines ("11/28;" then "Correct" on its own,
+    rather than one "11/28; Correct" line) instead of staying on one, and
+    its "Correct Answer" cell likewise listed accepted decimal
+    equivalents alongside the fraction across two lines (".3928, .3929,"
+    then "11/28") -- this used to corrupt the *section* name for this
+    question (and only this question), since the old fixed-offset parser
+    swept both of these extra lines into "section" instead."""
+    rows_in = [
+        (16, "Math", "A", "A", "Correct"),
+        (17, "Math", [".3928, .3929,", "11/28"], ["11/28"], "Correct"),
+        (18, "Math", "B", "B", "Correct"),
+    ]
+    path = tmp_path / "report.pdf"
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    by_question = {r.question: r for r in rows}
+    assert by_question[17].section == "Math"
+    assert by_question[17].your_answer == "11/28"
+    assert by_question[17].correct_answer == ".3928, .3929, 11/28"
+    # Neighboring normal rows still parse cleanly, unaffected.
+    assert by_question[16].your_answer == "A"
+    assert by_question[16].section == "Math"
+    assert by_question[18].your_answer == "B"
+    assert by_question[18].section == "Math"
+
+
+def test_parse_handles_a_wrapped_incorrect_grid_in_answer(tmp_path):
+    """Same wrapped-"Your Answer" shape as the confirmed real-world case
+    above (value's own last line ending in ";", status on its own trailing
+    line), just with "Incorrect" instead of "Correct" -- both status
+    words reach the same code path, so this exists to confirm the second
+    one isn't silently mishandled."""
+    rows_in = [
+        (1, "Math", "1/2", ["3/4"], "Incorrect"),
+    ]
+    path = tmp_path / "report.pdf"
+    write_score_report_pdf(path, rows_in)
+
+    rows = parse_score_report(path)
+    assert rows[0].your_answer == "3/4"
+    assert rows[0].correct_answer == "1/2"
+    assert rows[0].section == "Math"
+
+
 def test_parse_handles_section_names_wrapped_across_two_lines(tmp_path):
     rows_in = [
         (1, ("Reading and", "Writing"), "D", "D", "Correct"),
