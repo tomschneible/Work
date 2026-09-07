@@ -136,7 +136,18 @@ def parse_scan_filename(label: str) -> ScanFilename:
         first_name=match.group("first").strip(),
         grad_year=int(match.group("grad_year")),
         test_family=match.group("test_family").upper(),
-        test_code=match.group("test_code"),
+        # Strips a leading "#" ("dSAT #6" as well as "dSAT 6" are both real
+        # naming habits, confirmed in practice) so every downstream user of
+        # test_code sees one consistent value regardless of which the
+        # filename happened to use -- Drive template lookup
+        # (template_lookup.find_template_file) substring-matches this
+        # against folder filenames that never include a "#" themselves, so
+        # a raw "#6" could never match "DSAT 6" at all; and
+        # sat_simplified_score_report_writer.fill_simple_sat_score_report
+        # always writes its own "Digital SAT #{test_code}" label, which
+        # would otherwise double up to "##6" whenever the input filename
+        # already had one.
+        test_code=match.group("test_code").lstrip("#"),
         test_date=test_date,
         day_known=day_str is not None,
     )

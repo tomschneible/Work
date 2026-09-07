@@ -41,6 +41,17 @@ def test_parse_scan_filename_handles_dsat():
     assert result.test_code == "8"
 
 
+def test_parse_scan_filename_strips_a_leading_hash_from_test_code():
+    """"DSAT #6" and "DSAT 6" are both real naming habits (confirmed live)
+    for the exact same test -- stripped here so every downstream user of
+    test_code (Drive template lookup, the "Digital SAT #N" label this
+    pipeline writes into a filled report) sees one consistent value
+    regardless of which the filename happened to use."""
+    result = parse_scan_filename("Smith, John 2026 DSAT #6 March 6 2026")
+
+    assert result.test_code == "6"
+
+
 def test_parse_scan_filename_is_case_insensitive_on_family_and_month():
     result = parse_scan_filename("Student, Jane 2027 act 25MC1 january 17 2026")
 
@@ -137,3 +148,9 @@ def test_canonical_filename_uses_the_family_exactly_as_parsed_never_a_separate_l
 
     assert dsat_scan.canonical_filename() == "Smith, John 2026 DSAT 8 March 8 2026"
     assert sat_scan.canonical_filename() == "Smith, John 2026 SAT 1234 March 2026"
+
+
+def test_canonical_filename_drops_a_leading_hash_the_input_filename_had():
+    scan = parse_scan_filename("Smith, John 2026 DSAT #6 March 6 2026")
+
+    assert scan.canonical_filename() == "Smith, John 2026 DSAT 6 March 6 2026"
