@@ -244,6 +244,17 @@ _SUBJECT_ALIASES = {
     "r and w": "reading and writing",
     "reading & writing": "reading and writing",
     "reading and writing": "reading and writing",
+    # Confirmed on a real DSAT report: right at a question boundary where
+    # both the previous and current question shared the same Domain label
+    # ("Standard English Conventions"), PyMuPDF's own text extraction
+    # (score_report.py's _extract_lines) emitted the two words of "Reading
+    # and Writing" out of order -- "Reading and" ended up displaced before
+    # the question number, leaving only "Writing" where the section name
+    # is normally found. Not a section score_report.py can ever actually
+    # mean on its own (Digital SAT has no standalone "Writing" module --
+    # it's always the combined "Reading and Writing" one), so it's safe
+    # to always treat it as that rather than a genuine third subject.
+    "writing": "reading and writing",
     "math": "math",
 }
 _DIFFICULTY_TO_SLOT = {"higher": "harder", "lower": "easier"}

@@ -18,10 +18,28 @@ from answer_extractor.sat_score_report_writer import (
     header_bar_extension,
     hidden_columns_to_shrink,
     locate_sat_blocks,
+    normalize_subject,
     read_reference_questions,
     trailing_rows_to_delete,
     visible_table_columns_to_narrow,
 )
+
+
+def test_normalize_subject_treats_a_bare_writing_as_reading_and_writing():
+    """Confirmed on a real DSAT report: at a question boundary where the
+    previous and current question shared the same Domain label, PyMuPDF's
+    own text extraction (score_report.py) emitted "Reading and Writing"
+    out of order, leaving only "Writing" where the section name is
+    normally found. Digital SAT has no standalone "Writing" module, so
+    this is always the combined section, not a genuine third subject."""
+    assert normalize_subject("Writing") == "reading and writing"
+
+
+def test_normalize_subject_still_recognizes_the_full_name_and_rejects_unknown_ones():
+    assert normalize_subject("Reading and Writing") == "reading and writing"
+    assert normalize_subject("Math") == "math"
+    with pytest.raises(ValueError, match="Unrecognized SAT subject title"):
+        normalize_subject("Science")
 
 _MISSING = object()  # distinguishes "never written" from an explicitly-written None (an omitted answer)
 
