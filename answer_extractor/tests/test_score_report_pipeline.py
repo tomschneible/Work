@@ -113,6 +113,20 @@ def test_export_sheet_report_uses_the_prompted_date_even_when_the_filename_has_n
     assert export_mock.call_args.kwargs["test_date"] == dt.date(2026, 3, 8)
 
 
+def test_export_sheet_report_test_mode_skips_the_date(tmp_path):
+    """Typing "test" (any casing) at the date prompt leaves the date cell
+    out entirely -- gui_prompt.SKIP, translated to plain None -- rather
+    than failing the way a cancelled prompt does."""
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
+    prompt_fn = MagicMock(return_value="TEST")
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
+        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
+
+    assert export_mock.call_args.kwargs["test_date"] is None
+
+
 def test_export_sheet_report_raises_when_the_date_prompt_is_cancelled(tmp_path):
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)

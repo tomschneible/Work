@@ -76,7 +76,7 @@ def export_simple_sat_score_report(
     answers: Mapping[SatKey, str],
     active_variants: Mapping[str, str],
     student_name: str,
-    test_date: dt.date | str,
+    test_date: dt.date | str | None,
     section_scores: Mapping[str, int],
     output_name: str,
     temp_folder_id: Optional[str] = None,

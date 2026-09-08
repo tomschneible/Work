@@ -7,7 +7,7 @@ prompt_for_text's concern, already covered above."""
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
-from answer_extractor.gui_prompt import prompt_for_date, prompt_for_text
+from answer_extractor.gui_prompt import SKIP, prompt_for_date, prompt_for_text
 
 
 def test_prompt_for_text_returns_what_was_typed():
@@ -72,6 +72,20 @@ def test_prompt_for_date_reprompts_on_a_malformed_answer_before_succeeding():
     second_message = prompt_fn.call_args_list[2][0][0]
     assert second_message.count("isn't a date") == 1
     assert "Jane Student's test date (M/D/YYYY)?" in second_message
+
+
+def test_prompt_for_date_returns_skip_for_the_word_test_in_any_casing():
+    for typed in ("test", "Test", "TEST", "  test  "):
+        prompt_fn = MagicMock(return_value=typed)
+        assert prompt_for_date(prompt_fn, "Test date?") is SKIP
+
+
+def test_prompt_for_date_accepts_test_immediately_without_retrying():
+    prompt_fn = MagicMock(return_value="test")
+
+    prompt_for_date(prompt_fn, "Test date?")
+
+    assert prompt_fn.call_count == 1
 
 
 def test_prompt_for_date_returns_none_on_cancel():

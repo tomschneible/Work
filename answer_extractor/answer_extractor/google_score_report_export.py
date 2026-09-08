@@ -29,7 +29,7 @@ def export_score_report(
     test_code: str,
     answers: Mapping[QuestionKey, str],
     student_name: str,
-    test_date: dt.date | str,
+    test_date: dt.date | str | None,
     output_name: str,
     temp_folder_id: Optional[str] = None,
 ) -> bytes:

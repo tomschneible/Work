@@ -68,7 +68,7 @@ def fill_score_report(
     template_path: str | Path,
     answers: Mapping[QuestionKey, str],
     student_name: str,
-    test_date: dt.date | str,
+    test_date: dt.date | str | None,
     sheet_name: str = "ScoreSheet",
 ) -> FillResult:
     """Return every cell write needed to fill `template_path`'s
@@ -91,7 +91,10 @@ def fill_score_report(
     a specific day nothing in the input confirmed -- a real `date` object
     is for when the day is genuinely known. Either way, see
     google_sheets_export.format_date_for_sheets for how it becomes a
-    single cell value.
+    single cell value. None (gui_prompt.SKIP, typing "test" at the
+    prompt, translated to plain None by score_report_pipeline.py) leaves
+    the date cell at the template's own default instead of writing into
+    it.
 
     A template question with no entry in `answers` is left blank (an
     omitted bubble is a legitimate outcome). An `answers` entry for a
@@ -106,11 +109,10 @@ def fill_score_report(
     ws = wb[sheet_name]
 
     name_row, name_col = _find_placeholder_cell(ws, _NAME_PLACEHOLDER_PREFIX)
-    date_row, date_col = _find_placeholder_cell(ws, _DATE_PLACEHOLDER_PREFIX)
-    writes = [
-        CellWrite(sheet_name, name_row, name_col, student_name),
-        CellWrite(sheet_name, date_row, date_col, format_date_for_sheets(test_date)),
-    ]
+    writes = [CellWrite(sheet_name, name_row, name_col, student_name)]
+    if test_date is not None:
+        date_row, date_col = _find_placeholder_cell(ws, _DATE_PLACEHOLDER_PREFIX)
+        writes.append(CellWrite(sheet_name, date_row, date_col, format_date_for_sheets(test_date)))
 
     remaining = dict(answers)
     for block in locate_answer_blocks(ws):

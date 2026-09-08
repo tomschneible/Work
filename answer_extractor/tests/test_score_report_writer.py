@@ -160,3 +160,20 @@ def test_fill_score_report_passes_through_a_string_test_date_unchanged(tmp_path)
     cells = _by_cell(writes.cell_writes)
 
     assert cells[("ScoreSheet", 2, 4)] == "January 2026"
+
+
+def test_fill_score_report_leaves_the_date_cell_alone_in_test_mode(tmp_path):
+    """test_date=None (gui_prompt.SKIP, typing "test" at the prompt,
+    translated by score_report_pipeline.py) skips the date cell entirely
+    -- the name and answers still get written normally."""
+    path = tmp_path / "template.xlsx"
+    _write_template(path)
+
+    writes = fill_score_report(
+        path, answers={("english", 1): "A"}, student_name="Jane Student", test_date=None
+    )
+    cells = _by_cell(writes.cell_writes)
+
+    assert cells[("ScoreSheet", 1, 4)] == "Jane Student"  # D1, still written
+    assert ("ScoreSheet", 2, 4) not in cells  # D2, the date cell -- untouched
+    assert cells[("ScoreSheet", 6, 3)] == "A"  # C6, still written

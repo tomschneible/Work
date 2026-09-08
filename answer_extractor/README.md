@@ -348,7 +348,18 @@ worked, or to look around the folder tree while debugging.
    convention is untouched by this and still reads its date from the
    input filename -- only what's actually written into the report as the
    Test Date moved off it.
-6. **A SAT/DSAT report only shows the Module 2 variant actually
+6. **Typing "test" instead of a real date or score skips it, for faster
+   reference checking.** Both `gui_prompt.prompt_for_date` and
+   `sat_score_report_pipeline._prompt_for_section_score` treat the literal
+   word "test" (any casing) as a request to leave that one field alone --
+   the date cell, or that subject's score cell, is left at the template's
+   own default instead of being written, the same way an omitted answer
+   already is left blank -- rather than requiring a real value every
+   single run when checking this pipeline's own answer-extraction against
+   a reference copy is all that actually matters. Not the same as
+   cancelling the dialog, which still fails the whole report -- typing
+   "test" always succeeds immediately, no re-prompting.
+7. **A SAT/DSAT report only shows the Module 2 variant actually
    administered -- and always in the same place.** The template ships
    with two same-difficulty pairs of Module 2 blocks per subject (Higher
    x2, Lower x2 -- see `sat_score_report_writer.py`'s own module
@@ -711,7 +722,7 @@ worked, or to look around the folder tree while debugging.
      for the exact same reason the table is, and should move right along
      with it once that's fixed, without needing a fix of its own beyond
      what's already here.
-7. **Where files land, and how they're named.** PDFs (and any flagged
+8. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
    report's own filename (and the kept Google Sheet working copy behind

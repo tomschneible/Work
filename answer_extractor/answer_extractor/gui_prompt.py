@@ -28,6 +28,16 @@ run, which is exactly why every caller of this gets its prompt function
 injected rather than calling osascript directly (see
 sat_score_report_pipeline.py and score_report_pipeline.py for the real
 callers; tests pass a fake).
+
+Both prompt_for_date and sat_score_report_pipeline._prompt_for_section_score
+also treat the literal word "test" as a request to skip that field
+entirely (see SKIP) -- a fast path added for checking this pipeline's own
+answer-extraction against a reference copy, where the date and section
+scores don't matter and retyping a real one every single run just slows
+that down. Skipping is not the same as cancelling: a cancelled dialog
+still fails the whole report (nothing to build one from), while a skipped
+field just leaves that one cell at the template's own default, same as an
+omitted answer already does.
 """
 from __future__ import annotations
 
@@ -36,6 +46,20 @@ import subprocess
 from typing import Callable, Optional
 
 _APP_TITLE = "Answer Extractor"
+
+
+class TestModeSkip:
+    """SKIP's own type -- a dedicated sentinel, not e.g. a plain string or
+    None, so it can never collide with a real parsed value (a date, a
+    score) or with a cancelled dialog's own None. See this module's own
+    docstring for what it means and prompt_for_date for where it comes
+    from."""
+
+    def __repr__(self) -> str:
+        return "SKIP"
+
+
+SKIP = TestModeSkip()
 
 
 def prompt_for_text(message: str, default_answer: str = "") -> Optional[str]:
@@ -71,7 +95,7 @@ def prompt_for_text(message: str, default_answer: str = "") -> Optional[str]:
 
 def prompt_for_date(
     prompt_fn: Callable[[str, str], Optional[str]], base_message: str, default_answer: str = ""
-) -> Optional[dt.date]:
+) -> dt.date | TestModeSkip | None:
     """Like `prompt_fn` (e.g. prompt_for_text) itself, but only returns
     once a real calendar date in M/D/YYYY form (e.g. "3/8/2026" -- the
     way this org's own staff write a date by hand, not the zero-padded
@@ -82,6 +106,11 @@ def prompt_for_date(
     never raised here; see this module's own docstring for why a
     cancelled prompt is a per-report ValueError instead, raised by the
     caller, not here).
+
+    Also returns SKIP, without re-prompting, if the literal word "test"
+    (any casing) is entered instead of a date -- see this module's own
+    docstring for what that means and why it's distinct from both a real
+    date and a cancelled dialog's own None.
 
     `base_message` is the question asked every time -- a bad answer's
     own retry prompt is built fresh from it each time (prefixed with
@@ -95,6 +124,8 @@ def prompt_for_date(
         if raw is None:
             return None
         raw = raw.strip()
+        if raw.lower() == "test":
+            return SKIP
         try:
             return dt.datetime.strptime(raw, "%m/%d/%Y").date()
         except ValueError:

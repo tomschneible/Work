@@ -17,7 +17,7 @@ from googleapiclient.discovery import Resource
 
 from .export import write_xlsx
 from .google_score_report_export import export_score_report
-from .gui_prompt import prompt_for_date, prompt_for_text
+from .gui_prompt import SKIP, prompt_for_date, prompt_for_text
 from .pipeline import SheetResult
 from .scan_filename import ScanFilename, parse_scan_filename
 from .scoresheet_grid import normalize_section
@@ -93,7 +93,11 @@ def export_sheet_report(
     sat_score_report_pipeline.export_sat_report for the same change on the
     SAT/DSAT side). output_base_name's own output-file naming convention
     still reads its date from the input filename, unchanged -- only what's
-    actually written into the report moved off it.
+    actually written into the report moved off it. Typing the literal
+    word "test" at that prompt (see gui_prompt.SKIP) leaves the date cell
+    at the template's own default instead of failing -- meant for checking
+    this pipeline's own answer-extraction against a reference copy, where
+    the date doesn't matter.
 
     Raises ValueError (from scan_filename.parse_scan_filename or
     template_lookup, surfaced through export_score_report) if the sheet's
@@ -117,6 +121,11 @@ def export_sheet_report(
     test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
+    # SKIP (typed "test") is translated to plain None here, not passed
+    # through as-is -- export_score_report/fill_score_report only need to
+    # know "don't fill the date cell", not gui_prompt's own sentinel.
+    if test_date is SKIP:
+        test_date = None
 
     pdf_bytes = export_score_report(
         drive=drive,

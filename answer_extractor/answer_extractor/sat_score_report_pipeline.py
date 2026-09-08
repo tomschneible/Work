@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from googleapiclient.discovery import Resource
 
 from .google_sat_simplified_score_report_export import export_simple_sat_score_report
-from .gui_prompt import prompt_for_date, prompt_for_text
+from .gui_prompt import SKIP, TestModeSkip, prompt_for_date, prompt_for_text
 from .sat_score_report_writer import SatKey, normalize_subject
 from .scan_filename import parse_scan_filename
 from .score_report import ScoreReportRow
@@ -99,12 +99,17 @@ def active_variants_from_rows(rows: List[ScoreReportRow]) -> Dict[str, str]:
 
 def _prompt_for_section_score(
     prompt_fn: Callable[[str, str], Optional[str]], student_name: str, subject: str
-) -> Optional[int]:
+) -> int | TestModeSkip | None:
     """One subject's score prompt, re-prompting (with the invalid entry
     kept as the new default, so fixing a typo doesn't mean retyping the
     whole thing) until a whole number 200-800 is entered or the dialog is
     cancelled -- unbounded only in the sense a person could keep entering
-    garbage; nothing here loops on its own."""
+    garbage; nothing here loops on its own.
+
+    Also returns SKIP, without re-prompting, if the literal word "test"
+    (any casing) is entered instead of a score -- see gui_prompt.py's own
+    module docstring for what that means and why it's distinct from both
+    a real score and a cancelled dialog's own None."""
     message = f"{student_name}'s {subject.title()} section score (200-800)?"
     default = ""
     while True:
@@ -112,6 +117,8 @@ def _prompt_for_section_score(
         if raw is None:
             return None
         raw = raw.strip()
+        if raw.lower() == "test":
+            return SKIP
         if raw.isdigit() and _SCORE_MIN <= int(raw) <= _SCORE_MAX:
             return int(raw)
         default = raw
@@ -147,7 +154,11 @@ def export_sat_report(
     nothing upstream can compute or extract that value at all (see
     sat_simplified_score_report_writer.fill_simple_sat_score_report's
     docstring) -- in `_SUBJECT_PROMPT_ORDER` (Reading and Writing, then
-    Math, the exam's own section order), not alphabetically. Raises
+    Math, the exam's own section order), not alphabetically. Typing the
+    literal word "test" at either prompt (see gui_prompt.SKIP) leaves
+    that one field at the template's own default instead of failing --
+    meant for checking this pipeline's own answer-extraction against a
+    reference copy, where the date and scores don't matter. Raises
     ValueError if `rows` is empty, its source
     filename isn't an ACT/DSAT/SAT-shaped name for the SAT family, a
     section's Module 2 difficulty couldn't be identified, or the date or
@@ -175,6 +186,11 @@ def export_sat_report(
     test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
+    # SKIP (typed "test") is translated to plain None here, not passed
+    # through as-is -- fill_simple_sat_score_report only needs to know
+    # "don't fill the date cell", not gui_prompt's own test-mode sentinel.
+    if test_date is SKIP:
+        test_date = None
     base_name = scan.canonical_filename()
 
     present_subjects = {normalize_subject(row.section) for row in rows}
@@ -184,6 +200,8 @@ def export_sat_report(
         score = _prompt_for_section_score(prompt_fn, scan.student_name, subject)
         if score is None:
             raise ValueError(f"No {subject} score was entered for {scan.student_name} -- cancelled")
+        if score is SKIP:
+            continue  # leaves this subject's score cell at the template's own default
         section_scores[subject] = score
 
     pdf_bytes = export_simple_sat_score_report(

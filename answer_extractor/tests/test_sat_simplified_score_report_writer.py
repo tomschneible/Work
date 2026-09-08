@@ -180,6 +180,35 @@ def test_fill_simple_sat_score_report_writes_name_date_answers_and_reference_dat
     # behavior worth pinning down).
 
 
+def test_fill_simple_sat_score_report_leaves_the_date_cell_alone_in_test_mode(tmp_path):
+    """test_date=None (gui_prompt.SKIP, typing "test" at the prompt,
+    translated by sat_score_report_pipeline.py) skips the date cell
+    entirely -- the name, test number, answers, and scores still get
+    written normally."""
+    template_path = tmp_path / "simple_template.xlsx"
+    _write_simple_template(template_path)
+    reference_path = tmp_path / "reference_template.xlsx"
+    _write_reference_template(reference_path)
+    reference_ws = openpyxl.load_workbook(reference_path)["Student Responses"]
+
+    result = fill_simple_sat_score_report(
+        template_path,
+        reference_ws,
+        answers={("reading and writing", "module1", 1): "A"},
+        active_variants={"reading and writing": "harder"},
+        student_name="Jane Student",
+        test_date=None,
+        test_code="4",
+        section_scores={"reading and writing": 690},
+    )
+
+    assert _at(result, "A1") == "Jane Student"  # still written
+    assert _at(result, "A2") is _MISSING  # the date cell -- untouched
+    assert _at(result, "X3", sheet="Score Report") == "Digital SAT #4"  # still written
+    assert _at(result, "B6") == "A"  # still written
+    assert _at(result, "AN10") == 690  # still written
+
+
 def test_fill_simple_sat_score_report_copies_the_reference_correct_columns_own_font_size(tmp_path):
     """Confirmed against a real template pair: the current-format
     template's own correct_col explicitly overrides its font size, but

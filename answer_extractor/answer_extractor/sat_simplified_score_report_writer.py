@@ -179,7 +179,7 @@ def fill_simple_sat_score_report(
     answers: Mapping[SatKey, str],
     active_variants: Mapping[str, str],
     student_name: str,
-    test_date: dt.date | str,
+    test_date: dt.date | str | None,
     test_code: str,
     section_scores: Optional[Mapping[str, int]] = None,
     sheet_name: str = "Student Responses",
@@ -191,6 +191,12 @@ def fill_simple_sat_score_report(
     what `active_variants`/`answers`/`section_scores` mean, all shared
     verbatim; the difference here is entirely about *where things go*,
     not what they mean.
+
+    `test_date` is None for a "test mode" run (gui_prompt.SKIP, translated
+    to plain None by the caller -- see sat_score_report_pipeline.py's own
+    module docstring) -- leaves the date cell at the template's own
+    default instead of writing into it, the same way an absent subject in
+    `section_scores` already leaves that subject's own score cell alone.
 
     `test_code` (e.g. "4") also fills in the "Score Report" tab's own
     "Digital SAT <placeholder>" cell as "Digital SAT #4" -- see
@@ -234,10 +240,11 @@ def fill_simple_sat_score_report(
     test_number_sheet, test_number_row, test_number_col = _find_test_number_cell(wb)
     writes = [
         CellWrite(sheet_name, name_row, name_col, student_name),
-        # date sits directly below name
-        CellWrite(sheet_name, name_row + 1, name_col, format_date_for_sheets(test_date)),
         CellWrite(test_number_sheet, test_number_row, test_number_col, f"Digital SAT #{test_code}"),
     ]
+    if test_date is not None:
+        # date sits directly below name
+        writes.append(CellWrite(sheet_name, name_row + 1, name_col, format_date_for_sheets(test_date)))
 
     if section_scores:
         score_cells = find_score_value_cells(ws)

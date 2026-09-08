@@ -3,7 +3,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from answer_extractor.gui_prompt import SKIP
 from answer_extractor.sat_score_report_pipeline import (
+    _prompt_for_section_score,
     active_variants_from_rows,
     answers_from_rows,
     export_sat_report,
@@ -68,6 +70,15 @@ def test_active_variants_from_rows_raises_on_disagreement():
         active_variants_from_rows(rows)
 
 
+def test_prompt_for_section_score_returns_skip_for_the_word_test_without_retrying():
+    prompt_fn = MagicMock(return_value="Test")
+
+    result = _prompt_for_section_score(prompt_fn, "Jane Student", "math")
+
+    assert result is SKIP
+    assert prompt_fn.call_count == 1
+
+
 def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path):
     rows = [
         _row(1, 1, "Reading and Writing", "A", "Module 1"),
@@ -98,6 +109,26 @@ def test_export_sat_report_prompts_once_per_subject_and_writes_the_pdf(tmp_path)
     assert kwargs["test_date"] == dt.date(2026, 3, 8)  # the prompted date, not the filename's own
     assert kwargs["active_variants"] == {"reading and writing": "harder", "math": "easier"}
     assert kwargs["section_scores"] == {"reading and writing": 590, "math": 620}
+
+
+def test_export_sat_report_test_mode_skips_date_and_scores(tmp_path):
+    """Typing "test" at the date prompt or a score prompt (any casing)
+    leaves that field out entirely -- gui_prompt.SKIP, translated to
+    plain None for the date and to "no entry in section_scores" for a
+    score -- rather than failing the way a cancelled prompt does."""
+    rows = [
+        _row(1, 1, "Reading and Writing", "A", "Module 1"),
+        _row(3, 1, "Math", "B", "Module 1"),
+    ]
+    prompt_fn = MagicMock(side_effect=["Test", "test", "TEST"])  # date, R&W score, Math score
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake") as export_mock:
+        export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+
+    assert prompt_fn.call_count == 3  # no re-prompting -- "test" is accepted immediately
+    kwargs = export_mock.call_args.kwargs
+    assert kwargs["test_date"] is None
+    assert kwargs["section_scores"] == {}
 
 
 def test_export_sat_report_reprompts_on_invalid_input_before_succeeding(tmp_path):
