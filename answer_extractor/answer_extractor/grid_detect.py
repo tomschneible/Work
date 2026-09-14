@@ -20,9 +20,14 @@ run per-sheet instead of once by hand), and snap each expected bubble to
 its nearest detected glyph. Occasional individual misses (a heavy/sloppy
 mark's ink merging into an oversized contour that fails the glyph size
 filter, say) don't sink the whole section: any bubble that can't be
-matched directly falls back to its nominal template position corrected by
-the section's median observed shift, which is still far more accurate
-than an uncorrected nominal position.
+matched directly is first estimated from that exact row's own other,
+successfully-matched bubbles when there are enough of them to fit a line
+from (see _interpolate_missing_x -- this row's own real spacing/shift is
+far more targeted evidence than a section-wide statistic), and only
+falls back to its nominal template position corrected by the section's
+median observed shift when the row itself doesn't have enough matched
+neighbors to interpolate from -- still far more accurate than an
+uncorrected nominal position.
 
 Falls back to the template's fixed nominal coordinates (no correction) only
 for a section where detection can't establish the expected row structure
@@ -41,6 +46,16 @@ relative to its neighbors, just uniformly offset. See
 _uniform_shift_match for how a shift like that is told apart from a
 merely coincidental count match (a missing bubble swapped for a
 same-sized stray label).
+
+And on a fourth real scan: a single heavily-scribbled mark's own ink
+merged into a contour too tall to pass the glyph size filter at all, in a
+row whose other three bubbles were otherwise found exactly where
+expected -- but that row's own true position (uniformly ~12px off
+nominal) wasn't reflected in the section-wide median shift at all, which
+was dominated by many other, unshifted rows elsewhere on the same sheet.
+The section-wide fallback landed the sampling circle just far enough off
+the real mark to read a confidently, solidly marked answer as an
+unclear four-way tie instead. See _interpolate_missing_x.
 """
 from __future__ import annotations
 
@@ -609,6 +624,34 @@ def _resolve_extra_boxes_by_column_shift(
     return best_window
 
 
+def _interpolate_missing_x(nx: float, row_pairs: List[Tuple[float, float]]) -> Optional[float]:
+    """Estimate a still-missing slot's real x from this exact row's own
+    already-matched (nominal_x, matched_x) pairs -- a linear fit
+    (matched_x = a*nominal_x + b) reflecting this row's own actual spacing
+    and shift, which is more targeted evidence than the section-wide
+    median dx locate_section_bubbles falls back to otherwise. Needs at
+    least two matched pairs in the same row to fit a line at all; None
+    (falls through to that section-wide fallback) otherwise.
+
+    Confirmed against a real sheet: a heavily-scribbled mark's own ink
+    merged into a contour that failed the glyph size filter entirely (see
+    this module's own docstring on "occasional individual misses"), so
+    that one slot in an otherwise fully-matched row fell through all the
+    way to the section-wide median-shift fallback -- which landed the
+    sampling circle ~12px off the real bubble (more than a full
+    bubble_radius), wiping a confidently, solidly marked answer to blank.
+    That row's own other three slots, though, already bracketed the real
+    position almost exactly; a linear fit from them alone (no section-wide
+    statistic needed) puts the estimate within a pixel of where the same
+    choice actually lands on the neighboring rows."""
+    if len(row_pairs) < 2:
+        return None
+    nominal_xs = [p[0] for p in row_pairs]
+    matched_xs = [p[1] for p in row_pairs]
+    slope, intercept = np.polyfit(nominal_xs, matched_xs, 1)
+    return slope * nx + intercept
+
+
 def locate_section_bubbles(
     gray: np.ndarray, template: Template, section: Section
 ) -> Optional[Dict[int, List[tuple]]]:
@@ -861,12 +904,17 @@ def locate_section_bubbles(
     result: Dict[int, List[tuple]] = {}
     for question, slots in detected.items():
         dx = column_dx.get(question_column_x_start[question], median_dx)
+        row_pairs = [
+            (nx, match[0]) for (choice, nx, ny), match in zip(nominal[question], slots) if match is not None
+        ]
         entries = []
         for (choice, nx, ny), match in zip(nominal[question], slots):
             if match is not None:
                 x, y = match
             else:
-                x, y = nx + dx, ny + median_dy
+                interpolated_x = _interpolate_missing_x(nx, row_pairs)
+                x = interpolated_x if interpolated_x is not None else nx + dx
+                y = ny + median_dy
             entries.append((choice, round(x), round(y)))
         result[question] = entries
 

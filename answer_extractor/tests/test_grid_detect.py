@@ -17,6 +17,7 @@ from answer_extractor.grid_detect import (
     _drop_size_outlier_boxes,
     _drop_sparse_rows,
     _find_glyph_boxes,
+    _interpolate_missing_x,
     _match_to_slots,
     _positions_uniform,
     _resolve_extra_boxes_by_column_shift,
@@ -537,6 +538,79 @@ def test_locate_section_bubbles_recovers_a_short_row_in_a_shifted_column():
     # Column B (never shifted, never missing a box) must read correctly
     # throughout -- confirms the fix doesn't perturb an unrelated column.
     assert by_q[3] == "G"
+
+
+def test_interpolate_missing_x_fits_a_line_from_the_rows_own_matched_pairs():
+    # Row's own true shift is +12 (nominal -> matched), consistent across
+    # three points -- the missing slot's own nominal is 180, so its real
+    # position should come back as 192.
+    row_pairs = [(150.0, 162.0), (210.0, 222.0), (240.0, 252.0)]
+    assert _interpolate_missing_x(180.0, row_pairs) == 192.0
+
+
+def test_interpolate_missing_x_returns_none_with_fewer_than_two_pairs():
+    assert _interpolate_missing_x(180.0, []) is None
+    assert _interpolate_missing_x(180.0, [(150.0, 162.0)]) is None
+
+
+# -- locate_section_bubbles: missing-box-in-an-otherwise-fine-row integration
+# test ------------------------------------------------------------------
+#
+# End-to-end reproduction of the real bug fixed by _interpolate_missing_x:
+# on a real filled-in ACT sheet, a heavily-scribbled mark's own ink merged
+# into a contour too tall to pass the glyph size filter (see this module's
+# own docstring on "occasional individual misses"), so that one slot's own
+# box was never found at all -- even though the row's other three boxes
+# were all found, and, on their own, already pinned down almost exactly
+# where the missing one had to be. Without _interpolate_missing_x, the
+# last-resort fallback (that choice's nominal position plus the *section-
+# wide* median shift) landed ~12px off the real mark -- this row's own
+# true shift wasn't reflected in a section-wide statistic dominated by two
+# other, unshifted questions -- reading it as an unclear, four-way tie
+# instead of the one genuinely (and solidly) marked choice.
+
+
+def test_locate_section_bubbles_interpolates_a_missing_box_from_its_own_row():
+    template = make_two_column_template()
+    section = template.sections[0]
+    pad = template.bubble_radius + 6
+    shift = 12
+    bubbles = template.bubbles()
+
+    # Q1 (column A) and Q3 (column B) drawn unshifted and fully detected --
+    # these dominate the section-wide median shift at 0, which is exactly
+    # what makes the *old* nominal-plus-section-median fallback wrong for
+    # Q2's missing box below (this row's own true shift is +12, not 0).
+    image = render_sheet(template, {1: ["F"], 3: ["G"]}, letters=True)
+
+    # Q2 (column A, row 2, even -> A/B/C/D): every bubble actually sits
+    # `shift` px right of nominal. B's own ring is replaced by an
+    # oversized (too tall) solid blob at its own true position --
+    # simulating a heavy, sloppy mark whose ink merged into a contour
+    # that fails the glyph size filter -- while A/C/D are drawn normally,
+    # unmarked, at their own true shifted positions.
+    q2_row_y = bubbles[("Answers", 2)][0].y
+    shifted_q2 = render_sheet(template, {}, letters=True, x_shift=shift)
+    image[q2_row_y - pad : q2_row_y + pad, :450] = shifted_q2[q2_row_y - pad : q2_row_y + pad, :450]
+    b_x = next(b.x for b in bubbles[("Answers", 2)] if b.choice == "B") + shift
+    cv2.rectangle(image, (b_x - 11, q2_row_y - 20), (b_x + 11, q2_row_y + 20), (20, 20, 20), -1)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    detected = locate_section_bubbles(gray, template, section)
+    assert detected is not None
+
+    results, _ = evaluate_sheet(image, template)
+    by_q = {r.question: r for r in results}
+    # The real bug: without row-local interpolation, B's estimated position
+    # stays ~12px off its real mark, never a clear winner (confirmed
+    # against this exact scenario: fill_ratios come back as a four-way
+    # near-tie and the row reads blank instead).
+    assert by_q[2].answer == "B"
+    assert not by_q[2].low_confidence
+    # Columns/rows with no problem of their own (Q1, Q3) must still read
+    # correctly -- confirms the fix doesn't perturb them.
+    assert by_q[1].answer == "F"
+    assert by_q[3].answer == "G"
 
 
 # -- locate_section_bubbles: stray-label-plus-shift integration test ---------
