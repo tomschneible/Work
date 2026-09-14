@@ -244,16 +244,46 @@ def _assign_comparison_roles(
     return scoresheet_pdfs[0], scoresheet_pdfs[1]
 
 
+def _names_agree_or_unknown(path_a: Path, path_b: Path) -> bool:
+    """True unless `path_a` and `path_b` both have names that parse (via
+    scan_filename.parse_scan_filename) to *different* students -- the one
+    case _pair_with_pending_drop should refuse to combine. True
+    (permissive) whenever either side's name doesn't follow that
+    convention at all, since that's the ordinary shape of an externally-
+    sourced reference report (see this pipeline's own naming-convention
+    docs) -- nothing to compare, not evidence of a real mismatch."""
+    try:
+        name_a = parse_scan_filename(path_a.stem).student_name
+    except ValueError:
+        return True
+    try:
+        name_b = parse_scan_filename(path_b.stem).student_name
+    except ValueError:
+        return True
+    return name_a == name_b
+
+
 def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
     """See _PENDING_COMPARE_MARKER's own comment for why this exists at
     all. If a still-fresh marker from an earlier, separate launch exists
     (and doesn't just name this same file again -- a launch retried or
-    somehow duplicated shouldn't pair a file with itself), clears it and
-    returns that earlier file, so the caller can run the comparison
-    exactly as if both had arrived in one drop. Otherwise records
-    `candidate` as the new pending file (overwriting whatever was there
-    -- an unpaired file from over _PENDING_COMPARE_TIMEOUT_SECONDS ago is
-    stale, not still waiting) and returns None.
+    somehow duplicated shouldn't pair a file with itself -- and doesn't
+    name a *different* student than `candidate`, see
+    _names_agree_or_unknown), clears it and returns that earlier file, so
+    the caller can run the comparison exactly as if both had arrived in
+    one drop. Otherwise records `candidate` as the new pending file
+    (overwriting whatever was there -- an unpaired file from over
+    _PENDING_COMPARE_TIMEOUT_SECONDS ago is stale, not still waiting) and
+    returns None.
+
+    The student-name check matters precisely because this mechanism
+    bridges *separate* launches: checking several different students in a
+    row, each dropped alone, is an entirely ordinary way to use this
+    droplet, not a mistake -- without it, two such drops landing within
+    _PENDING_COMPARE_TIMEOUT_SECONDS of each other would silently produce
+    a comparison between the wrong two people's reports instead of each
+    waiting for its own real pair. A mismatch is treated the same as a
+    stale marker: `candidate` simply becomes the new pending file.
 
     A corrupt or unreadable marker is treated the same as no marker at
     all -- this is a convenience for a real, confirmed OS quirk, not
@@ -263,7 +293,11 @@ def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
             recorded = json.loads(_PENDING_COMPARE_MARKER.read_text())
             recorded_path = Path(recorded["path"])
             age_seconds = time.time() - recorded["timestamp"]
-            if age_seconds <= _PENDING_COMPARE_TIMEOUT_SECONDS and recorded_path != candidate:
+            if (
+                age_seconds <= _PENDING_COMPARE_TIMEOUT_SECONDS
+                and recorded_path != candidate
+                and _names_agree_or_unknown(recorded_path, candidate)
+            ):
                 _PENDING_COMPARE_MARKER.unlink(missing_ok=True)
                 return recorded_path
     except Exception:

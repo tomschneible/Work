@@ -9,6 +9,7 @@ import pytest
 from openpyxl import load_workbook
 
 from answer_extractor.auto_compare_cli import (
+    _names_agree_or_unknown,
     _next_available_path,
     _pair_with_pending_drop,
     _student_name_for_output,
@@ -461,6 +462,26 @@ def test_a_student_named_output_conflict_is_numbered_like_finder_downloads(tmp_p
     assert (tmp_path / "Rivera, Sam comparison (2).xlsx").exists()
 
 
+def test_names_agree_or_unknown_is_true_for_the_same_student(tmp_path):
+    a = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    b = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026_2.pdf"
+    assert _names_agree_or_unknown(a, b) is True
+
+
+def test_names_agree_or_unknown_is_false_for_two_different_students(tmp_path):
+    a = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    b = tmp_path / "Diaz, Ana 2026 DSAT 3 March 3 2026.pdf"
+    assert _names_agree_or_unknown(a, b) is False
+
+
+def test_names_agree_or_unknown_is_true_when_either_side_does_not_parse(tmp_path):
+    named = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    unnamed = tmp_path / "vendor_answer_key.pdf"
+    assert _names_agree_or_unknown(named, unnamed) is True
+    assert _names_agree_or_unknown(unnamed, named) is True
+    assert _names_agree_or_unknown(unnamed, unnamed) is True
+
+
 def test_pair_with_pending_drop_records_the_first_file_and_returns_none(tmp_path):
     marker = tmp_path / "pending.json"
     with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
@@ -513,6 +534,42 @@ def test_pair_with_pending_drop_treats_a_corrupt_marker_as_no_marker(tmp_path):
 
     assert result is None
     assert json.loads(marker.read_text())["path"] == str(tmp_path / "b.pdf")
+
+
+def test_pair_with_pending_drop_refuses_to_pair_two_different_students(tmp_path):
+    """The real risk this guards against: checking several different
+    students in a row, each dropped alone, is ordinary use of this
+    droplet -- without _names_agree_or_unknown, a second student's lone
+    PDF landing within _PENDING_COMPARE_TIMEOUT_SECONDS of a first
+    student's would silently pair the two of them together instead of
+    each waiting for its own real pair."""
+    marker = tmp_path / "pending.json"
+    first = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    second = tmp_path / "Diaz, Ana 2026 DSAT 3 March 3 2026.pdf"
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        _pair_with_pending_drop(first)
+        result = _pair_with_pending_drop(second)
+
+    assert result is None  # refused -- not a real pair, just two different students
+    # `second` becomes the new pending file, same as a stale/corrupt marker.
+    assert json.loads(marker.read_text())["path"] == str(second)
+
+
+def test_pair_with_pending_drop_still_pairs_the_same_student(tmp_path):
+    """The safety check in the test above must not get in the way of the
+    ordinary case it's meant to leave alone: the same student's own two
+    files, dropped separately, still pair up."""
+    marker = tmp_path / "pending.json"
+    first = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    second = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026_reference.pdf"
+
+    with patch(f"{_MODULE}._PENDING_COMPARE_MARKER", marker):
+        _pair_with_pending_drop(first)
+        result = _pair_with_pending_drop(second)
+
+    assert result == first
+    assert not marker.exists()
 
 
 @pdf_pytestmark
