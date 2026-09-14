@@ -108,79 +108,36 @@ from __future__ import annotations
 import argparse
 import io
 import sys
-import time
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 import openpyxl
-from googleapiclient.discovery import Resource
-from googleapiclient.errors import HttpError
 from openpyxl.utils import get_column_letter
 
 from .google_sheets_export import (
-    CellWrite,
     build_services,
     clear_notes,
     export_xlsx,
     hide_gridlines,
+    is_rate_limit_error,
     list_folder,
     write_cells,
 )
 from .sat_simplified_template_repair import find_note_cells, repair_calculations_writes
 
-# repair-simplified-calculations' own write chunking/retry -- see
-# _write_with_rate_limit_retry and _is_rate_limit_error below, and this
-# module's own docstring (command 4) for the full reasoning.
+# repair-simplified-calculations' own write chunking -- see this module's
+# own docstring (command 4) for the full reasoning. The retry itself (a
+# transient 429, "RATE_LIMIT_EXCEEDED") is no longer this command's own --
+# every write helper in google_sheets_export.py (write_cells included)
+# now retries that internally (see its own _execute_with_rate_limit_retry
+# and is_rate_limit_error), since the per-report export path needed the
+# exact same protection this command already had; is_rate_limit_error is
+# still imported here so this command's own per-cell fallback below can
+# tell "still rate-limited after write_cells already retried" apart from
+# a genuinely failed (e.g. protected-range) write in its summary.
 _WRITE_CHUNK_SIZE = 20  # 216 cells / 20 -> 11 requests in the common (nothing protected) case --
 # comfortably under the 60-writes-per-minute-per-user quota with no pacing needed at all; even a
 # single bad chunk's own fallback (up to 20 more individual requests, see main() below) keeps a
 # whole run's total request count well clear of that quota too.
-_RATE_LIMIT_MAX_RETRIES = 3
-_RATE_LIMIT_RETRY_SECONDS = 65  # a little over the 60-second window WriteRequestsPerMinutePerUser is measured over
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """True for a Google API 429 ("RATE_LIMIT_EXCEEDED") -- confirmed live
-    against a real repair-simplified-calculations run that (before
-    chunking, see _WRITE_CHUNK_SIZE above) issued one write_cells call
-    per cell and blew through Sheets' own 60-writes-per-minute-per-user
-    quota well before 216 cells were done. Checked the same way
-    google_report_export_common._cleanup_delete_is_actionable already
-    checks its own different status code (404): `exc.status_code`, a
-    convenience property googleapiclient's own HttpError exposes as
-    `self.resp.status` -- not by parsing `reason`/`quota_metric` out of
-    the error body, since status is the stable part of this across
-    client versions. Deliberately narrow: a 400 "trying to edit a
-    protected cell" (the other failure this command has hit live) is a
-    different, *permanent* kind of failure that retrying would just
-    reproduce identically every time -- see _write_with_rate_limit_retry
-    for why that distinction matters."""
-    return isinstance(exc, HttpError) and exc.status_code == 429
-
-
-def _write_with_rate_limit_retry(sheets: Resource, target_file_id: str, cells: Sequence[CellWrite]) -> None:
-    """write_cells, retrying only a transient 429 (_is_rate_limit_error)
-    -- up to _RATE_LIMIT_MAX_RETRIES times, sleeping
-    _RATE_LIMIT_RETRY_SECONDS between attempts. Anything else -- a
-    protected-cell 400, or a 429 that still hasn't cleared after every
-    retry -- propagates unchanged, so a caller sees exactly the same
-    exception either way; this only ever adds retries around a transient
-    failure, never changes what a non-retryable or exhausted one looks
-    like."""
-    attempts = 0
-    while True:
-        try:
-            write_cells(sheets, target_file_id, cells)
-            return
-        except Exception as exc:
-            attempts += 1
-            if not _is_rate_limit_error(exc) or attempts > _RATE_LIMIT_MAX_RETRIES:
-                raise
-            print(
-                f"  Rate-limited by Sheets (60 writes/minute) -- waiting {_RATE_LIMIT_RETRY_SECONDS}s "
-                f"before retrying (attempt {attempts}/{_RATE_LIMIT_MAX_RETRIES})...",
-                file=sys.stderr,
-            )
-            time.sleep(_RATE_LIMIT_RETRY_SECONDS)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -272,7 +229,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for start in range(0, len(writes), _WRITE_CHUNK_SIZE):
             chunk = writes[start : start + _WRITE_CHUNK_SIZE]
             try:
-                _write_with_rate_limit_retry(sheets, args.target_file_id, chunk)
+                write_cells(sheets, args.target_file_id, chunk)
             except Exception:
                 # This chunk itself failed -- one blocked or still-rate-
                 # limited cell fails the whole batched call (see this
@@ -282,10 +239,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for w in chunk:
                     coord = f"{w.sheet}!{get_column_letter(w.column)}{w.row}"
                     try:
-                        _write_with_rate_limit_retry(sheets, args.target_file_id, [w])
+                        write_cells(sheets, args.target_file_id, [w])
                     except Exception as exc:
                         failures += 1
-                        if _is_rate_limit_error(exc):
+                        if is_rate_limit_error(exc):
                             rate_limit_failures += 1
                             print(f"Warning: {coord} is still rate-limited after retrying.", file=sys.stderr)
                         else:

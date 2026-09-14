@@ -263,6 +263,15 @@ worked, or to look around the folder tree while debugging.
    ever re-converted through `.xlsx` at all any more, so nothing about a
    tab's own formatting is at risk from this pipeline, no matter what
    Drive's `.xlsx` import does or doesn't preserve faithfully.
+   `write_cells` and every other Sheets-API-writing helper
+   `export_filled_report` chains (clearing cells, hiding/narrowing
+   columns, deleting rows, ...) retry automatically on a transient `429
+   RATE_LIMIT_EXCEEDED` (`google_sheets_export._execute_with_rate_limit_retry`
+   -- the same protection `repair-simplified-calculations` needed for the
+   same quota, see "Repairing the simplified template's own formulas"
+   below), so generating several reports back-to-back -- ordinary use at
+   the end of a testing session, not a misuse -- surfaces a rate limit hit
+   as a brief automatic wait rather than a crash mid-report.
    `export_pdf` then renders the final PDF -- via Sheets' own dedicated
    export URL (the same one "File > Download > PDF" in the Sheets UI
    itself uses), not Drive's generic file-export call: confirmed live

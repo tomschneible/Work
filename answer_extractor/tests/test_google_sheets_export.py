@@ -6,9 +6,13 @@ real network call."""
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
+import httplib2
 import pytest
+from googleapiclient.errors import HttpError
 
 from answer_extractor.google_sheets_export import (
+    _RATE_LIMIT_MAX_RETRIES,
+    _RATE_LIMIT_RETRY_SECONDS,
     CellWrite,
     allow_text_overflow,
     clear_cells,
@@ -22,12 +26,22 @@ from answer_extractor.google_sheets_export import (
     format_date_for_sheets,
     hide_columns,
     hide_gridlines,
+    is_rate_limit_error,
     list_folder,
     narrow_columns,
     replace_content,
     set_font_sizes,
     write_cells,
 )
+
+
+def _http_error(status: int) -> HttpError:
+    """Same construction test_google_report_export_common.py's and
+    test_google_sheets_cli.py's own _http_error helpers use -- a real
+    HttpError, not a generic Exception, since is_rate_limit_error checks
+    `isinstance(exc, HttpError)` specifically (see that function's own
+    docstring for why)."""
+    return HttpError(httplib2.Response({"status": str(status)}), b'{"error": {"message": "nope"}}')
 
 
 def test_list_folder_queries_by_parent_and_requests_shared_drive_support():
@@ -268,6 +282,56 @@ def test_write_cells_is_a_no_op_for_an_empty_list():
     write_cells(sheets, "SPREADSHEET_ID", [])
 
     sheets.spreadsheets.assert_not_called()
+
+
+def test_is_rate_limit_error_is_true_only_for_a_real_429_http_error():
+    assert is_rate_limit_error(_http_error(429)) is True
+    assert is_rate_limit_error(_http_error(400)) is False  # a real HttpError, wrong status
+    assert is_rate_limit_error(Exception("Invalid data[0]: protected cell")) is False  # not an HttpError at all
+
+
+def test_write_cells_retries_a_transient_rate_limit_error_and_then_succeeds():
+    """write_cells is the representative call here, but the retry itself
+    (_execute_with_rate_limit_retry) is shared by every write helper in
+    this module -- confirmed live that enough Sheets API write calls in a
+    short window reliably trips its 60-writes-per-minute-per-user quota
+    (see this module's own top-of-file comment); one test of the shared
+    mechanism is enough, rather than repeating it per helper."""
+    sheets = MagicMock()
+    execute_mock = sheets.spreadsheets.return_value.values.return_value.batchUpdate.return_value.execute
+    execute_mock.side_effect = [_http_error(429), None]
+
+    with patch("answer_extractor.google_sheets_export.time.sleep") as sleep_mock:
+        write_cells(sheets, "SPREADSHEET_ID", [CellWrite("ScoreSheet", 1, 1, "A")])
+
+    assert execute_mock.call_count == 2  # the 429'd attempt, then the retry that succeeded
+    sleep_mock.assert_called_once_with(_RATE_LIMIT_RETRY_SECONDS)
+
+
+def test_write_cells_gives_up_after_max_retries_and_raises():
+    sheets = MagicMock()
+    execute_mock = sheets.spreadsheets.return_value.values.return_value.batchUpdate.return_value.execute
+    execute_mock.side_effect = _http_error(429)  # every attempt 429s, none ever clear
+
+    with patch("answer_extractor.google_sheets_export.time.sleep"), pytest.raises(HttpError):
+        write_cells(sheets, "SPREADSHEET_ID", [CellWrite("ScoreSheet", 1, 1, "A")])
+
+    assert execute_mock.call_count == _RATE_LIMIT_MAX_RETRIES + 1  # the original attempt plus every retry
+
+
+def test_write_cells_does_not_retry_a_non_rate_limit_error():
+    """A protected-cell 400 (or any other non-429 failure) is permanent --
+    retrying would just reproduce it identically, so it propagates on the
+    very first attempt."""
+    sheets = MagicMock()
+    execute_mock = sheets.spreadsheets.return_value.values.return_value.batchUpdate.return_value.execute
+    execute_mock.side_effect = _http_error(400)
+
+    with patch("answer_extractor.google_sheets_export.time.sleep") as sleep_mock, pytest.raises(HttpError):
+        write_cells(sheets, "SPREADSHEET_ID", [CellWrite("ScoreSheet", 1, 1, "A")])
+
+    assert execute_mock.call_count == 1
+    sleep_mock.assert_not_called()
 
 
 def test_hide_gridlines_updates_every_sheet_that_still_has_them_showing():

@@ -5,8 +5,15 @@ setup-only wrappers not covered here (see the module's own docstring).
 repair_calculations_writes' and find_note_cells' own transform logic is
 covered in test_sat_simplified_template_repair.py; these only check each
 command's own wiring (download, dispatch, write, report) -- including
-repair-simplified-calculations' own chunking and rate-limit retry around
-write_cells (_write_with_rate_limit_retry, _is_rate_limit_error)."""
+repair-simplified-calculations' own chunking. The rate-limit retry itself
+now lives in google_sheets_export.write_cells (shared by every write
+helper there, not just this command) -- see test_google_sheets_export.py
+for that mechanism's own tests (_execute_with_rate_limit_retry,
+is_rate_limit_error); write_cells is mocked out here (as a black box that
+either succeeds or raises, the same as any other caller sees it, retries
+already exhausted either way), so only this command's own reporting of a
+still-rate-limited cell (distinct from a genuinely protected one) is
+covered below."""
 import io
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +21,7 @@ import httplib2
 import openpyxl
 from googleapiclient.errors import HttpError
 
-from answer_extractor.google_sheets_cli import _RATE_LIMIT_RETRY_SECONDS, _WRITE_CHUNK_SIZE, main
+from answer_extractor.google_sheets_cli import _WRITE_CHUNK_SIZE, main
 from answer_extractor.google_sheets_export import CellWrite
 
 _MODULE = "answer_extractor.google_sheets_cli"
@@ -30,7 +37,7 @@ def _xlsx_bytes() -> bytes:
 def _http_error(status: int) -> HttpError:
     """Same construction test_google_report_export_common.py's own
     _http_error helper uses -- a real HttpError, not a generic Exception,
-    since _is_rate_limit_error checks `isinstance(exc, HttpError)`
+    since is_rate_limit_error checks `isinstance(exc, HttpError)`
     specifically (see that function's own docstring for why)."""
     return HttpError(httplib2.Response({"status": str(status)}), b'{"error": {"message": "nope"}}')
 
@@ -210,42 +217,22 @@ def test_repair_simplified_calculations_keeps_going_past_one_cells_failure_and_r
     assert "couldn't be written -- likely a protected range" in result.err  # not the rate-limit message
 
 
-def test_repair_simplified_calculations_retries_a_rate_limited_chunk_and_then_succeeds(capsys):
-    """A transient 429 shouldn't fail the run at all -- retried automatically, and once
-    it clears, reported as a plain success like any other cell."""
-    fake_writes = [CellWrite("Calculations", 2, 2, "=REPAIRED_ONE()")]
-    attempts = {"n": 0}
-
-    def _fake_write_cells(sheets, file_id, cells):
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            raise _http_error(429)
-        # Second attempt succeeds.
-
-    with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
-         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()), \
-         patch(f"{_MODULE}.repair_calculations_writes", return_value=fake_writes), \
-         patch(f"{_MODULE}.write_cells", side_effect=_fake_write_cells) as write_mock, \
-         patch(f"{_MODULE}.time.sleep") as sleep_mock:
-        exit_code = main(
-            ["repair-simplified-calculations", "--reference-file-id", "REF_ID", "--target-file-id", "TARGET_ID"]
-        )
-
-    assert exit_code == 0  # the retry succeeded -- no failure reported anywhere
-    assert len(write_mock.call_args_list) == 2  # the 429'd attempt, then the retry that succeeded
-    sleep_mock.assert_called_once_with(_RATE_LIMIT_RETRY_SECONDS)
-    assert "1/1" in capsys.readouterr().out
-
-
 def test_repair_simplified_calculations_reports_a_still_rate_limited_cell_separately_from_a_protected_one(capsys):
     """Two different permanent-vs-transient failures in the same run, kept distinct in
     the final report -- a still-rate-limited cell just needs a re-run of the same
     command; a protected one needs a human to change its protection in Sheets first.
     Conflating them (the pre-chunking message did, since it had only ever seen the
     protected-cell case) would send someone to Sheets' protection settings to fix
-    something re-running the command would have resolved on its own."""
+    something re-running the command would have resolved on its own.
+
+    write_cells is mocked here as a black box, the same as every other test in this
+    file -- by the time *this* command sees either exception, write_cells' own
+    internal retry (google_sheets_export._execute_with_rate_limit_retry, tested on
+    its own terms in test_google_sheets_export.py) has already given up, so there's
+    no attempt-counting or sleep to simulate here at all; this only needs to check
+    that main() still reports a real 429 differently from a permanent failure."""
     fake_writes = [
-        CellWrite("Calculations", 2, 2, "=REPAIRED_RATE_LIMITED()"),  # B2 -- 429s every attempt
+        CellWrite("Calculations", 2, 2, "=REPAIRED_RATE_LIMITED()"),  # B2 -- still 429ing
         CellWrite("Calculations", 2, 3, "=REPAIRED_PROTECTED()"),  # C2 -- genuinely protected
     ]
 
@@ -258,8 +245,7 @@ def test_repair_simplified_calculations_reports_a_still_rate_limited_cell_separa
     with patch(f"{_MODULE}.build_services", return_value=(MagicMock(), MagicMock())), \
          patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes()), \
          patch(f"{_MODULE}.repair_calculations_writes", return_value=fake_writes), \
-         patch(f"{_MODULE}.write_cells", side_effect=_fake_write_cells), \
-         patch(f"{_MODULE}.time.sleep"):
+         patch(f"{_MODULE}.write_cells", side_effect=_fake_write_cells):
         exit_code = main(
             ["repair-simplified-calculations", "--reference-file-id", "REF_ID", "--target-file-id", "TARGET_ID"]
         )
@@ -271,14 +257,6 @@ def test_repair_simplified_calculations_reports_a_still_rate_limited_cell_separa
     assert "still rate-limited" in result.err
     assert "couldn't be written -- likely a protected range" in result.err
     assert "Calculations!C2" in result.err
-
-
-def test_is_rate_limit_error_is_true_only_for_a_real_429_http_error():
-    from answer_extractor.google_sheets_cli import _is_rate_limit_error
-
-    assert _is_rate_limit_error(_http_error(429)) is True
-    assert _is_rate_limit_error(_http_error(400)) is False  # a real HttpError, wrong status
-    assert _is_rate_limit_error(Exception("Invalid data[0]: protected cell")) is False  # not an HttpError at all
 
 
 def test_clear_notes_command_downloads_the_target_and_clears_its_notes(capsys):

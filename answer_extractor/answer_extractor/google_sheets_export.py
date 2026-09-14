@@ -59,10 +59,13 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import io
+import sys
+import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from openpyxl.utils import get_column_letter
 
@@ -71,6 +74,68 @@ from .google_auth import get_credentials
 _XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 CellValue = Union[str, int, float, bool, None]
+
+# Every write helper below funnels its actual mutating call through
+# _execute_with_rate_limit_retry now, not just google_sheets_cli's own
+# repair-simplified-calculations command, which is where this retry
+# originally lived (see that module's own docstring, command 4, for the
+# full history: confirmed live that enough Sheets API write calls in a
+# short window -- there, one write_cells call per cell, before that
+# command started chunking them -- reliably trips Sheets' own
+# WriteRequestsPerMinutePerUser quota, 60/minute). The per-report export
+# path (google_report_export_common.export_filled_report) chains up to
+# eight of these write helpers per report with no chunking of its own (each
+# already collapses its own work into one batchUpdate call), so before this
+# it had no protection at all against that exact quota -- a burst of
+# reports generated back-to-back (the ordinary way to use this pipeline at
+# the end of a testing session, not a misuse) would surface as an
+# unhandled 429 mid-report rather than a brief, automatic retry.
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_RETRY_SECONDS = 65  # a little over the 60-second window WriteRequestsPerMinutePerUser is measured over
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """True for a Google API 429 ("RATE_LIMIT_EXCEEDED") -- checked via
+    `exc.status_code`, a convenience property googleapiclient's own
+    HttpError exposes as `self.resp.status` -- not by parsing
+    `reason`/`quota_metric` out of the error body, since status is the
+    stable part of this across client versions. Deliberately narrow: a 400
+    "trying to edit a protected cell" (confirmed live, see
+    google_sheets_cli's own docstring) is a different, *permanent* kind of
+    failure that retrying would just reproduce identically every time --
+    see _execute_with_rate_limit_retry for why that distinction matters.
+    Public (not prefixed with `_`, unlike this module's other internal
+    helpers) since google_sheets_cli's own repair-simplified-calculations
+    command still needs to tell a still-rate-limited cell apart from a
+    genuinely failed one in its own per-cell reporting, after this
+    module's own retry has already been exhausted."""
+    return isinstance(exc, HttpError) and exc.status_code == 429
+
+
+def _execute_with_rate_limit_retry(request):
+    """Call `request.execute()` (a not-yet-executed googleapiclient request
+    object, e.g. `sheets.spreadsheets().batchUpdate(...)`), retrying up to
+    _RATE_LIMIT_MAX_RETRIES times on a transient 429 (is_rate_limit_error),
+    sleeping _RATE_LIMIT_RETRY_SECONDS between attempts. Anything else --
+    a protected-cell 400, or a 429 that still hasn't cleared after every
+    retry -- propagates unchanged, so a caller sees exactly the same
+    exception either way; this only ever adds retries around a transient
+    failure, never changes what a non-retryable or exhausted one looks
+    like."""
+    attempts = 0
+    while True:
+        try:
+            return request.execute()
+        except Exception as exc:
+            attempts += 1
+            if not is_rate_limit_error(exc) or attempts > _RATE_LIMIT_MAX_RETRIES:
+                raise
+            print(
+                f"  Rate-limited by Sheets (60 writes/minute) -- waiting {_RATE_LIMIT_RETRY_SECONDS}s "
+                f"before retrying (attempt {attempts}/{_RATE_LIMIT_MAX_RETRIES})...",
+                file=sys.stderr,
+            )
+            time.sleep(_RATE_LIMIT_RETRY_SECONDS)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -409,10 +474,12 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
         }
         for c in cells
     ]
-    sheets.spreadsheets().values().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={"valueInputOption": "USER_ENTERED", "data": data},
-    ).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"valueInputOption": "USER_ENTERED", "data": data},
+        )
+    )
 
 
 def clear_cells(
@@ -458,7 +525,9 @@ def clear_cells(
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def narrow_columns(
@@ -565,7 +634,9 @@ def narrow_columns(
                 }
             )
     if requests:
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+        _execute_with_rate_limit_retry(
+            sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+        )
 
 
 def allow_text_overflow(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int]]) -> None:
@@ -620,7 +691,9 @@ def allow_text_overflow(sheets: Resource, spreadsheet_id: str, cells: Sequence[T
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def _hex_to_color(hex_rgb: str) -> Dict[str, float]:
@@ -678,7 +751,9 @@ def extend_fill(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
@@ -740,7 +815,9 @@ def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[s
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def delete_rows(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
@@ -799,7 +876,9 @@ def delete_rows(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[st
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def clear_notes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int]]) -> None:
@@ -855,7 +934,9 @@ def clear_notes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def set_font_sizes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int, float]]) -> None:
@@ -902,7 +983,9 @@ def set_font_sizes(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[
                 }
             }
         )
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
 
 
 def hide_gridlines(sheets: Resource, spreadsheet_id: str) -> None:
@@ -939,4 +1022,6 @@ def hide_gridlines(sheets: Resource, spreadsheet_id: str) -> None:
         )
     if not requests:
         return
-    sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    _execute_with_rate_limit_retry(
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+    )
