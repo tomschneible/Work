@@ -1132,7 +1132,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
         dynamic_choice_low_confidence: Set[int] = set()
         if detected is not None and section.dynamic_choices:
             detected, dynamic_choice_low_confidence = choice_group_detect.resolve_section_choices(
-                gray, template, section, detected
+                gray, binary, template, section, detected
             )
             # _reconsider_low_confidence_pattern/_infer_from_answer_pattern
             # (the "long uninterrupted flow" run-of-same-position-answers

@@ -96,26 +96,34 @@ thresholds:
   # ~0.8 baseline held from radius 9 through 15 alike): raising radius
   # doesn't dilute it, so a smaller/larger radius isn't a fix here either.
   #
-  # 0.35 sits above that measured 0.315 ceiling, but this is still only
-  # half the calibration this needs: no real *filled-in* sheet was
-  # available, only two blank ones, so the other side (does a genuine
-  # mark reliably clear this) is checked with synthetic fills only, and
-  # those genuinely disagreed by row: a solid fill on Mathematics Q5
-  # reached an adjusted 0.443 (clears 0.35 comfortably), but the same
-  # fill on English Q1 reached only 0.215 (would NOT clear it) -- that
-  # row's own "B" choice already sits unusually high even unmarked
-  # (0.88 raw, vs. 0.79-0.87 for its neighbors), leaving little headroom
-  # for a real mark to stand out over. So a light or quick real mark
-  # landing on a similarly high-baseline choice may well be missed
-  # (read blank, not even flagged -- decide_answer only sets
-  # low_confidence on an answer it actually returns) rather than merely
-  # under-confident -- the one real risk in this template not to treat
-  # as already closed. Before trusting this template for real student
-  # sheets, mark a few known bubbles on a fresh printout (English
-  # especially) and confirm they're read back correctly; if not, this
-  # value is the first thing to revisit. relative_margin is unvalidated
-  # either way (see legacy_act_answer_sheet.yaml's own thresholds comment
-  # for the same caveat stated the same way) and just keeps
-  # act_answer_sheet.yaml's own value for now.
+  # 0.35 sits above that measured 0.315 ceiling. Originally the other
+  # side of this (does a genuine mark reliably clear it) was checked with
+  # synthetic fills only, since no real filled-in sheet was available yet
+  # -- since confirmed, now that one is (a real completed, flagged
+  # student sheet: 142 questions, zero MULTIPLEs, every answer checked
+  # against the source scan): every genuine mark's own adjusted fill
+  # ratio cleared 0.35 (min seen 0.362), so this floor itself reads real
+  # marks correctly. The one real miss found -- a genuinely solid mark
+  # dropped all the way to blank -- traced to a *different* threshold
+  # entirely (detect.py's own cross-template _SOLID_FILL_MIN rescue,
+  # narrowly missed at 0.315 against its 0.32 floor) rather than to
+  # anything here; see detect.py's own comment on that constant for why
+  # it's calibrated across many sheets and wasn't moved for this one.
+  #
+  # relative_margin was NOT confirmed by that same real sheet -- it was
+  # badly wrong. 0.13 (copied from act_answer_sheet.yaml, never
+  # independently checked here) meant *any* real answer whose adjusted
+  # fill ratio landed below 0.48 got flagged low_confidence -- 58% of
+  # this sheet's genuine, correctly-read single answers did (median
+  # real-answer ratio was only 0.470), swamping the flagged spreadsheet
+  # with correct reads and burying the genuinely worth-checking ones
+  # among them. Lowered to 0.08: comfortably below the smallest gap
+  # measured between a real winning answer and its runner-up (0.101, and
+  # every candidate value from 0.05 up to the old 0.13 produced zero
+  # MULTIPLEs on this sheet, so there's real margin here, not a knife
+  # edge), while cutting the false-flag rate to 17.3% on the same sheet.
+  # Re-check both numbers the same way (against fill_ratios measured on a
+  # real marked sheet, not synthetic fills) if a future sheet's own
+  # printing or scan quality looks meaningfully different from this one's.
   fill_ratio_min: 0.35
-  relative_margin: 0.13
+  relative_margin: 0.08

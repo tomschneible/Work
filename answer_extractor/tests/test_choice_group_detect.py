@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import cv2
 
-from answer_extractor.choice_group_detect import resolve_section_choices
+from answer_extractor.choice_group_detect import _is_likely_filled, resolve_section_choices
+from answer_extractor.detect import binarize
 from answer_extractor.grid_detect import locate_section_bubbles
 from answer_extractor.template import Template
 from tests.synth import fill_bubble, make_blank_sheet
@@ -79,10 +80,11 @@ def render_and_detect(template: Template, groups_by_question: dict, extra_ops=No
     if extra_ops is not None:
         extra_ops(image, resolved)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    binary = binarize(image)
     section = template.sections[0]
     detected = locate_section_bubbles(gray, template, section)
     assert detected is not None, "structural detection itself failed -- not what this test is checking"
-    return gray, section, detected
+    return gray, binary, section, detected
 
 
 def _sequence_with_duplicates(num_questions: int, duplicate_at=frozenset()) -> dict:
@@ -114,9 +116,9 @@ def test_resolve_section_choices_confirms_ordinary_alternation():
     group is confidently confirmed, nothing flagged."""
     template = make_template(9)
     groups = _sequence_with_duplicates(9)
-    gray, section, detected = render_and_detect(template, groups)
+    gray, binary, section, detected = render_and_detect(template, groups)
 
-    relabeled, low_confidence = resolve_section_choices(gray, template, section, detected)
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
 
     for q, expected_group in groups.items():
         assert relabeled[q][0][0] == expected_group[0], f"Q{q} expected group starting {expected_group[0]!r}"
@@ -130,9 +132,9 @@ def test_resolve_section_choices_reads_a_duplicate_row_correctly():
     onward wrong; resolve_section_choices must not."""
     template = make_template(9)
     groups = _sequence_with_duplicates(9, duplicate_at={6})
-    gray, section, detected = render_and_detect(template, groups)
+    gray, binary, section, detected = render_and_detect(template, groups)
 
-    relabeled, low_confidence = resolve_section_choices(gray, template, section, detected)
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
 
     for q, expected_group in groups.items():
         assert relabeled[q][0][0] == expected_group[0], f"Q{q} expected group starting {expected_group[0]!r}"
@@ -154,9 +156,9 @@ def test_resolve_section_choices_duplicate_continues_across_a_column_boundary():
     from wherever the previous column's own last question left off."""
     template = make_template(5, second_column=True)  # columns: Q1-5, Q6-10
     groups = _sequence_with_duplicates(10, duplicate_at={3})  # duplicate inside column 1
-    gray, section, detected = render_and_detect(template, groups)
+    gray, binary, section, detected = render_and_detect(template, groups)
 
-    relabeled, low_confidence = resolve_section_choices(gray, template, section, detected)
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
 
     for q, expected_group in groups.items():
         assert relabeled[q][0][0] == expected_group[0], f"Q{q} expected group starting {expected_group[0]!r}"
@@ -175,12 +177,55 @@ def test_resolve_section_choices_reads_around_a_filled_bubble():
         bubble = resolved.bubbles()[("Answers", 6)][0]  # slot 0 of the duplicate row
         fill_bubble(image, bubble.x, bubble.y, resolved.bubble_radius, coverage=1.0, darkness=10)
 
-    gray, section, detected = render_and_detect(template, groups, extra_ops=mark_first_slot_of_row_6)
+    gray, binary, section, detected = render_and_detect(template, groups, extra_ops=mark_first_slot_of_row_6)
 
-    relabeled, low_confidence = resolve_section_choices(gray, template, section, detected)
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
 
     assert relabeled[6][0][0] == "F"  # still resolved correctly despite slot 0 being marked
     assert 6 not in low_confidence
+
+
+def test_is_likely_filled_recognizes_a_moderate_coverage_mark():
+    """Regression coverage for a real misread found against a real
+    completed sheet (see choice_group_detect.py's own module docstring):
+    _is_likely_filled originally measured raw dark-pixel coverage within
+    the sampling circle, which a genuine but not-edge-to-edge pencil fill
+    can fall well short of even though it's a real, solid mark -- exactly
+    the shape of mark that corrupted a real duplicate-row comparison by
+    slipping through uncaught. coverage=0.2 here reproduces that: a real
+    solid fill, just one whose ink doesn't reach the full sampling radius.
+
+    Directly exercises the private helper (like e.g. align.py's own
+    _resize_preserving_aspect elsewhere in this suite) rather than only
+    the end-to-end resolve_section_choices path, since forcing this exact
+    single-slot condition to flip a whole row's vote would need a second,
+    independently-corrupted slot voting the same wrong way purely by
+    the glyph-similarity numbers falling right -- brittle to engineer
+    synthetically with confidence. What matters here is the specific
+    claim: this coverage level is genuinely missed by a raw dark-fraction
+    floor (measured directly at 0.417 against the old 0.45 threshold this
+    replaced) but still a real, solid mark -- and confirming this helper
+    now recognizes it is what the module docstring's real-sheet evidence
+    is actually about.
+    """
+    template = make_template(9)
+    groups = _sequence_with_duplicates(9)
+    overrides = {("Answers", q): group for q, group in groups.items()}
+    resolved = template.with_resolved_choices(overrides)
+    image = make_blank_sheet(
+        resolved, with_border=False, letters=True, letter_font_scale=_FONT_SCALE, letter_thickness=_FONT_THICKNESS
+    )
+    bubble = resolved.bubbles()[("Answers", 1)][0]
+    fill_bubble(image, bubble.x, bubble.y, resolved.bubble_radius, coverage=0.2, darkness=10)
+    binary = binarize(image)
+
+    assert _is_likely_filled(binary, bubble.x, bubble.y, resolved.bubble_radius)
+
+    # An ordinary unmarked bubble on the same sheet (just the printed ring
+    # and letter) must still read as *not* filled -- this isn't just a
+    # lower floor that now treats everything as marked.
+    unmarked = resolved.bubbles()[("Answers", 1)][1]
+    assert not _is_likely_filled(binary, unmarked.x, unmarked.y, resolved.bubble_radius)
 
 
 def test_resolve_section_choices_falls_back_and_flags_when_a_row_is_unreadable():
@@ -198,9 +243,9 @@ def test_resolve_section_choices_falls_back_and_flags_when_a_row_is_unreadable()
         for bubble in resolved.bubbles()[("Answers", 6)]:
             fill_bubble(image, bubble.x, bubble.y, resolved.bubble_radius, coverage=1.0, darkness=10)
 
-    gray, section, detected = render_and_detect(template, groups, extra_ops=mark_every_slot_of_row_6)
+    gray, binary, section, detected = render_and_detect(template, groups, extra_ops=mark_every_slot_of_row_6)
 
-    relabeled, low_confidence = resolve_section_choices(gray, template, section, detected)
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
 
     assert 6 in low_confidence
     # The guess still has to be *something* sensible -- the ordinary flip

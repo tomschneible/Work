@@ -57,6 +57,36 @@ guessing a normal flip from that anchor, same as the ordinary case, but
 flagged low_confidence for a human to double check, per this project's
 standing rule that a wrong-but-confident answer is worse than one flagged
 for review.
+
+`_is_likely_filled` (deciding which slots are safe to compare in the
+first place) originally used a raw dark-pixel-fraction floor, the same
+kind of signal score_bubbles' own fill_ratio uses. A real completed sheet
+(the first one run through this template after it shipped -- see
+_LIKELY_FILLED_SOLIDITY_MIN below) showed that signal misses most genuine
+marks on this template: 98 of 133 real marked bubbles measured *below*
+that floor, because a pencil fill's own dark-pixel coverage rarely
+reaches all the way to this sheet's sampling radius the way a synthetic
+full-circle fill does. Missing a mark here doesn't just under-count it
+like a missed mark does for score_bubbles -- it leaves that mark's own
+ink sitting in the comparison as if the slot were blank, corrupting the
+glyph match at exactly that slot. Confirmed on that same real sheet:
+Mathematics questions 14 and 15 are a genuine duplicate (both A/B/C/D),
+but 14's own marked slot and 15's own marked slot each measured below the
+old floor and so were compared as if unmarked -- two of the four
+available slots voted "different" purely from the mark's ink distorting
+the glyph shape, tying the vote 2-2 and guessing (flagged low_confidence,
+but wrongly) a flip to F/G/H/J instead. Switched to the same
+erosion-survival "solidity" signal detect.py's own _solidity/
+_SOLID_FILL_MIN already use for the analogous problem there (a duplicated
+implementation, not a shared import -- detect.py imports this module, so
+the reverse would be circular): erosion collapses a printed ring or
+letter stroke almost completely but leaves most of a genuine fill's area
+intact regardless of how much of the sampling circle that fill actually
+covers, which is exactly the distinction dark-pixel-fraction alone can't
+make. Re-measured against that same real sheet: only 1 of 133 genuine
+marks now falls below the new floor (a pattern-inferred answer with
+essentially no ink of its own to measure -- expected, not a miss), and
+the Mathematics 14/15 duplicate resolves correctly and confidently.
 """
 from __future__ import annotations
 
@@ -88,34 +118,57 @@ _SEARCH_SLACK_RATIO = 0.45
 _SIMILARITY_SAME_MIN = 0.85
 _SIMILARITY_DIFF_MAX = 0.70
 
-# A bubble whose sampled interior is at least this dark a fraction is
-# treated as marked -- its own glyph (if any) is obscured by ink, so it's
-# skipped as a comparison source rather than trusted. Deliberately looser
-# than detect.py's own fill_ratio_min (this only needs to rule out "too
-# inked to read a glyph off of", not decide whether a mark counts as a
-# genuine answer -- getting this a little too eager just costs a
-# comparison source, not correctness, as long as at least one of a
-# question's slots is usually left unmarked, the normal case).
-_LIKELY_FILLED_DARK_FRACTION = 0.45
-_DARK_PIXEL_VALUE = 60  # out of 255, same "genuinely dark" floor detect.py's own _dark_fraction uses
+# A bubble whose ink survives erosion by this many px, over at least this
+# fraction of its own (already-binarized) dark area, is treated as marked
+# -- its own glyph (if any) is obscured by ink, so it's skipped as a
+# comparison source rather than trusted. See this module's own docstring
+# for why this is an erosion-survival "solidity" check (mirroring
+# detect.py's _solidity/_SOLID_FILL_MIN) rather than a plain dark-pixel
+# fraction: a printed ring outline or letter stroke is only a few px
+# thick and collapses under erosion almost entirely, while a genuine
+# pencil fill stays mostly intact regardless of how much of the sampling
+# circle it happens to cover. The floor itself sits well below
+# detect.py's own _SOLID_FILL_MIN (0.32): re-measured against a real
+# completed sheet, genuine marks' own solidity clustered tightly at
+# exactly 0.315 (just under that stricter floor, which is tuned for a
+# different, stricter question -- "confident enough to promote to a final
+# answer" -- not this one), while unmarked slots clustered at 0.0 with a
+# small tail up to the same 0.315. 0.15 sits in the wide, flat gap
+# in between (0.10 through 0.20 all separated the same real sample
+# identically), catching every genuine mark bar one (a pattern-inferred
+# answer with no ink of its own to measure) at the cost of a modest
+# number of genuinely-unmarked slots losing their turn as a comparison
+# source -- deliberately the safer side to err on, since that only costs
+# a comparison source, not correctness (see this module's own docstring).
+_LIKELY_FILLED_SOLIDITY_MIN = 0.15
+_SOLIDITY_ERODE_PX = 3
 
 
 def _value_channel(gray: np.ndarray) -> np.ndarray:
     return gray if gray.ndim == 2 else np.max(gray, axis=2).astype(np.uint8)
 
 
-def _is_likely_filled(value: np.ndarray, x: int, y: int, radius: int) -> bool:
-    """Coarse "is there real pencil/pen ink here, not just the printed ring
-    and letter" check -- see _LIKELY_FILLED_DARK_FRACTION for why this can
-    afford to be looser than detect.py's own fill-ratio floor."""
+def _is_likely_filled(binary: np.ndarray, x: int, y: int, radius: int) -> bool:
+    """Is there real pencil/pen ink here, not just the printed ring and
+    letter -- see _LIKELY_FILLED_SOLIDITY_MIN for why this is an
+    erosion-survival check on the already-binarized image, not a plain
+    dark-pixel fraction on the grayscale one."""
     r = max(1, round(radius * 0.85))
-    y0, y1 = max(0, y - r), min(value.shape[0], y + r + 1)
-    x0, x1 = max(0, x - r), min(value.shape[1], x + r + 1)
-    patch = value[y0:y1, x0:x1]
+    y0, y1 = max(0, y - r), min(binary.shape[0], y + r + 1)
+    x0, x1 = max(0, x - r), min(binary.shape[1], x + r + 1)
+    patch = binary[y0:y1, x0:x1]
     if patch.size == 0:
         return True  # off the edge of the image -- nothing readable here either way
-    dark_fraction = float(np.mean(patch < _DARK_PIXEL_VALUE))
-    return dark_fraction >= _LIKELY_FILLED_DARK_FRACTION
+    mask = np.zeros_like(patch, dtype=np.uint8)
+    cv2.circle(mask, (x - x0, y - y0), r, 255, -1)
+    masked = cv2.bitwise_and(patch, mask)
+    total = cv2.countNonZero(masked)
+    if total == 0:
+        return False
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * _SOLIDITY_ERODE_PX + 1, 2 * _SOLIDITY_ERODE_PX + 1))
+    eroded = cv2.erode(masked, kernel)
+    solidity = float(cv2.countNonZero(eroded) / total)
+    return solidity >= _LIKELY_FILLED_SOLIDITY_MIN
 
 
 def _crop(value: np.ndarray, x: int, y: int, half: int) -> np.ndarray:
@@ -153,6 +206,7 @@ def _other_group(section: Section, template: Template, group: Sequence[str]) -> 
 
 def resolve_section_choices(
     gray: np.ndarray,
+    binary: np.ndarray,
     template: Template,
     section: Section,
     detected: Dict[int, List[tuple]],
@@ -160,10 +214,12 @@ def resolve_section_choices(
     """Relabel `detected` (grid_detect.locate_section_bubbles's own result
     for this section -- real positions, but choice labels only ever a
     parity guess) with each question's actual choice group, read off
-    `gray` per this module's own docstring. Returns (relabeled, questions)
-    -- `questions` is every question number whose own group couldn't be
-    confidently confirmed and was instead carried forward from its last
-    confidently-known anchor; callers should flag these low_confidence.
+    `gray` (glyph shape comparisons) and `binary` (is-this-slot-marked
+    checks -- see _is_likely_filled) per this module's own docstring.
+    Returns (relabeled, questions) -- `questions` is every question number
+    whose own group couldn't be confidently confirmed and was instead
+    carried forward from its last confidently-known anchor; callers
+    should flag these low_confidence.
 
     Only meaningful for a `section.dynamic_choices` section -- callers
     that already check that flag before calling this don't need to check
@@ -186,7 +242,7 @@ def resolve_section_choices(
         anchor_bubbles = detected[anchor_question]
         votes_same = votes_diff = 0
         for (_, ax, ay), (_, bx, by) in zip(anchor_bubbles, bubbles):
-            if _is_likely_filled(value, ax, ay, radius) or _is_likely_filled(value, bx, by, radius):
+            if _is_likely_filled(binary, ax, ay, radius) or _is_likely_filled(binary, bx, by, radius):
                 continue
             similarity = _glyph_similarity(value, ax, ay, bx, by, radius)
             if similarity >= _SIMILARITY_SAME_MIN:
