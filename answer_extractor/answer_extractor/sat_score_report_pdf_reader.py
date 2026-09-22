@@ -111,8 +111,13 @@ def _find_column_groups(words: Sequence[_Word]) -> List[_ColumnGroup]:
         if not your_candidates:
             continue
         your_x = min(your_candidates, key=lambda ow: ow[0])[0]
+        # Single-line "Domain" can sit anywhere within the two-line Correct/Answer
+        # header -- centered on some real reports, level with "Answer" on others.
+        answer_y = min(answer_below, key=lambda ow: ow[1])[1]
         domain_candidates = [
-            ow for ow in words if ow[4] == "Domain" and abs(ow[1] - header_y) <= 6 and ow[0] > correct_x
+            ow
+            for ow in words
+            if ow[4] == "Domain" and header_y - 2 <= ow[1] <= answer_y + 2 and ow[0] > correct_x
         ]
         if not domain_candidates:
             continue
@@ -161,41 +166,57 @@ def _group_window(group: _ColumnGroup) -> Tuple[float, float]:
     return max(0.0, group.correct_x - 30.0), group.domain_x - 3.0
 
 
+# Keeps stray text below a table (e.g. the next table's title) out of its last row.
+_ROW_WORD_MAX_DY = 6.0
+
+
+def _is_question_number(w: _Word, group: _ColumnGroup) -> bool:
+    if (w[0] + w[2]) / 2 >= group.correct_x:
+        return False
+    text = w[4]
+    if not text.replace(".", "", 1).isdecimal():
+        return False
+    value = float(text)
+    return value >= 1 and value.is_integer()
+
+
 def _parse_group_rows(words: Sequence[_Word], group: _ColumnGroup) -> Dict[int, str]:
-    """{question: your_answer} for one column-group -- identical
-    row-walking technique to score_report_pdf_reader.py's own
-    _parse_group_rows: cluster this group's own words by y, walk top to
-    bottom, stop at the first row whose leftmost token isn't the next
-    consecutive question number."""
+    """{question: your_answer} for one column-group. Rows are anchored on
+    their question numbers, with every other word joining whichever number
+    it sits nearest vertically -- a correct-answer cell listing several
+    accepted answers wraps onto smaller lines off the row's own baseline, so
+    clustering words by y alone splits it into stray pseudo-rows. Walks top
+    to bottom, stopping at the first number that isn't the next consecutive
+    one."""
     left, right = _group_window(group)
     header_bottom = group.header_y + 10
     in_window = [w for w in words if left <= w[0] < right and w[1] > header_bottom]
-    text_words = sorted((w for w in in_window if w[4] not in _MARK_CHARS), key=lambda w: (w[1], w[0]))
     mark_words = [w for w in in_window if w[4] in _MARK_CHARS]
+    numbers = sorted((w for w in in_window if _is_question_number(w, group)), key=lambda w: w[1])
+    if not numbers:
+        return {}
+    number_ids = {id(n) for n in numbers}
 
-    rows: List[Dict[str, object]] = []
-    for w in text_words:
-        if rows and abs(w[1] - rows[-1]["y"]) < 3:
-            rows[-1]["words"].append(w)
-        else:
-            rows.append({"y": w[1], "words": [w]})
+    row_words: List[List[_Word]] = [[] for _ in numbers]
+    for w in in_window:
+        if w[4] in _MARK_CHARS or id(w) in number_ids:
+            continue
+        nearest = min(range(len(numbers)), key=lambda i: abs(numbers[i][1] - w[1]))
+        if abs(numbers[nearest][1] - w[1]) <= _ROW_WORD_MAX_DY:
+            row_words[nearest].append(w)
 
     result: Dict[int, str] = {}
     expected: Optional[int] = None
-    for row in rows:
-        row_words = sorted(row["words"], key=lambda w: w[0])
-        first_text = row_words[0][4]
-        if not first_text.replace(".", "", 1).isdigit():
-            break
-        question = int(float(first_text))
+    for number, words_in_row in zip(numbers, row_words):
+        question = int(float(number[4]))
         if expected is not None and question != expected:
             break
-        row_y = row["y"]
+        row_y = number[1]
         mark_candidates = [m for m in mark_words if -4 <= (row_y - m[1]) <= 4]
         if not mark_candidates:
             break
         mark = min(mark_candidates, key=lambda m: abs(row_y - m[1]))
-        pre_mark = [w for w in row_words[1:] if w[0] < mark[0]]
+        pre_mark = sorted((w for w in words_in_row if w[0] < mark[0]), key=lambda w: w[0])
         answer = "" if mark[4] == "ø" else (pre_mark[-1][4] if pre_mark else "")
         result[question] = answer
         expected = question + 1

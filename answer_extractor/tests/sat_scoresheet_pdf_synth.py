@@ -42,6 +42,10 @@ FIRST_ROW_Y_OFFSET = 14.0
 ROW_HEIGHT = 8.1
 MARK_Y_OFFSET = -1.7
 HEADER_ROW_GAP = 40.0
+# A Row.correct containing "\n" renders as a smaller-font, multi-line cell
+# centered on its row -- how a real report lists several accepted answers.
+WRAPPED_FONT_SIZE = 6.4
+WRAPPED_LINE_SPACING = 4.4
 
 
 class SatGroup(NamedTuple):
@@ -60,6 +64,7 @@ def write_sat_scoresheet_pdf(
     student_name: str = "Jane Student",
     test_date: str = "March 8, 2026",
     page_height: float = 792.0,
+    domain_header_y_offset: float = 0.0,
 ) -> None:
     max_groups = max((len(hr) for hr in header_rows), default=0)
     page_width = LEFT_MARGIN + max_groups * GROUP_WIDTH + 60.0
@@ -82,15 +87,21 @@ def write_sat_scoresheet_pdf(
             text(gx, header_y + TITLE_Y_OFFSET, group.title)
             text(gx, header_y, "Correct")
             text(gx + YOUR_OFFSET, header_y, "Your")
-            text(gx + DOMAIN_OFFSET, header_y, "Domain")
-            text(gx + SKILL_OFFSET, header_y, "Skill")
+            text(gx + DOMAIN_OFFSET, header_y + domain_header_y_offset, "Domain")
+            text(gx + SKILL_OFFSET, header_y + domain_header_y_offset, "Skill")
             text(gx, header_y + ANSWER_HEADER_Y_OFFSET, "Answer")
             text(gx + YOUR_OFFSET, header_y + ANSWER_HEADER_Y_OFFSET, "Answer")
 
             for ri, row in enumerate(group.rows):
                 row_y = header_y + FIRST_ROW_Y_OFFSET + ri * ROW_HEIGHT
                 text(gx + NUMBER_OFFSET, row_y, str(row.question))
-                text(gx, row_y, row.correct)
+                lines = row.correct.split("\n")
+                if len(lines) == 1:
+                    text(gx, row_y, row.correct)
+                else:
+                    for li, line in enumerate(lines):
+                        line_y = row_y + (li - (len(lines) - 1) / 2) * WRAPPED_LINE_SPACING
+                        text(gx, line_y, line, size=WRAPPED_FONT_SIZE)
                 if row.your is not None:
                     text(gx + YOUR_OFFSET, row_y, row.your)
                 text(gx + MARK_OFFSET, row_y + MARK_Y_OFFSET, _mark_for(row))

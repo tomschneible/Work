@@ -12,7 +12,7 @@ import pytest
 
 from answer_extractor.sat_score_report_pdf_reader import parse_sat_score_report_pdf
 from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Row
-from tests.sat_scoresheet_pdf_synth import SatGroup, write_sat_scoresheet_pdf
+from tests.sat_scoresheet_pdf_synth import ANSWER_HEADER_Y_OFFSET, SatGroup, write_sat_scoresheet_pdf
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(MARK_FONT_PATH),
@@ -91,6 +91,34 @@ def test_two_header_rows_on_one_page_are_both_parsed(tmp_path):
         ("reading and writing module 2", 1): "B",
         ("math module 1", 1): "C",
         ("math module 2", 1): "D",
+    }
+
+
+def test_a_domain_header_bottom_aligned_with_the_answer_line_is_still_found(tmp_path):
+    # A real reference report rendered its Math header's Domain/Skill level with
+    # the second "Answer" line, not centered -- every Math question went missing.
+    path = tmp_path / "report.pdf"
+    write_sat_scoresheet_pdf(
+        path,
+        [[SatGroup("Math Module 1", [Row(1, "C", "C")]), SatGroup("Math Module 2", [Row(1, "D", "D")])]],
+        domain_header_y_offset=ANSWER_HEADER_Y_OFFSET,
+    )
+    assert parse_sat_score_report_pdf(path) == {("math module 1", 1): "C", ("math module 2", 1): "D"}
+
+
+@pytest.mark.parametrize("wrapped_correct", ["2/7, .2857,\n.2858", "2/7, .2857,\n.2858, 4/14,\n6/21"])
+def test_a_correct_answer_wrapped_onto_several_lines_doesnt_cut_the_group_short(tmp_path, wrapped_correct):
+    # A correct-answer cell listing several accepted answers wraps onto smaller
+    # lines that don't share the row's baseline; on a real report the stray
+    # line read as its own row and every question after it was dropped.
+    path = tmp_path / "report.pdf"
+    rows = [Row(16, "A", "A"), Row(17, wrapped_correct, "2/7"), Row(18, "C", "C"), Row(19, "54", "54")]
+    write_sat_scoresheet_pdf(path, [[SatGroup("Math Module 1", rows)]])
+    assert parse_sat_score_report_pdf(path) == {
+        ("math module 1", 16): "A",
+        ("math module 1", 17): "2/7",
+        ("math module 1", 18): "C",
+        ("math module 1", 19): "54",
     }
 
 
