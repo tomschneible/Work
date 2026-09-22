@@ -5,12 +5,12 @@ tolerance for light or partial marks.
 from __future__ import annotations
 
 import dataclasses
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import cv2
 import numpy as np
 
-from . import grid_detect
+from . import choice_group_detect, grid_detect
 from .template import Bubble, Template
 
 
@@ -1123,6 +1123,17 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
         detected = grid_detect.locate_section_bubbles(gray, template, section)
         if detected is None:
             fallback_sections.append(section.name)
+        # Real positions from grid_detect are unaffected by which of the
+        # section's two choice groups is printed at a row -- both are
+        # always the same length, so a slot's (x, y) is identical either
+        # way (see choice_group_detect's own module docstring). Resolving
+        # here just relabels detected's own choice strings; nothing about
+        # a fallback to nominal coordinates above needs to change for it.
+        dynamic_choice_low_confidence: Set[int] = set()
+        if detected is not None and section.dynamic_choices:
+            detected, dynamic_choice_low_confidence = choice_group_detect.resolve_section_choices(
+                gray, template, section, detected
+            )
 
         section_bubbles = {}
         bubbles_by_choice: Dict[str, List[Tuple[int, int]]] = {}
@@ -1269,6 +1280,15 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 if standout is not None:
                     answer, candidates, low_confidence = standout, [standout], True
                     solid_fill = True
+
+            if question in dynamic_choice_low_confidence:
+                # This question's own choice group (A/B/C/D vs F/G/H/J)
+                # couldn't be confidently read off the page and was
+                # carried forward from an earlier row instead -- the
+                # *position* scored above is still real detected ink, but
+                # which letter that position maps to is a guess, same
+                # category of doubt as every other low_confidence case.
+                low_confidence = True
 
             section_results.append(
                 QuestionResult(

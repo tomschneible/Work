@@ -1347,6 +1347,50 @@ the page. Once your new template is added under `templates/` (and isn't
 named `default_template.yaml`, which is never a real, calibrated format),
 it's automatically picked up by auto-detection too -- see below.
 
+### Sheets whose choice groups don't reliably alternate
+
+Every template above assumes a sheet alternates its two `choices` groups
+strictly by question parity -- odd questions print one set (e.g.
+A/B/C/D), even print the other (F/G/H/J), all the way down every column.
+`templates/act_j_form_answer_sheet.yaml` is calibrated against a sheet
+that doesn't: confirmed directly against two blank copies of the exact
+same physical form (identical geometry, identical booklet form code),
+Mathematics questions 14-15 both print A/B/C/D on one copy, while
+questions 16-17 both do on the *other* -- 14-15 alternate normally there
+instead. Since the row where alternation breaks moves between two
+nominally identical printed copies, no static per-question list --
+however carefully hand-transcribed from one real example -- could be
+right for both.
+
+Set `dynamic_choices: true` on a section (see that template's own YAML
+for a full example) to stop trusting parity past question 1 for it.
+`answer_extractor/choice_group_detect.py` then reads each row's real
+choice group directly off the scanned image instead: comparing each
+question's own printed glyph against the nearest earlier question in the
+same section whose group is already confidently known, via plain image
+similarity, not any kind of letter-shape recognition (and deliberately
+never a bundled reference image cropped from a real answer sheet -- a
+copyrighted publication, unlike the geometry measurements every template
+here already encodes). Two instances of the same printed letter on the
+same page, same scan, correlate far higher than two different letters do
+-- a high score means "still the same group as the anchor" (an
+alternation break), a low score means "flipped" (ordinary alternation).
+Whichever bubble slot(s) are unmarked on both rows being compared is all
+this needs, reusing the normal case that at most one of a question's
+choices is ever filled in -- nothing about position detection changes at
+all (grid_detect finds a `dynamic_choices` section's bubbles exactly like
+any other section's; both choice groups are always the same length, so a
+slot's pixel position doesn't depend on which one is actually printed
+there, only the label attached to it does). A row that can't be
+confidently read at all (nothing legible to compare against) doesn't
+break the chain -- it carries the last confidently-resolved group forward
+as its best guess and gets flagged `low_confidence`, same as any other
+uncertain read.
+
+This is real extra work per section, so leave `dynamic_choices` off
+(the default) for a sheet you've confirmed alternates cleanly -- every
+other template here does.
+
 ## Auto-detecting the template
 
 `answer_extractor.cli` still takes `--template` as a required, fixed

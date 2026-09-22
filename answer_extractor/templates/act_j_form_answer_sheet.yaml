@@ -1,0 +1,121 @@
+# Calibrated against a shorter ACT-style "Page 2" answer sheet -- a
+# different question count per test than templates/act_answer_sheet.yaml
+# (English 40Q/Math 41Q/Reading 27Q/Science 34Q, 142 total, vs. that
+# template's 50/45/36/40) -- provided as two independently scanned blank
+# copies of the same booklet form (named "J01"/"J04" by whoever scanned
+# them). Same overall page layout as templates/act_answer_sheet.yaml
+# otherwise: identical column x-positions, row height, and bubble spacing
+# -- only the row/column counts per section differ, plus Reading uses 4
+# columns instead of 5 (27 questions doesn't fill a 5th).
+#
+# Coordinates were measured from the two provided sheets' own scanned
+# raster images (300 DPI JPEG-in-PDF, not a vector render -- unlike the
+# other two templates' own sources) rendered down to 200 DPI (1700x2200
+# px, this project's standard working resolution) and detecting each
+# bubble ring's own contour, not eyeballed.
+#
+# IMPORTANT -- see `dynamic_choices` below, and choice_group_detect.py's
+# own module docstring for the full evidence: unlike every other template
+# here, this sheet does NOT reliably alternate `choices`' two groups by
+# odd/even question parity. Confirmed directly: the two provided sheets
+# are the same physical form (identical geometry, identical booklet form
+# code), yet Mathematics questions 14-15 both print A/B/C/D on one copy,
+# while questions 16-17 both do on the other (14-15 alternate normally on
+# that copy instead) -- Reading breaks the same way, at yet another row.
+# Since the row where alternation breaks moves between two nominally
+# identical printed copies, no static per-question list -- however
+# carefully hand-transcribed from one real example -- can be right for
+# both. `choices` below is still meaningful (it's question 1's own
+# starting group, the fallback for a row too damaged to read either way,
+# and the two candidates dynamic detection distinguishes between) -- it
+# just isn't trusted blindly past question 1 the way every other
+# template's is.
+
+page:
+  width: 1700
+  height: 2200
+
+sections:
+  - name: English
+    dynamic_choices: true
+    columns:
+      - {first_question: 1, last_question: 8, x_start: 288.5, y_start: 640.0, row_height: 23}
+      - {first_question: 9, last_question: 16, x_start: 534.5, y_start: 640.0, row_height: 23}
+      - {first_question: 17, last_question: 24, x_start: 779.5, y_start: 640.0, row_height: 23}
+      - {first_question: 25, last_question: 32, x_start: 1024.5, y_start: 640.0, row_height: 23}
+      - {first_question: 33, last_question: 40, x_start: 1270.5, y_start: 640.0, row_height: 23}
+  - name: Mathematics
+    dynamic_choices: true
+    columns:
+      - {first_question: 1, last_question: 9, x_start: 288.5, y_start: 944.5, row_height: 23}
+      - {first_question: 10, last_question: 18, x_start: 534.5, y_start: 944.5, row_height: 23}
+      - {first_question: 19, last_question: 27, x_start: 779.5, y_start: 944.5, row_height: 23}
+      - {first_question: 28, last_question: 36, x_start: 1024.5, y_start: 944.5, row_height: 23}
+      - {first_question: 37, last_question: 41, x_start: 1270.5, y_start: 944.5, row_height: 23}
+  - name: Reading
+    dynamic_choices: true
+    columns:
+      - {first_question: 1, last_question: 7, x_start: 288.5, y_start: 1272.0, row_height: 23}
+      - {first_question: 8, last_question: 14, x_start: 534.5, y_start: 1272.0, row_height: 23}
+      - {first_question: 15, last_question: 21, x_start: 779.5, y_start: 1272.0, row_height: 23}
+      - {first_question: 22, last_question: 27, x_start: 1024.5, y_start: 1272.0, row_height: 23}
+  - name: Science
+    dynamic_choices: true
+    columns:
+      - {first_question: 1, last_question: 7, x_start: 288.5, y_start: 1554.0, row_height: 23}
+      - {first_question: 8, last_question: 14, x_start: 534.5, y_start: 1554.0, row_height: 23}
+      - {first_question: 15, last_question: 21, x_start: 779.5, y_start: 1554.0, row_height: 23}
+      - {first_question: 22, last_question: 28, x_start: 1024.5, y_start: 1554.0, row_height: 23}
+      - {first_question: 29, last_question: 34, x_start: 1270.5, y_start: 1554.0, row_height: 23}
+
+bubble_spacing_x: 30.67
+# Measured directly from the ring contours: roughly 25x17px at 200 DPI
+# (wider than tall) -- radius 9 (diameter 18) sits comfortably inside the
+# shorter dimension, unlike act_answer_sheet.yaml's radius: 11 would here.
+bubble_radius: 9
+
+# IMPORTANT: like act_answer_sheet.yaml, ODD-numbered questions use
+# A/B/C/D and EVEN-numbered use F/G/H/J on this sheet too -- but see
+# `dynamic_choices` above: this is only actually trusted for question 1
+# of each section (the seed for dynamic resolution), not applied blindly
+# to every other question the way it is on a non-dynamic template.
+choices:
+  odd: [A, B, C, D]
+  even: [F, G, H, J]
+
+thresholds:
+  # NOT copied from act_answer_sheet.yaml's own 0.225 -- tried that first
+  # and it was wrong for this template specifically: scoring every
+  # question on both blank calibration sheets (284 questions total, every
+  # one genuinely unmarked) at bubble_radius: 9 found baseline-adjusted
+  # "fill ratio" noise up to 0.315 just from this sheet's own printed ring
+  # + letter ink, comfortably clearing 0.225 and reading as a real answer
+  # on several dozen genuinely blank questions -- this sheet's own source
+  # is a real 300 DPI scan (unlike the other two templates' vector-PDF
+  # sources), and confirmed *not* a sampling-radius artifact (the same
+  # ~0.8 baseline held from radius 9 through 15 alike): raising radius
+  # doesn't dilute it, so a smaller/larger radius isn't a fix here either.
+  #
+  # 0.35 sits above that measured 0.315 ceiling, but this is still only
+  # half the calibration this needs: no real *filled-in* sheet was
+  # available, only two blank ones, so the other side (does a genuine
+  # mark reliably clear this) is checked with synthetic fills only, and
+  # those genuinely disagreed by row: a solid fill on Mathematics Q5
+  # reached an adjusted 0.443 (clears 0.35 comfortably), but the same
+  # fill on English Q1 reached only 0.215 (would NOT clear it) -- that
+  # row's own "B" choice already sits unusually high even unmarked
+  # (0.88 raw, vs. 0.79-0.87 for its neighbors), leaving little headroom
+  # for a real mark to stand out over. So a light or quick real mark
+  # landing on a similarly high-baseline choice may well be missed
+  # (read blank, not even flagged -- decide_answer only sets
+  # low_confidence on an answer it actually returns) rather than merely
+  # under-confident -- the one real risk in this template not to treat
+  # as already closed. Before trusting this template for real student
+  # sheets, mark a few known bubbles on a fresh printout (English
+  # especially) and confirm they're read back correctly; if not, this
+  # value is the first thing to revisit. relative_margin is unvalidated
+  # either way (see legacy_act_answer_sheet.yaml's own thresholds comment
+  # for the same caveat stated the same way) and just keeps
+  # act_answer_sheet.yaml's own value for now.
+  fill_ratio_min: 0.35
+  relative_margin: 0.13

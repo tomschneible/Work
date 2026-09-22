@@ -1374,6 +1374,71 @@ def test_evaluate_sheet_end_to_end():
     assert results[6].answer == "D"
 
 
+_DYNAMIC_TEST_FONT_SCALE = 1.0
+_DYNAMIC_TEST_FONT_THICKNESS = 2
+
+
+def _make_dynamic_choices_template(dynamic_choices: bool) -> Template:
+    """Larger scale than make_template() (radius 16 there vs. 22 here, same
+    ratio as choice_group_detect's own test template) -- needed so a
+    letter bold enough for resolve_section_choices' own real-scan-
+    calibrated glyph comparison still passes _find_glyph_boxes' contour
+    size filter; see test_choice_group_detect.py's own make_template for
+    the same reasoning in more detail."""
+    data = {
+        "page": {"width": 900, "height": 900},
+        "sections": [
+            {
+                "name": "Answers",
+                "dynamic_choices": dynamic_choices,
+                "columns": [
+                    {"first_question": 1, "last_question": 9, "x_start": 150, "y_start": 100, "row_height": 80},
+                ],
+            }
+        ],
+        "bubble_spacing_x": 60,
+        "bubble_radius": 22,
+        "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+        "thresholds": {"fill_ratio_min": 0.35, "relative_margin": 0.15},
+    }
+    return Template.from_dict(data)
+
+
+def test_evaluate_sheet_reads_a_marked_answer_correctly_through_a_dynamic_choices_duplicate_row():
+    """The actual end-to-end regression this project's dynamic_choices
+    feature exists for (see choice_group_detect.py's own module
+    docstring for the real evidence it's grounded in): questions 5 and 6
+    both print F/G/H/J on the physical sheet (5 is odd, so this breaks
+    ordinary alternation -- 6 would ordinarily flip to A/B/C/D), and the
+    student marks question 6's own "G" bubble (slot index 1). A template
+    that trusted static odd/even parity for question 6 (6 is even, so it
+    expects A/B/C/D there) would read that exact marked position as "B"
+    instead of the real "G" -- confirmed below on the identical rendered
+    image, so this isn't asserting against a strawman."""
+    dynamic_template = _make_dynamic_choices_template(dynamic_choices=True)
+    resolved = dynamic_template.with_resolved_choices(
+        {("Answers", 5): ["F", "G", "H", "J"], ("Answers", 6): ["F", "G", "H", "J"]}
+    )
+    image = render_sheet(
+        resolved,
+        {("Answers", 6): ["G"]},
+        letters=True,
+        letter_font_scale=_DYNAMIC_TEST_FONT_SCALE,
+        letter_thickness=_DYNAMIC_TEST_FONT_THICKNESS,
+    )
+
+    results = {r.question: r for r in evaluate_sheet(image, dynamic_template)[0]}
+    assert results[6].answer == "G"
+    assert not results[6].low_confidence
+
+    # Same image, but scored against a template that trusts odd/even
+    # parity blindly (dynamic_choices off) -- the marked position really
+    # would be misread, proving this is a real fix, not a no-op.
+    naive_template = _make_dynamic_choices_template(dynamic_choices=False)
+    naive_results = {r.question: r for r in evaluate_sheet(image, naive_template)[0]}
+    assert naive_results[6].answer == "B"
+
+
 def test_evaluate_sheet_tolerates_partial_sloppy_marks():
     template = make_template()
     answers = {1: ["G"]}

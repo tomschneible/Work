@@ -19,6 +19,7 @@ from answer_extractor.grid_detect import (
     _find_glyph_boxes,
     _interpolate_missing_x,
     _match_to_slots,
+    _max_choices_in_section,
     _positions_uniform,
     _resolve_extra_boxes_by_column_shift,
     _retry_with_column_shift,
@@ -695,6 +696,29 @@ def make_template() -> Template:
         "thresholds": {"fill_ratio_min": 0.35, "relative_margin": 0.15},
     }
     return Template.from_dict(data)
+
+
+# -- _max_choices_in_section --------------------------------------------------
+
+
+def test_max_choices_in_section_checks_every_question_not_just_the_first_two():
+    """Regression: this used to sample only questions 1 and 2 (the two
+    static even/odd choice lists this project's non-dynamic templates
+    always alternate between), which happened to be enough only because
+    that's every distinct choice list such a template could ever have.
+    A `dynamic_choices` section's real per-question choices are resolved
+    from the scanned image itself and aren't guaranteed to match either
+    static list's own length at every other position -- checking only
+    questions 1 and 2 would silently miss a wider choice list anywhere
+    else in the section."""
+    template = make_template()  # English/Math sections, choices: 4 even, 4 odd
+    section = template.sections[0]
+    assert _max_choices_in_section(template, section) == 4
+
+    # Question 3's own choices, not question 1 or 2's, is the widest one --
+    # the old two-sample check would have missed this entirely.
+    resolved = template.with_resolved_choices({(section.name, 3): ["A", "B", "C", "D", "E"]})
+    assert _max_choices_in_section(resolved, section) == 5
 
 
 def test_locate_section_bubbles_recovers_shifted_grid():

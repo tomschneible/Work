@@ -20,6 +20,8 @@ def make_blank_sheet(
     letters: bool = False,
     x_shift: int = 0,
     y_shift: int = 0,
+    letter_font_scale: float = 0.5,
+    letter_thickness: Optional[int] = None,
 ) -> np.ndarray:
     """Render an unmarked sheet. `ink_color` (BGR) lets tests simulate sheets
     printed in a saturated "dropout" accent color (e.g. coral, as real ACT
@@ -28,7 +30,19 @@ def make_blank_sheet(
     actually put inside an unmarked bubble. `x_shift`/`y_shift` draw every
     bubble that many pixels away from the template's nominal position, to
     simulate a real sheet whose actual print/scan drifted from the
-    template's calibrated coordinates (see grid_detect module docstring)."""
+    template's calibrated coordinates (see grid_detect module docstring).
+
+    `letter_font_scale`/`letter_thickness` (only meaningful with
+    letters=True; thickness defaults to 3, matching this function's own
+    historical fixed value) control how bold/large the drawn letter is --
+    tests exercising choice_group_detect need a letter that fills most of
+    the bubble's own interior (confirmed that's what a real scanned sheet
+    actually looks like -- see that module's own docstring) to tell two
+    *different* letters apart by shape as reliably as this project's own
+    real-scan-calibrated thresholds expect; every other caller keeps this
+    function's original smaller default, tuned for exercising glyph
+    *position* detection instead, where shape-distinguishability never
+    mattered."""
     image = np.full((template.page_height, template.page_width, 3), 255, dtype=np.uint8)
     if with_border:
         cv2.rectangle(
@@ -38,18 +52,19 @@ def make_blank_sheet(
             (0, 0, 0),
             4,
         )
-    thickness = 2 if not letters else 3
+    thickness = letter_thickness if letter_thickness is not None else (2 if not letters else 3)
     for bubbles in template.bubbles().values():
         for b in bubbles:
             x, y = b.x + x_shift, b.y + y_shift
             cv2.circle(image, (x, y), template.bubble_radius, ink_color, thickness)
             if letters:
+                (tw, th), _ = cv2.getTextSize(b.choice, cv2.FONT_HERSHEY_SIMPLEX, letter_font_scale, thickness)
                 cv2.putText(
                     image,
                     b.choice,
-                    (x - 6, y + 6),
+                    (x - tw // 2, y + th // 2),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
+                    letter_font_scale,
                     ink_color,
                     thickness,
                     cv2.LINE_AA,
@@ -83,13 +98,17 @@ def render_sheet(
     letters: bool = False,
     x_shift: int = 0,
     y_shift: int = 0,
+    letter_font_scale: float = 0.5,
+    letter_thickness: Optional[int] = None,
 ) -> np.ndarray:
     """Render a sheet where `answers[key]` lists the choice letters to mark
     for that question (empty/absent -> left blank). `key` is either a plain
     question number (only valid when the template has exactly one section)
     or a (section_name, question) tuple for multi-section templates.
     `x_shift`/`y_shift` are passed through to make_blank_sheet -- marks are
-    drawn at the same shifted position as their bubble."""
+    drawn at the same shifted position as their bubble. `letter_font_scale`/
+    `letter_thickness` also just pass through -- see make_blank_sheet's own
+    docstring for why a test might want either non-default."""
     image = make_blank_sheet(
         template,
         with_border=with_border,
@@ -97,6 +116,8 @@ def render_sheet(
         letters=letters,
         x_shift=x_shift,
         y_shift=y_shift,
+        letter_font_scale=letter_font_scale,
+        letter_thickness=letter_thickness,
     )
     bubbles_by_q = template.bubbles()
 

@@ -230,3 +230,86 @@ def test_legacy_act_answer_sheet_template_loads_and_validates():
     # Mathematics alone overrides to 5 choices per question.
     assert template.choices_for("Mathematics", 1) == ["A", "B", "C", "D", "E"]
     assert template.choices_for("Mathematics", 2) == ["F", "G", "H", "J", "K"]
+
+
+def test_act_j_form_answer_sheet_template_loads_and_validates():
+    template = Template.from_yaml("templates/act_j_form_answer_sheet.yaml")
+    template.validate()
+    names = [s.name for s in template.sections]
+    assert names == ["English", "Mathematics", "Reading", "Science"]
+    by_name = {s.name: s for s in template.sections}
+    assert by_name["English"].num_questions == 40
+    assert by_name["Mathematics"].num_questions == 41
+    assert by_name["Reading"].num_questions == 27
+    assert by_name["Science"].num_questions == 34
+    # Unlike every other shipped template, this one doesn't trust odd/even
+    # parity past question 1 -- see dynamic_choices below -- but question 1
+    # itself still starts every section at the standard "odd" group.
+    assert all(s.dynamic_choices for s in template.sections)
+    assert template.choices_for("English", 1) == ["A", "B", "C", "D"]
+
+
+# -- Section.dynamic_choices / Template.question_choices_override -----------
+
+
+def test_dynamic_choices_defaults_to_false():
+    template = make_template()
+    assert template.sections[0].dynamic_choices is False
+
+
+def test_dynamic_choices_parses_from_yaml():
+    data = {
+        "page": {"width": 800, "height": 600},
+        "sections": [
+            {
+                "name": "Answers",
+                "dynamic_choices": True,
+                "columns": [
+                    {"first_question": 1, "last_question": 2, "x_start": 100, "y_start": 100, "row_height": 50},
+                ],
+            }
+        ],
+        "bubble_spacing_x": 40,
+        "bubble_radius": 10,
+    }
+    template = Template.from_dict(data)
+    assert template.sections[0].dynamic_choices is True
+
+
+def test_choices_for_ignores_parity_when_an_override_says_otherwise():
+    """The whole point of question_choices_override: two *consecutive*
+    questions (5 and 6, both normally opposite parities) can be forced to
+    the same choice list, simulating the real "duplicate row" this
+    project's own dynamic_choices templates exist for."""
+    template = make_template()
+    resolved = template.with_resolved_choices(
+        {("Answers", 1): ["A", "B", "C", "D"], ("Answers", 2): ["A", "B", "C", "D"]}
+    )
+    assert resolved.choices_for("Answers", 1) == ["A", "B", "C", "D"]
+    assert resolved.choices_for("Answers", 2) == ["A", "B", "C", "D"]  # would be even_choices without the override
+    # A question with no override entry still falls back to ordinary parity.
+    assert resolved.choices_for("Answers", 3) == ["F", "G", "H", "J"]
+
+
+def test_with_resolved_choices_merges_rather_than_replaces():
+    template = make_template()
+    once = template.with_resolved_choices({("Answers", 1): ["X", "X", "X", "X"]})
+    twice = once.with_resolved_choices({("Answers", 2): ["Y", "Y", "Y", "Y"]})
+    # Both overrides survive -- the second call didn't discard the first's.
+    assert twice.choices_for("Answers", 1) == ["X", "X", "X", "X"]
+    assert twice.choices_for("Answers", 2) == ["Y", "Y", "Y", "Y"]
+
+
+def test_with_resolved_choices_drives_bubbles_geometry_too():
+    """bubbles() goes through choices_for internally, so an override is
+    picked up there transparently -- no separate wiring needed."""
+    template = make_template()
+    resolved = template.with_resolved_choices({("Answers", 1): ["A", "B", "C", "D"]})
+    bubbles = resolved.bubbles()
+    assert [b.choice for b in bubbles[("Answers", 1)]] == ["A", "B", "C", "D"]
+    # Positions are unaffected -- both groups are the same length, so a
+    # slot's (x, y) doesn't depend on which one is used.
+    unresolved_bubbles = template.bubbles()
+    assert [(b.x, b.y) for b in bubbles[("Answers", 1)]] == [
+        (b.x, b.y) for b in unresolved_bubbles[("Answers", 1)]
+    ]

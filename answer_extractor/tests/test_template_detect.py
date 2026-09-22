@@ -95,6 +95,7 @@ def test_discover_template_paths_finds_both_real_shipped_templates():
     found = {p.name for p in discover_template_paths(DEFAULT_TEMPLATES_DIR)}
     assert "act_answer_sheet.yaml" in found
     assert "legacy_act_answer_sheet.yaml" in found
+    assert "act_j_form_answer_sheet.yaml" in found
     assert "default_template.yaml" not in found
 
 

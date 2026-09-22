@@ -18,6 +18,31 @@ A template is a YAML file (see templates/*.yaml) with:
                                  the same physical sheet uses 4 (A-D/F-J). Falls
                                  back to the template-level choices when omitted,
                                  so single-choice-set sheets don't need this at all.
+      dynamic_choices:        - OPTIONAL, default false. True for a sheet
+                                 family confirmed NOT to reliably alternate
+                                 `choices`' two groups by odd/even question
+                                 parity -- e.g. a real sheet where questions 5
+                                 and 6 both print A/B/C/D instead of the second
+                                 flipping to F/G/H/J (see
+                                 choice_group_detect.py's own module
+                                 docstring for the full evidence: two nominally
+                                 identical printed forms of this sheet broke
+                                 alternation at *different* rows, so no static
+                                 per-question list can be right for both,
+                                 unlike a fixed, hand-verified irregularity).
+                                 When true, evaluate_sheet reads each row's
+                                 actual choices off the scanned image itself
+                                 (comparing each question's own printed glyph
+                                 against a nearby already-resolved one -- never
+                                 against a bundled reference image; the
+                                 template still declares `choices`/the
+                                 section's own override above, used as: (1)
+                                 the two candidate groups to distinguish
+                                 between, (2) question 1's own starting group
+                                 (always the "odd" list, the same convention
+                                 every other template already uses), and (3)
+                                 the fallback -- flagged low_confidence -- for
+                                 a row too damaged/marked to read either way.
       columns:                - one or more question column-groups within this section
         - first_question, last_question   - question numbers, local to this section
           x_start              - x pixel coordinate of the first (leftmost) bubble
@@ -78,6 +103,8 @@ class Section:
     # docstring's `choices` entry under `sections`.
     even_choices: Optional[List[str]] = None
     odd_choices: Optional[List[str]] = None
+    # See the module docstring's `dynamic_choices` entry under `sections`.
+    dynamic_choices: bool = False
 
     @property
     def num_questions(self) -> int:
@@ -100,6 +127,14 @@ class Template:
     even_choices: List[str]
     odd_choices: List[str]
     thresholds: Thresholds
+    # Per-question choices, resolved at runtime for a `dynamic_choices`
+    # section from the actual scanned image (see choice_group_detect.py) --
+    # never set by from_yaml/from_dict itself, only via with_resolved_choices.
+    # Checked by choices_for before falling back to even/odd, so every other
+    # method (bubbles, and every caller of choices_for in detect.py/
+    # grid_detect.py) picks up a resolved choice list transparently, with no
+    # changes of its own needed.
+    question_choices_override: Optional[Dict[QuestionKey, List[str]]] = None
 
     def _section(self, section_name: str) -> Section:
         for section in self.sections:
@@ -108,10 +143,24 @@ class Template:
         raise KeyError(f"No such section: {section_name!r}")
 
     def choices_for(self, section_name: str, question: int) -> List[str]:
+        if self.question_choices_override is not None:
+            resolved = self.question_choices_override.get((section_name, question))
+            if resolved is not None:
+                return resolved
         section = self._section(section_name)
         even = section.even_choices if section.even_choices is not None else self.even_choices
         odd = section.odd_choices if section.odd_choices is not None else self.odd_choices
         return even if question % 2 == 0 else odd
+
+    def with_resolved_choices(self, overrides: Dict[QuestionKey, List[str]]) -> "Template":
+        """A copy of this template with `overrides` added to (and taking
+        precedence over) any `question_choices_override` it already has --
+        see choice_group_detect.resolve_dynamic_choices, the only real
+        caller. Merges rather than replaces so resolving one
+        `dynamic_choices` section doesn't discard another's already-resolved
+        entries."""
+        merged = {**(self.question_choices_override or {}), **overrides}
+        return dataclasses.replace(self, question_choices_override=merged)
 
     def bubbles(self) -> Dict[QuestionKey, List[Bubble]]:
         """Return {(section_name, question_number): [Bubble, ...]}."""
@@ -177,7 +226,13 @@ class Template:
         choices = data.get("choices")
         even_choices = list(choices["even"]) if choices and "even" in choices else None
         odd_choices = list(choices["odd"]) if choices and "odd" in choices else None
-        return Section(name=data["name"], columns=columns, even_choices=even_choices, odd_choices=odd_choices)
+        return Section(
+            name=data["name"],
+            columns=columns,
+            even_choices=even_choices,
+            odd_choices=odd_choices,
+            dynamic_choices=bool(data.get("dynamic_choices", False)),
+        )
 
     def validate(self) -> None:
         """Sanity-check the template and raise ValueError on obvious problems."""

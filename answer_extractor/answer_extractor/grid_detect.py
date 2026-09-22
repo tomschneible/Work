@@ -232,13 +232,15 @@ def _max_choices_in_section(template: Template, section: Section) -> int:
     """The most choices any question in this section has. Almost always
     the same for every question in a section (e.g. a legacy ACT sheet's
     Math section uses 5 choices throughout, every other section on the
-    same sheet uses 4) -- computed as a max across both parities rather
-    than assumed constant so callers sizing a threshold/ROI around it
-    can't come up short even if a section ever did mix choice counts."""
-    return max(
-        len(template.choices_for(section.name, 1)),
-        len(template.choices_for(section.name, 2)),
-    )
+    same sheet uses 4) -- computed as a max across every question, not
+    just assumed constant across the two parities, so callers sizing a
+    threshold/ROI around it can't come up short even if a section ever did
+    mix choice counts. Checking every question rather than just questions
+    1 and 2 matters once a `dynamic_choices` section's real per-question
+    choices aren't known to be exactly one of two fixed lists at every
+    other position too (they always are for this project's own templates
+    so far, but this function has no way to assume that in general)."""
+    return max(len(template.choices_for(section.name, q)) for q in range(1, section.num_questions + 1))
 
 
 def _column_gap_threshold(template: Template, section: Section) -> float:
