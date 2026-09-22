@@ -25,6 +25,7 @@ def _result(label, questions, template_name="act_answer_sheet"):
 def test_should_export_to_sheets_true_for_known_act_templates():
     assert should_export_to_sheets(_result("x", [], template_name="act_answer_sheet"))
     assert should_export_to_sheets(_result("x", [], template_name="legacy_act_answer_sheet"))
+    assert should_export_to_sheets(_result("x", [], template_name="act_j_form_answer_sheet"))
 
 
 def test_should_export_to_sheets_false_for_unrecognized_template():
@@ -79,6 +80,20 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     # output_name/canonical_filename still reads its own date from the
     # input filename, unchanged -- confirmed by the pdf_path assertion
     # above still naming the file after "January 17 2026", not "3/8/2026".
+
+
+def test_export_sheet_report_uses_the_real_enhanced_category_path_for_the_j_form_template(tmp_path):
+    """act_j_form_answer_sheet's own real-world Drive templates live in
+    "Real Enhanced", a sibling of Enhanced/Legacy directly under ACT --
+    not this pipeline's own naming, the org's actual Drive folder name."""
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane 2027 ACT J01 January 17 2026", questions, template_name="act_j_form_answer_sheet")
+    prompt_fn = MagicMock(return_value="3/8/2026")
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
+        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
+
+    assert export_mock.call_args.kwargs["category_path"] == ["ACT", "Real Enhanced"]
 
 
 def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_review_items(tmp_path):

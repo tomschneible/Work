@@ -138,9 +138,9 @@ correct answer for Module 1, the easier Module 2, and the harder Module 2.
 
 ## Google Sheets score reports
 
-**Status: wired into the main auto_cli/droplet pipeline for both ACT
-(Enhanced and Legacy) scans and SAT/DSAT score-report PDFs.** This
-section covers what's implemented today.
+**Status: wired into the main auto_cli/droplet pipeline for ACT
+(Enhanced, Legacy, and Real Enhanced) scans and SAT/DSAT score-report
+PDFs.** This section covers what's implemented today.
 
 For an ACT scan whose auto-detected bubble-sheet template is one of the
 wired formats, or a SAT/DSAT score-report PDF that answer-key

@@ -25,11 +25,16 @@ from .scoresheet_grid import normalize_section
 # SheetResult.template_name (the matched template YAML's filename stem --
 # see template_detect/pipeline.process_path_auto) -> the Drive category
 # path under the templates root to search for that test's template file.
-# Only ACT's two known bubble-sheet formats are wired to Drive so far --
-# see should_export_to_sheets.
+# Only these ACT bubble-sheet formats are wired to Drive so far -- see
+# should_export_to_sheets. "Real Enhanced" is the org's own folder name
+# for act_j_form_answer_sheet's real-world templates, a sibling of
+# Enhanced/Legacy directly under ACT (not this pipeline's own naming --
+# kept exactly as it actually exists in Drive, same as Enhanced/Legacy
+# already are).
 _TEMPLATE_NAME_TO_CATEGORY_PATH: Dict[str, List[str]] = {
     "act_answer_sheet": ["ACT", "Enhanced"],
     "legacy_act_answer_sheet": ["ACT", "Legacy"],
+    "act_j_form_answer_sheet": ["ACT", "Real Enhanced"],
 }
 
 
