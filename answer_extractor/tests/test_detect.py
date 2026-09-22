@@ -1378,7 +1378,7 @@ _DYNAMIC_TEST_FONT_SCALE = 1.0
 _DYNAMIC_TEST_FONT_THICKNESS = 2
 
 
-def _make_dynamic_choices_template(dynamic_choices: bool) -> Template:
+def _make_dynamic_choices_template(dynamic_choices: bool, num_questions: int = 9) -> Template:
     """Larger scale than make_template() (radius 16 there vs. 22 here, same
     ratio as choice_group_detect's own test template) -- needed so a
     letter bold enough for resolve_section_choices' own real-scan-
@@ -1386,13 +1386,19 @@ def _make_dynamic_choices_template(dynamic_choices: bool) -> Template:
     size filter; see test_choice_group_detect.py's own make_template for
     the same reasoning in more detail."""
     data = {
-        "page": {"width": 900, "height": 900},
+        "page": {"width": 900, "height": 100 + num_questions * 80 + 100},
         "sections": [
             {
                 "name": "Answers",
                 "dynamic_choices": dynamic_choices,
                 "columns": [
-                    {"first_question": 1, "last_question": 9, "x_start": 150, "y_start": 100, "row_height": 80},
+                    {
+                        "first_question": 1,
+                        "last_question": num_questions,
+                        "x_start": 150,
+                        "y_start": 100,
+                        "row_height": 80,
+                    },
                 ],
             }
         ],
@@ -1437,6 +1443,72 @@ def test_evaluate_sheet_reads_a_marked_answer_correctly_through_a_dynamic_choice
     naive_template = _make_dynamic_choices_template(dynamic_choices=False)
     naive_results = {r.question: r for r in evaluate_sheet(image, naive_template)[0]}
     assert naive_results[6].answer == "B"
+
+
+def test_evaluate_sheet_infers_a_blank_across_a_dynamic_choices_duplicate_row():
+    """The "long uninterrupted flow" rescue (_infer_from_answer_pattern):
+    a student marking the same relative bubble position for a long,
+    unbroken run of questions, with one gap in the middle left blank --
+    inferred from the matching choice-index on both sides. This has to
+    keep working across a dynamic_choices section's own duplicate rows,
+    not just within an ordinarily-alternating stretch: after a duplicate
+    (questions 5 and 6 both printing F/G/H/J here), every later
+    question's real group is shifted out of phase with plain odd/even
+    parity -- confirmed this genuinely used to break the rescue entirely
+    for everything after the duplicate, not just read one question wrong:
+    _infer_from_answer_pattern turns each answer into a choice index via
+    the *unresolved* template's own choices_for, so a real, directly-
+    detected answer whose letter belongs to the *other* group than
+    parity guesses (e.g. "B" where parity-only expects F/G/H/J) isn't
+    even recognized as a same-position match -- it reads as unreadable
+    noise to the pattern-matching, even though the answer itself is
+    already correct on the page. With enough of those in a row, the
+    rescue can't find a same-index neighbor on either side of a real gap
+    at all, and a blank that should be confidently inferred stays blank.
+    """
+    num_questions = 12
+    dynamic_template = _make_dynamic_choices_template(dynamic_choices=True, num_questions=num_questions)
+    # 1=F,2=A,3=F,4=A,5=F,6=F(dup),7=A,8=F,9=A,10=F,11=A,12=F -- flipping
+    # every question except the deliberate 5/6 duplicate.
+    odd_group, even_group = ["F", "G", "H", "J"], ["A", "B", "C", "D"]
+    groups = {}
+    current = odd_group
+    for q in range(1, num_questions + 1):
+        if q > 1 and q != 6:
+            current = even_group if current is odd_group else odd_group
+        groups[q] = current
+    resolved = dynamic_template.with_resolved_choices({("Answers", q): g for q, g in groups.items()})
+
+    # Mark slot index 1 (the "G"/"B" position, whichever group a question's
+    # real choices are) on every question except 9, left blank -- 8 marks
+    # before the gap (1-8) and 3 after (10-12), 11 total, clearing
+    # _PATTERN_MIN_TOTAL_RUN (8).
+    answers = {q: [groups[q][1]] for q in range(1, num_questions + 1) if q != 9}
+    image = render_sheet(
+        resolved,
+        answers,
+        letters=True,
+        letter_font_scale=_DYNAMIC_TEST_FONT_SCALE,
+        letter_thickness=_DYNAMIC_TEST_FONT_THICKNESS,
+    )
+
+    results = {r.question: r for r in evaluate_sheet(image, dynamic_template)[0]}
+
+    # Every directly-marked question read correctly first (the fix this
+    # test is really about only matters once this much is already true).
+    for q in range(1, num_questions + 1):
+        if q == 9:
+            continue
+        assert results[q].answer == groups[q][1], f"Q{q}"
+
+    # Question 9's real group (after the duplicate's phase shift) is
+    # A/B/C/D -- its own slot index 1 is "B", which is what the rescue
+    # should infer here, not "G" (naive odd/even parity's own guess for
+    # an odd question) and not a lingering blank.
+    assert groups[9] == even_group  # sanity: confirms this scenario actually exercises the phase shift
+    assert results[9].answer == "B"
+    assert results[9].pattern_inferred
+    assert results[9].low_confidence
 
 
 def test_evaluate_sheet_tolerates_partial_sloppy_marks():

@@ -1134,6 +1134,30 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
             detected, dynamic_choice_low_confidence = choice_group_detect.resolve_section_choices(
                 gray, template, section, detected
             )
+            # _reconsider_low_confidence_pattern/_infer_from_answer_pattern
+            # (the "long uninterrupted flow" run-of-same-position-answers
+            # rescue, near the bottom of this function) each independently
+            # re-derive a question's own choice list via
+            # template.choices_for to turn its answer into a choice INDEX
+            # -- position-based, so the same index means the same
+            # *relative* position regardless of which group is actually
+            # printed at that row, the same reasoning that makes them work
+            # at all on an ordinary alternating template. Without this,
+            # they'd keep asking the *unresolved* template, which still
+            # only knows naive odd/even parity -- correct only up to a
+            # section's first duplicate row; every question after one has
+            # its real group shifted out of phase with parity, so its
+            # (correctly resolved, correctly scored) answer letter often
+            # isn't even a member of parity's guessed list at all, making
+            # a real, direct answer look unreadable to this specific
+            # pattern-matching and silently breaking the whole rescue for
+            # the rest of the section. Folding resolution into `template`
+            # itself (rather than teaching those two functions about
+            # dynamic_choices directly) keeps them unchanged -- choices_for
+            # already checks this override before falling back to parity.
+            template = template.with_resolved_choices(
+                {(section.name, q): [choice for choice, _, _ in bubbles] for q, bubbles in detected.items()}
+            )
 
         section_bubbles = {}
         bubbles_by_choice: Dict[str, List[Tuple[int, int]]] = {}
