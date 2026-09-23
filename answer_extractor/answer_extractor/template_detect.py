@@ -19,8 +19,11 @@ section matched" is a strong, ink-independent signal -- and conveniently,
 it's exactly the check evaluate_sheet needs to run anyway once a template
 is chosen.
 
-Only returns a template when exactly one candidate gets a full match.
-Zero or more than one is reported as ambiguous rather than guessed:
+Only returns a template when exactly one candidate gets a full match --
+or when every other full match is a shorter sibling form of it (same
+layout, fewer rows), whose grid is necessarily present on the longer
+form's sheet too. Zero or more than one otherwise is reported as
+ambiguous rather than guessed:
 silently picking the wrong template would mean every answer on the sheet
 gets read from the wrong bubble positions, and this project's standing
 rule -- a wrong-but-confident answer is worse than one flagged for a human
@@ -134,5 +137,36 @@ def detect_template(
         template.validate()
         attempts.append(score_template(image, path, template))
     full_matches = [a for a in attempts if a.is_full_match]
-    match = full_matches[0] if len(full_matches) == 1 else None
+    match = full_matches[0] if len(full_matches) == 1 else _longest_of_siblings(full_matches)
     return DetectionResult(match=match, attempts=attempts)
+
+
+def _longest_of_siblings(full_matches: List[TemplateMatch]) -> Optional[TemplateMatch]:
+    """The match every other one is a shorter sibling of (see
+    _is_shorter_sibling) -- a shorter form's grid is fully present on a
+    longer form's sheet too, but never the reverse, so that's the sheet."""
+    for candidate in full_matches:
+        others = [a for a in full_matches if a is not candidate]
+        if others and all(_is_shorter_sibling(o.template, candidate.template) for o in others):
+            return candidate
+    return None
+
+
+def _is_shorter_sibling(short: Template, long: Template) -> bool:
+    """`short` is `long`'s layout with fewer rows: same sections, every
+    column at one of `long`'s columns with the same row height, starting
+    within a row of it and no longer."""
+    long_sections = {s.name: s for s in long.sections}
+    if {s.name for s in short.sections} != set(long_sections):
+        return False
+    for section in short.sections:
+        for col in section.columns:
+            twin = next((c for c in long_sections[section.name].columns if abs(c.x_start - col.x_start) <= 2), None)
+            if (
+                twin is None
+                or twin.row_height != col.row_height
+                or abs(twin.y_start - col.y_start) > col.row_height
+                or col.last_question - col.first_question > twin.last_question - twin.first_question
+            ):
+                return False
+    return sum(s.num_questions for s in short.sections) < sum(s.num_questions for s in long.sections)

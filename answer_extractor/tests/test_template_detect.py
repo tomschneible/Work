@@ -14,6 +14,7 @@ from answer_extractor.pipeline import process_path_auto
 from answer_extractor.template import Template
 from answer_extractor.template_detect import (
     DEFAULT_TEMPLATES_DIR,
+    _is_shorter_sibling,
     discover_template_paths,
     detect_template,
     score_template,
@@ -39,6 +40,31 @@ sections:
     columns:
       - {first_question: 1, last_question: 6, x_start: 150, y_start: 100, row_height: 40}
       - {first_question: 7, last_question: 12, x_start: 450, y_start: 100, row_height: 40}
+bubble_spacing_x: 30
+bubble_radius: 11
+choices:
+  even: [A, B, C, D]
+  odd: [F, G, H, J]
+thresholds:
+  fill_ratio_min: 0.35
+  relative_margin: 0.15
+""",
+    )
+
+
+def make_template_a_short(templates_dir: Path) -> Path:
+    # template_a's own layout, fewer rows per column -- a shorter sibling form.
+    return _write_template(
+        templates_dir / "template_a_short.yaml",
+        """
+page:
+  width: 900
+  height: 900
+sections:
+  - name: Answers
+    columns:
+      - {first_question: 1, last_question: 4, x_start: 150, y_start: 100, row_height: 40}
+      - {first_question: 5, last_question: 8, x_start: 450, y_start: 100, row_height: 40}
 bubble_spacing_x: 30
 bubble_radius: 11
 choices:
@@ -168,6 +194,38 @@ def test_detect_template_is_ambiguous_when_more_than_one_candidate_fully_matches
 
     assert result.match is None
     assert "ambiguous" in result.describe_failure()
+
+
+def test_detect_template_picks_the_longer_form_when_its_shorter_sibling_also_matches(tmp_path):
+    # Real case: the J-series template's grid is fully present on an ACT
+    # Enhanced sheet, so every Enhanced sheet read as ambiguous.
+    template_a_path = make_template_a(tmp_path)
+    short_path = make_template_a_short(tmp_path)
+    image = make_blank_sheet(Template.from_yaml(template_a_path), letters=True)
+
+    result = detect_template(image, tmp_path)
+
+    assert {a.path for a in result.attempts if a.is_full_match} == {template_a_path, short_path}
+    assert result.match is not None
+    assert result.match.path == template_a_path
+
+
+def test_detect_template_still_picks_the_shorter_form_for_its_own_sheet(tmp_path):
+    make_template_a(tmp_path)
+    short_path = make_template_a_short(tmp_path)
+    image = make_blank_sheet(Template.from_yaml(short_path), letters=True)
+
+    result = detect_template(image, tmp_path)
+
+    assert result.match is not None
+    assert result.match.path == short_path
+
+
+def test_the_j_series_template_is_the_only_shorter_sibling_among_the_shipped_ones():
+    names = ["act_answer_sheet", "act_j_form_answer_sheet", "legacy_act_answer_sheet"]
+    templates = {n: Template.from_yaml(Path(DEFAULT_TEMPLATES_DIR) / f"{n}.yaml") for n in names}
+    siblings = {(s, l) for s in names for l in names if s != l and _is_shorter_sibling(templates[s], templates[l])}
+    assert siblings == {("act_j_form_answer_sheet", "act_answer_sheet")}
 
 
 # -- pipeline.process_path_auto ----------------------------------------------
