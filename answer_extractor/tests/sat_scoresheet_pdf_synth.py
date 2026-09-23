@@ -65,6 +65,7 @@ def write_sat_scoresheet_pdf(
     test_date: str = "March 8, 2026",
     page_height: float = 792.0,
     domain_header_y_offset: float = 0.0,
+    omitted_mark: str = "ø",
 ) -> None:
     max_groups = max((len(hr) for hr in header_rows), default=0)
     page_width = LEFT_MARGIN + max_groups * GROUP_WIDTH + 60.0
@@ -104,7 +105,9 @@ def write_sat_scoresheet_pdf(
                         text(gx, line_y, line, size=WRAPPED_FONT_SIZE)
                 if row.your is not None:
                     text(gx + YOUR_OFFSET, row_y, row.your)
-                text(gx + MARK_OFFSET, row_y + MARK_Y_OFFSET, _mark_for(row))
+                mark = omitted_mark if row.your is None else _mark_for(row)
+                if mark:
+                    text(gx + MARK_OFFSET, row_y + MARK_Y_OFFSET, mark)
                 text(gx + DOMAIN_OFFSET, row_y, "CS")
                 text(gx + SKILL_OFFSET, row_y, "WIC")
 

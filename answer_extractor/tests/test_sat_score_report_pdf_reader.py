@@ -68,6 +68,19 @@ def test_omitted_question_reads_as_blank_not_the_correct_answer(tmp_path):
     assert parse_sat_score_report_pdf(path)[("math module 1", 1)] == ""
 
 
+def test_a_blank_with_no_mark_at_all_reads_as_blank_and_doesnt_end_the_group(tmp_path):
+    # A real report left an omitted question's mark cell empty instead of
+    # showing "ø" -- every question after it was dropped.
+    path = tmp_path / "report.pdf"
+    rows = [Row(13, "C", "A"), Row(14, "B", None), Row(15, "D", "A")]
+    write_sat_scoresheet_pdf(path, [[SatGroup("R & W Module 2", rows)]], omitted_mark="")
+    assert parse_sat_score_report_pdf(path) == {
+        ("reading and writing module 2", 13): "A",
+        ("reading and writing module 2", 14): "",
+        ("reading and writing module 2", 15): "A",
+    }
+
+
 def test_two_header_rows_on_one_page_are_both_parsed(tmp_path):
     """The real page's own shape: Reading and Writing's pair of modules on
     one header row, Math's own pair further down the same page."""

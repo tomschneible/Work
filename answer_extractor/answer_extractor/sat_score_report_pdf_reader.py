@@ -212,12 +212,15 @@ def _parse_group_rows(words: Sequence[_Word], group: _ColumnGroup) -> Dict[int, 
         if expected is not None and question != expected:
             break
         row_y = number[1]
-        mark_candidates = [m for m in mark_words if -4 <= (row_y - m[1]) <= 4]
-        if not mark_candidates:
-            break
-        mark = min(mark_candidates, key=lambda m: abs(row_y - m[1]))
-        pre_mark = sorted((w for w in words_in_row if w[0] < mark[0]), key=lambda w: w[0])
-        answer = "" if mark[4] == "ø" else (pre_mark[-1][4] if pre_mark else "")
+        mark = min(
+            (m for m in mark_words if -4 <= (row_y - m[1]) <= 4), key=lambda m: abs(row_y - m[1]), default=None
+        )
+        # An omitted question can render with no mark at all, not just "ø".
+        if mark is None or mark[4] == "ø":
+            answer = ""
+        else:
+            pre_mark = sorted((w for w in words_in_row if w[0] < mark[0]), key=lambda w: w[0])
+            answer = pre_mark[-1][4] if pre_mark else ""
         result[question] = answer
         expected = question + 1
     return result
