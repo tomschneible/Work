@@ -55,8 +55,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import fitz
-
+from .pdf_lib import fitz
 from .sat_score_report_writer import normalize_subject
 from .scoresheet_grid import QuestionKey
 

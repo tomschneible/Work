@@ -63,6 +63,7 @@ import sys
 import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+import requests
 from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
@@ -93,6 +94,15 @@ CellValue = Union[str, int, float, bool, None]
 # unhandled 429 mid-report rather than a brief, automatic retry.
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_RETRY_SECONDS = 65  # a little over the 60-second window WriteRequestsPerMinutePerUser is measured over
+
+# Drive calls lean on googleapiclient's own retry instead: `num_retries`
+# re-sends a request that got a 429 or 5xx, with exponential backoff.
+_DRIVE_RETRIES = 3
+# Seconds to wait before each retry of export_pdf's request -- it goes to
+# Sheets' own export URL, not a googleapiclient method, so it has no
+# built-in retry of its own; that endpoint answers a burst of back-to-back
+# reports with 429s.
+_PDF_EXPORT_RETRY_WAITS = (10, 30, 60)
 
 
 def is_rate_limit_error(exc: Exception) -> bool:
@@ -266,7 +276,7 @@ def list_folder(drive: Resource, folder_id: str) -> List[Dict[str, str]]:
                 corpora="allDrives",
                 pageToken=page_token,
             )
-            .execute()
+            .execute(num_retries=_DRIVE_RETRIES)
         )
         files.extend(response.get("files", []))
         page_token = response.get("nextPageToken")
@@ -286,7 +296,9 @@ def copy_template(
     body = {"name": new_name}
     if parent_folder_id:
         body["parents"] = [parent_folder_id]
-    result = drive.files().copy(fileId=template_file_id, body=body, supportsAllDrives=True).execute()
+    result = drive.files().copy(fileId=template_file_id, body=body, supportsAllDrives=True).execute(
+        num_retries=_DRIVE_RETRIES
+    )
     return result["id"]
 
 
@@ -295,14 +307,16 @@ def get_file(drive: Resource, file_id: str) -> Dict[str, object]:
     containing folder's id, in a one-item list) is left out entirely for a
     Drive's own root, and for anything whose containing folder this
     account can't see."""
-    return drive.files().get(fileId=file_id, fields="id, name, parents", supportsAllDrives=True).execute()
+    request = drive.files().get(fileId=file_id, fields="id, name, parents", supportsAllDrives=True)
+    return request.execute(num_retries=_DRIVE_RETRIES)
 
 
 def create_folder(drive: Resource, parent_folder_id: str, name: str) -> str:
     """Create a folder named `name` inside `parent_folder_id`, returning
     the new folder's own id."""
     body = {"name": name, "mimeType": FOLDER_MIME_TYPE, "parents": [parent_folder_id]}
-    return drive.files().create(body=body, fields="id", supportsAllDrives=True).execute()["id"]
+    request = drive.files().create(body=body, fields="id", supportsAllDrives=True)
+    return request.execute(num_retries=_DRIVE_RETRIES)["id"]
 
 
 def upload_bytes(drive: Resource, parent_folder_id: str, name: str, content: bytes, mime_type: str) -> str:
@@ -313,7 +327,8 @@ def upload_bytes(drive: Resource, parent_folder_id: str, name: str, content: byt
     upload allows."""
     media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=True)
     body = {"name": name, "parents": [parent_folder_id]}
-    return drive.files().create(body=body, media_body=media, fields="id", supportsAllDrives=True).execute()["id"]
+    request = drive.files().create(body=body, media_body=media, fields="id", supportsAllDrives=True)
+    return request.execute(num_retries=_DRIVE_RETRIES)["id"]
 
 
 def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
@@ -322,7 +337,7 @@ def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
     downloader = MediaIoBaseDownload(buffer, request)
     done = False
     while not done:
-        _, done = downloader.next_chunk()
+        _, done = downloader.next_chunk(num_retries=_DRIVE_RETRIES)
     return buffer.getvalue()
 
 
@@ -417,7 +432,7 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fi
         params["bottom_margin"] = str(bottom_margin_in)
     if fit_to_page:
         params["scale"] = "4"
-    response = session.get(url, params=params)
+    response = _get_with_retry(session, url, params)
     response.raise_for_status()
     content_type = response.headers.get("Content-Type", "")
     if not content_type.startswith("application/pdf"):
@@ -426,6 +441,24 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fi
             f"content-type {content_type!r} instead (first 200 bytes: {response.content[:200]!r})"
         )
     return response.content
+
+
+def _get_with_retry(session: AuthorizedSession, url: str, params: Dict[str, str]):
+    """`session.get`, retried after each of _PDF_EXPORT_RETRY_WAITS on a 429,
+    a 5xx, or a dropped connection. The last response comes back as-is
+    (the caller's raise_for_status turns it into an error); a connection
+    that keeps failing raises."""
+    for wait in (*_PDF_EXPORT_RETRY_WAITS, None):
+        try:
+            response = session.get(url, params=params)
+        except (requests.ConnectionError, requests.Timeout):
+            if wait is None:
+                raise
+        else:
+            if wait is None or (response.status_code != 429 and response.status_code < 500):
+                return response
+        print(f"  Google's PDF export didn't answer properly -- trying again in {wait}s...", file=sys.stderr)
+        time.sleep(wait)
 
 
 def export_xlsx(drive: Resource, file_id: str) -> bytes:
@@ -461,7 +494,7 @@ def delete_file(drive: Resource, file_id: str) -> None:
     failed export attempt, or after a successful one when the caller
     asked not to keep it -- see google_report_export_common.
     export_filled_report's keep_working_copy)."""
-    drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    drive.files().delete(fileId=file_id, supportsAllDrives=True).execute(num_retries=_DRIVE_RETRIES)
 
 
 def _a1(row: int, column: int) -> str:

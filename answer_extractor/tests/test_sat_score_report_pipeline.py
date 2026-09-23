@@ -231,6 +231,21 @@ def test_export_sat_report_raises_for_a_non_sat_filename(tmp_path):
         export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=MagicMock())
 
 
+@pytest.mark.parametrize("identified, ok", [("SAT Practice 8", True), ("SAT Practice 4", False), ("", True)])
+def test_export_sat_report_checks_the_filenames_test_number_against_the_identified_test(tmp_path, identified, ok):
+    rows = [dataclasses.replace(_row(1, 1, "Math", "B", "Module 1"), test=identified)]  # filename says DSAT 8
+    prompt_fn = MagicMock(side_effect=["3/8/2026", "620"])
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake") as export_mock:
+        if ok:
+            export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+        else:
+            with pytest.raises(ValueError, match="named as test 8, but its answers match SAT Practice 4"):
+                export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
+    assert export_mock.called == ok
+    assert prompt_fn.called == ok  # a mismatch is caught before anyone is asked anything
+
+
 def test_export_sat_report_raises_on_empty_rows(tmp_path):
     with pytest.raises(ValueError, match="No rows"):
         export_sat_report(MagicMock(), MagicMock(), "ROOT", [], tmp_path, prompt_fn=MagicMock())

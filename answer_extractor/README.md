@@ -223,8 +223,12 @@ worked, or to look around the folder tree while debugging.
    configured root (`Testmastergrids`, by default -- override with
    `--templates-root-folder-id` or `$ANSWER_EXTRACTOR_TEMPLATES_ROOT_FOLDER_ID`),
    e.g. `ACT/Enhanced` or `SAT`, then matches a template file by test
-   code substring against real template names like `ACT 25MC1` or
-   `DSAT 8`. Uploading a new template to the right subfolder is all a new
+   code against real template names like `ACT 25MC1` or `DSAT 8` -- as a
+   whole word, so test `1` finds `DSAT 1` and not also `DSAT 10`/`DSAT 11`.
+   For a SAT/DSAT report, the test number in the filename must also agree
+   with the practice test its answers are identified as (see
+   `answer_keys.py`); a mismatch is refused rather than marked against the
+   wrong test's key. Uploading a new template to the right subfolder is all a new
    test code needs -- no code change. An ambiguous or missing match
    raises, listing what it actually found, rather than guessing.
 2. **The student's name, test date, and which category/test code to look

@@ -111,7 +111,7 @@ def load_sheets(path: str | Path) -> Iterator[Tuple[str, np.ndarray]]:
 
 
 def _load_pdf(path: Path) -> Iterator[Tuple[str, np.ndarray]]:
-    import fitz  # PyMuPDF
+    from .pdf_lib import fitz
 
     zoom = PDF_RENDER_DPI / 72.0
     matrix = fitz.Matrix(zoom, zoom)

@@ -130,6 +130,23 @@ def _prompt_for_section_score(
         )
 
 
+def _check_test_number(source: str, test_code: str, identified_test: str) -> None:
+    """Raise ValueError when the practice test answer-key identification
+    matched (e.g. "SAT Practice 6") isn't the one the filename names (e.g.
+    "DSAT 4") -- the filename's number picks the reference template, so a
+    misnamed file would otherwise be marked against another test's key.
+    Skipped when identification found nothing or either side isn't a
+    plain number."""
+    match = re.search(r"(\d+)\s*$", identified_test)
+    if not match or not test_code.isdigit():
+        return
+    if int(match.group(1)) != int(test_code):
+        raise ValueError(
+            f"{source!r} is named as test {test_code}, but its answers match {identified_test} -- "
+            "check the test number in the filename"
+        )
+
+
 def export_sat_report(
     drive: Resource,
     sheets: Resource,
@@ -183,6 +200,7 @@ def export_sat_report(
     if scan.test_family not in ("SAT", "DSAT"):
         raise ValueError(f"{source!r} isn't a SAT/DSAT filename (test_family={scan.test_family!r})")
 
+    _check_test_number(source, scan.test_code, rows[0].test)
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
     # Not scan.test_date/formatted_test_date any more -- see gui_prompt.py's

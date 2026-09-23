@@ -7,7 +7,7 @@ columns/section, Math has 5 choices) -- don't get confused for each other.
 from pathlib import Path
 
 import cv2
-import fitz
+from answer_extractor.pdf_lib import fitz
 import numpy as np
 
 from answer_extractor.pipeline import process_path_auto

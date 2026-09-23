@@ -36,13 +36,21 @@ if [ -n "${ANSWER_EXTRACTOR_TEMPLATE:-}" ]; then
   TEMPLATE_ARGS=(--template "$ANSWER_EXTRACTOR_TEMPLATE")
 fi
 
+# Each message goes to AppleScript as an argument (item 1 of argv), never
+# pasted into the script's own text: a double quote in it -- every Python
+# traceback has some -- would end the AppleScript string early, and the
+# dialog would silently never appear.
+NL=$'\n'
+
 notify() {
-  osascript -e "display notification \"$1\" with title \"Answer Extractor\"" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Answer Extractor"' -e 'end run' \
+    "$1" >/dev/null 2>&1 || true
 }
 
 fail() {
   local message="$1"
-  osascript -e "display alert \"Answer Extractor\" message \"$message\" as critical" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' -e 'display alert "Answer Extractor" message (item 1 of argv) as critical' -e 'end run' \
+    "$message" >/dev/null 2>&1 || true
   exit 1
 }
 
@@ -93,7 +101,7 @@ STATUS=$?
 set -e
 
 if [ "$STATUS" -ne 0 ]; then
-  fail "Scan failed:\n$RUN_OUTPUT"
+  fail "Scan failed:${NL}${RUN_OUTPUT}"
 fi
 
 # A successful run doesn't always mean anything was actually written --
@@ -106,19 +114,23 @@ fi
 # compared file (_resolve_output_path), which $OUTPUT above can't already
 # reflect since it's only ever a guess from whichever file(s) this one
 # launch happened to see (in the pending-pair case, only ever one of the
-# two). Its first line of output always names the real path
-# ("Wrote <path>: ...") -- trust that over our own guess, and only try to
+# two). Its output always names the real path on a "Wrote <path>: ..."
+# line -- not necessarily the first one, since warnings (stderr, merged
+# in above) print ahead of it -- so trust that over our own guess, and only try to
 # open (and only claim to have written) a path that's actually there,
 # same reasoning mac_droplet.sh's own combined-.xlsx handling already
 # applies.
-ACTUAL_OUTPUT="$(echo "$RUN_OUTPUT" | sed -n '1s/^Wrote \(.*\): .*/\1/p')"
+# Both awk calls read every line rather than exiting at the first match,
+# so the printf feeding them never hits a closed pipe (fatal under
+# `set -o pipefail`).
+ACTUAL_OUTPUT="$(printf '%s\n' "$RUN_OUTPUT" | awk '!done && match($0, /^Wrote .*: /) { print substr($0, 7, RLENGTH - 8); done = 1 }')"
 if [ -n "$ACTUAL_OUTPUT" ] && [ -e "$ACTUAL_OUTPUT" ]; then
   # auto_compare_cli prints "Wrote <path>: ..." on one line, then (only if
   # a reference was found and matched to exactly one scanned sheet) a
-  # comparison summary line -- surface that in the notification when
+  # comparison summary line right after it -- surface that in the notification when
   # present so you know at a glance whether anything needs a second look,
   # without opening the file first.
-  SUMMARY_LINE="$(echo "$RUN_OUTPUT" | sed -n '2p')"
+  SUMMARY_LINE="$(printf '%s\n' "$RUN_OUTPUT" | awk 'found && !done { print; done = 1 } /^Wrote / { found = 1 }')"
   if [ -n "$SUMMARY_LINE" ]; then
     notify "$(basename "$ACTUAL_OUTPUT") -- $SUMMARY_LINE"
   else

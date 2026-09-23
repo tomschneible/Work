@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Sequence, Tuple
 
-import fitz
+from answer_extractor.pdf_lib import fitz
 
 # The mark glyphs (✔/✘/ø) aren't in PyMuPDF's built-in base-14 fonts (a
 # plain insert_text with the default font silently substitutes an

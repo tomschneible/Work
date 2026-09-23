@@ -13,6 +13,7 @@ the naming convention holds.
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 from googleapiclient.discovery import Resource
@@ -53,18 +54,23 @@ def resolve_template_folder(drive: Resource, templates_root_folder_id: str, path
 
 def find_template_file(drive: Resource, folder_id: str, test_code: str) -> Dict[str, str]:
     """The single spreadsheet file in `folder_id` whose name contains
-    `test_code` (case-insensitive substring match -- template files are
-    named like "ACT 25MC1" or "DSAT 1234", so this matches "25MC1"/"1234"
-    parsed from the scanned sheet's own filename against them). Raises
+    `test_code` (case-insensitive, as a whole word where possible -- template
+    files are named like "ACT 25MC1" or "DSAT 1234", so this matches
+    "25MC1"/"1234" parsed from the scanned sheet's own filename against
+    them, without "1" also matching "DSAT 10"). Raises
     ValueError if no file matches or more than one does -- an ambiguous
     or missing match almost always means either the wrong category
     folder was searched, or two templates for the same test code exist
     and need cleaning up in Drive, not something this should guess past."""
-    candidates = [
-        f
-        for f in list_folder(drive, folder_id)
-        if f["mimeType"] == _SPREADSHEET_MIME_TYPE and test_code.strip().lower() in f["name"].strip().lower()
-    ]
+    code = test_code.strip().lower()
+    spreadsheets = [f for f in list_folder(drive, folder_id) if f["mimeType"] == _SPREADSHEET_MIME_TYPE]
+    # The code as a whole word first, so "1" means "DSAT 1" and not also
+    # "DSAT 10"/"DSAT 11" (likewise "25MC1" vs "25MC10"); a plain substring
+    # only if nothing matches that way, for a name like "DSAT1".
+    whole_word = re.compile(rf"(?<![0-9a-z]){re.escape(code)}(?![0-9a-z])")
+    candidates = [f for f in spreadsheets if whole_word.search(f["name"].strip().lower())]
+    if not candidates:
+        candidates = [f for f in spreadsheets if code in f["name"].strip().lower()]
     if not candidates:
         available = ", ".join(f["name"] for f in list_folder(drive, folder_id)) or "(empty)"
         raise ValueError(f"No template matching test code {test_code!r} in Drive folder {folder_id} (found: {available})")

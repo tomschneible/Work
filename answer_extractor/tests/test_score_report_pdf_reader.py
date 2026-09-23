@@ -122,7 +122,7 @@ def test_two_blocks_on_one_page_are_both_parsed(tmp_path):
 
 
 def test_no_scoresheet_table_on_the_page_raises(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     path = tmp_path / "blank.pdf"
     doc = fitz.open()
@@ -135,7 +135,7 @@ def test_no_scoresheet_table_on_the_page_raises(tmp_path):
 
 
 def test_page_index_picks_a_specific_page_out_of_several(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     scoresheet_path = tmp_path / "scoresheet.pdf"
     write_scoresheet_pdf(scoresheet_path, [Block("English", "Math", [[Row(1, "A", "A")], [Row(1, "B", "B")]])])
@@ -160,7 +160,7 @@ def test_page_index_picks_a_specific_page_out_of_several(tmp_path):
 
 
 def test_multiple_pages_with_tables_and_no_page_index_is_ambiguous(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     page_path = tmp_path / "page.pdf"
     write_scoresheet_pdf(page_path, [Block("English", "Math", [[Row(1, "A", "A")], [Row(1, "B", "B")]])])

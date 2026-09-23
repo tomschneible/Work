@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, NamedTuple, Sequence
 
-import fitz
+from answer_extractor.pdf_lib import fitz
 
 from tests.scoresheet_pdf_synth import MARK_FONT_PATH, Row, _mark_for
 

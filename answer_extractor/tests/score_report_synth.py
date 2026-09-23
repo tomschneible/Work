@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple, Union
 
-import fitz
+from answer_extractor.pdf_lib import fitz
 
 HEADER_LINES = ["Question", "", "Section", "Correct Answer", "Your Answer", "", "Actions"]
 

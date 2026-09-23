@@ -50,8 +50,7 @@ import dataclasses
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import fitz
-
+from .pdf_lib import fitz
 from .scoresheet_grid import QuestionKey, normalize_section
 
 _MARK_CHARS = {"✔", "✘", "ø"}

@@ -15,7 +15,7 @@ import dataclasses
 from pathlib import Path
 from typing import Iterable, List
 
-import fitz  # PyMuPDF
+from .pdf_lib import fitz
 
 
 @dataclasses.dataclass(frozen=True)

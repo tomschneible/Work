@@ -33,13 +33,21 @@ if [ -n "${ANSWER_EXTRACTOR_TEMPLATE:-}" ]; then
   TEMPLATE_ARGS=(--template "$ANSWER_EXTRACTOR_TEMPLATE")
 fi
 
+# Each message goes to AppleScript as an argument (item 1 of argv), never
+# pasted into the script's own text: a double quote in it -- every Python
+# traceback has some -- would end the AppleScript string early, and the
+# dialog would silently never appear.
+NL=$'\n'
+
 notify() {
-  osascript -e "display notification \"$1\" with title \"Answer Extractor\"" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Answer Extractor"' -e 'end run' \
+    "$1" >/dev/null 2>&1 || true
 }
 
 fail() {
   local message="$1"
-  osascript -e "display alert \"Answer Extractor\" message \"$message\" as critical" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' -e 'display alert "Answer Extractor" message (item 1 of argv) as critical' -e 'end run' \
+    "$message" >/dev/null 2>&1 || true
   exit 1
 }
 
@@ -49,7 +57,8 @@ fail() {
 # terminal to print it to either.
 warn_dialog() {
   local message="$1"
-  osascript -e "display alert \"Answer Extractor\" message \"$message\"" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' -e 'display alert "Answer Extractor" message (item 1 of argv)' -e 'end run' \
+    "$message" >/dev/null 2>&1 || true
 }
 
 if [ "$#" -eq 0 ]; then
@@ -93,7 +102,7 @@ set -e
 STDERR_OUTPUT="$(cat "$STDERR_FILE")"
 
 if [ "$STATUS" -ne 0 ]; then
-  fail "Scan failed:\n$STDERR_OUTPUT"
+  fail "Scan failed:${NL}${STDERR_OUTPUT}"
 fi
 
 # auto_cli prints warnings to stderr for anything non-fatal that still
@@ -118,11 +127,11 @@ MAX_DIALOG_CHARS=600
 if [ -n "$STDERR_OUTPUT" ]; then
   printf '%s\n' "$STDERR_OUTPUT" >"$LOG_FILE"
   if [ "${#STDERR_OUTPUT}" -gt "$MAX_DIALOG_CHARS" ]; then
-    DIALOG_STDERR="$(printf '%s' "$STDERR_OUTPUT" | cut -c1-"$MAX_DIALOG_CHARS")...\n\n(truncated -- full details saved to \"$LOG_FILE\")"
+    DIALOG_STDERR="${STDERR_OUTPUT:0:$MAX_DIALOG_CHARS}...${NL}${NL}(truncated -- full details saved to \"$LOG_FILE\")"
   else
     DIALOG_STDERR="$STDERR_OUTPUT"
   fi
-  warn_dialog "$STDOUT_OUTPUT\n\n$DIALOG_STDERR"
+  warn_dialog "${STDOUT_OUTPUT}${NL}${NL}${DIALOG_STDERR}"
 else
   notify "$STDOUT_OUTPUT"
 fi

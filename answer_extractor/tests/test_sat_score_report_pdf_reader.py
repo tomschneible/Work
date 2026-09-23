@@ -152,7 +152,7 @@ def test_groups_of_different_lengths_each_stop_at_their_own_last_row(tmp_path):
 
 
 def test_no_sat_table_on_the_page_raises(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     path = tmp_path / "blank.pdf"
     doc = fitz.open()
@@ -173,7 +173,7 @@ def test_an_unparseable_group_title_raises_a_clear_error(tmp_path):
 
 
 def test_page_index_picks_a_specific_page_out_of_several(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     sat_path = tmp_path / "sat.pdf"
     write_sat_scoresheet_pdf(sat_path, [[SatGroup("Math Module 1", [Row(1, "A", "A")])]])
@@ -199,7 +199,7 @@ def test_page_index_picks_a_specific_page_out_of_several(tmp_path):
 
 
 def test_multiple_pages_with_tables_and_no_page_index_is_ambiguous(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     page_path = tmp_path / "page.pdf"
     write_sat_scoresheet_pdf(page_path, [[SatGroup("Math Module 1", [Row(1, "A", "A")])]])

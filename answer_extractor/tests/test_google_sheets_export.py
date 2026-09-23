@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import httplib2
 import pytest
+import requests
 from googleapiclient.errors import HttpError
 
 from answer_extractor.google_sheets_export import (
@@ -153,7 +154,7 @@ def test_export_pdf_returns_the_downloaded_bytes():
     """Uses Sheets' own dedicated export URL (via an AuthorizedSession),
     not Drive's generic files.export -- see export_pdf's own docstring
     for why."""
-    fake_response = MagicMock()
+    fake_response = MagicMock(status_code=200)
     fake_response.headers = {"Content-Type": "application/pdf"}
     fake_response.content = b"%PDF-fake-content"
     fake_session = MagicMock()
@@ -175,7 +176,7 @@ def test_export_pdf_overrides_bottom_margin_when_given():
     """bottom_margin_in, when given, is added as this endpoint's own
     `bottom_margin` query parameter alongside `format` -- see export_pdf's
     own docstring for why (SAT's own print margin override)."""
-    fake_response = MagicMock()
+    fake_response = MagicMock(status_code=200)
     fake_response.headers = {"Content-Type": "application/pdf"}
     fake_response.content = b"%PDF-fake-content"
     fake_session = MagicMock()
@@ -193,7 +194,7 @@ def test_export_pdf_forces_fit_to_page_scale_when_given():
     """fit_to_page=True adds this endpoint's own `scale=4` ("Fit to
     Page") query parameter -- see export_pdf's own docstring for why
     (the simplified SAT template's Cover Page)."""
-    fake_response = MagicMock()
+    fake_response = MagicMock(status_code=200)
     fake_response.headers = {"Content-Type": "application/pdf"}
     fake_response.content = b"%PDF-fake-content"
     fake_session = MagicMock()
@@ -208,7 +209,7 @@ def test_export_pdf_forces_fit_to_page_scale_when_given():
 
 
 def test_export_pdf_omits_scale_when_fit_to_page_is_false():
-    fake_response = MagicMock()
+    fake_response = MagicMock(status_code=200)
     fake_response.headers = {"Content-Type": "application/pdf"}
     fake_response.content = b"%PDF-fake-content"
     fake_session = MagicMock()
@@ -222,11 +223,64 @@ def test_export_pdf_omits_scale_when_fit_to_page_is_false():
     assert "scale" not in kwargs["params"]
 
 
+def _pdf_response(status_code=200):
+    return MagicMock(status_code=status_code, headers={"Content-Type": "application/pdf"}, content=b"%PDF-fake")
+
+
+def test_export_pdf_retries_a_busy_or_failed_request_before_giving_up():
+    fake_session = MagicMock()
+    fake_session.get.side_effect = [
+        _pdf_response(429), requests.ConnectionError("dropped"), _pdf_response(503), _pdf_response()
+    ]
+
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session), \
+         patch("answer_extractor.google_sheets_export.time.sleep") as sleep_mock:
+        assert export_pdf("FILE_ID") == b"%PDF-fake"
+
+    assert [c.args[0] for c in sleep_mock.call_args_list] == [10, 30, 60]
+
+
+def test_export_pdf_hands_back_the_last_error_once_retries_run_out():
+    fake_session = MagicMock()
+    last = _pdf_response(429)
+    last.raise_for_status.side_effect = requests.HTTPError("429 Too Many Requests")
+    fake_session.get.side_effect = [_pdf_response(429), _pdf_response(429), _pdf_response(429), last]
+
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session), \
+         patch("answer_extractor.google_sheets_export.time.sleep"):
+        with pytest.raises(requests.HTTPError):
+            export_pdf("FILE_ID")
+    assert fake_session.get.call_count == 4
+
+
+def test_export_pdf_does_not_retry_an_ordinary_client_error():
+    fake_session = MagicMock()
+    forbidden = _pdf_response(403)
+    forbidden.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
+    fake_session.get.return_value = forbidden
+
+    with patch("answer_extractor.google_sheets_export.get_credentials", return_value="CREDS"), \
+         patch("answer_extractor.google_sheets_export.AuthorizedSession", return_value=fake_session), \
+         patch("answer_extractor.google_sheets_export.time.sleep") as sleep_mock:
+        with pytest.raises(requests.HTTPError):
+            export_pdf("FILE_ID")
+    sleep_mock.assert_not_called()
+
+
+def test_drive_calls_ask_googleapiclient_to_retry():
+    drive = MagicMock()
+    drive.files.return_value.copy.return_value.execute.return_value = {"id": "NEW_ID"}
+    copy_template(drive, "TEMPLATE_ID", "Report")
+    drive.files.return_value.copy.return_value.execute.assert_called_once_with(num_retries=3)
+
+
 def test_export_pdf_raises_if_the_response_is_not_actually_a_pdf():
     """This endpoint can return a 200 with an HTML error/login page
     instead of a clean HTTP error for some failure modes -- confirm that
     gets caught rather than silently treated as a valid PDF."""
-    fake_response = MagicMock()
+    fake_response = MagicMock(status_code=200)
     fake_response.headers = {"Content-Type": "text/html; charset=UTF-8"}
     fake_response.content = b"<html>not a pdf</html>"
     fake_session = MagicMock()

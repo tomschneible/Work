@@ -327,7 +327,7 @@ def test_load_our_answers_also_wraps_a_sat_pdf_as_unflagged_answers(tmp_path):
 
 @pdf_pytestmark
 def test_load_reference_answers_raises_naming_both_readers_when_neither_matches(tmp_path):
-    import fitz
+    from answer_extractor.pdf_lib import fitz
 
     path = tmp_path / "blank.pdf"
     doc = fitz.open()

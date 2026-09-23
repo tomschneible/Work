@@ -146,3 +146,19 @@ def test_find_file_by_exact_name_raises_when_ambiguous():
     with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
         with pytest.raises(ValueError, match="ambiguous"):
             find_file_by_exact_name(MagicMock(), "FOLDER", "DSAT Simplified Template")
+
+
+@pytest.mark.parametrize(
+    "code, names, expected",
+    [
+        ("1", ["DSAT 1", "DSAT 10", "DSAT 11"], "DSAT 1"),
+        ("10", ["DSAT 1", "DSAT 10", "DSAT 11"], "DSAT 10"),
+        ("25MC1", ["ACT 25MC1", "ACT 25MC10"], "ACT 25MC1"),
+        ("6", ["DSAT #6"], "DSAT #6"),
+        ("4", ["DSAT4"], "DSAT4"),  # no word boundary at all -- falls back to a substring match
+    ],
+)
+def test_find_template_file_matches_the_code_as_a_whole_word_first(code, names, expected):
+    listing = [{"id": n, "name": n, "mimeType": _SHEET} for n in names]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
+        assert find_template_file(MagicMock(), "FOLDER", code)["name"] == expected
