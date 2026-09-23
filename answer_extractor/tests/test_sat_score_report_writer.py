@@ -3,7 +3,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from answer_extractor.google_sheets_export import CellWrite, FillResult
@@ -154,11 +154,6 @@ def test_read_reference_questions_reads_correct_answer_domain_and_skill(tmp_path
     wb.save(path)
     ws = openpyxl.load_workbook(path)["Student Responses"]
 
-    # Compared field-by-field, not via ReferenceQuestion equality --
-    # correct_answer_font_size isn't this test's concern (its own
-    # dedicated test below covers it) and a bare openpyxl.Workbook()'s
-    # own default style already gives every untouched cell some non-None
-    # size of its own, unlike a real Sheets-exported file's.
     module1 = read_reference_questions(ws, "reading and writing", "module1")
     assert (module1[1].correct_answer, module1[1].domain, module1[1].skill) == (
         "A",
@@ -180,36 +175,6 @@ def test_read_reference_questions_reads_correct_answer_domain_and_skill(tmp_path
     # Q2 never had Domain/Skill poked above -- still reads cleanly as None,
     # not an error; only a missing *block* raises (see below).
     assert (harder[2].correct_answer, harder[2].domain, harder[2].skill) == ("D", None, None)
-
-
-def test_read_reference_questions_reads_the_correct_columns_own_font_size(tmp_path):
-    """Confirmed against a real template pair: correct_col explicitly
-    carries a font size override on the current-format template (12pt)
-    that the simplified template's own matching cells never got, so this
-    is read (not just correct_answer/domain/skill) precisely so
-    fill_simple_sat_score_report can copy it across -- see
-    ReferenceQuestion's own docstring."""
-    path = tmp_path / "template.xlsx"
-    _write_template(path)
-    wb = openpyxl.load_workbook(path)
-    ws = wb["Student Responses"]
-    # A bare openpyxl.Workbook()'s own default style already gives every
-    # cell some non-None size of its own (unlike a real Sheets-exported
-    # file's, where an untouched cell's own size reads as None) -- forced
-    # to None explicitly here so B7 below actually exercises the "no
-    # override" case this function needs to handle, not an artifact of
-    # how this fixture happens to be built.
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.font = Font(size=None)
-    ws["B6"].font = Font(size=12)  # Module 1 Q1's own correct_col cell
-    wb.save(path)
-    ws = openpyxl.load_workbook(path)["Student Responses"]
-
-    module1 = read_reference_questions(ws, "reading and writing", "module1")
-
-    assert module1[1].correct_answer_font_size == 12.0
-    assert module1[2].correct_answer_font_size is None  # never touched -- still reads as unset
 
 
 def test_read_reference_questions_raises_for_a_block_that_does_not_exist(tmp_path):

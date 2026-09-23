@@ -33,7 +33,6 @@ from .google_sheets_export import (
     extend_fill,
     hide_columns,
     narrow_columns,
-    set_font_sizes,
     write_cells,
 )
 from .template_lookup import find_template_file, resolve_template_folder
@@ -96,11 +95,10 @@ def export_filled_report(
     google_sheets_export.py's own module docstring for why that
     matters). Its `cleared_ranges`, `hidden_column_ranges`,
     `narrowed_column_ranges`, `header_bar_extension`,
-    `overflow_title_cells`, `deleted_row_ranges`, and `font_size_cells`,
-    if any, are then applied via google_sheets_export.clear_cells,
-    .hide_columns, .narrow_columns, .extend_fill, .allow_text_overflow,
-    .delete_rows, and .set_font_sizes (in that order) before the PDF is
-    exported. The current-format SAT fill_fn
+    `overflow_title_cells`, and `deleted_row_ranges`, if any, are then
+    applied via google_sheets_export.clear_cells, .hide_columns,
+    .narrow_columns, .extend_fill, .allow_text_overflow, and .delete_rows
+    (in that order) before the PDF is exported. The current-format SAT fill_fn
     (sat_score_report_writer.fill_sat_score_report) uses the first two so
     the report only shows the Module 2 blocks that were actually
     administered, both in content and in the exported PDF's own
@@ -122,15 +120,7 @@ def export_filled_report(
     sheet's own trailing blank rows that would otherwise inflate that same
     print area regardless of Module 2 at all (see
     sat_score_report_writer.trailing_rows_to_delete). ACT's fill_fn uses
-    none of these six. The seventh (`font_size_cells`) is used only by the
-    *simplified* SAT fill_fn
-    (sat_simplified_score_report_writer.fill_simple_sat_score_report), to
-    copy a reference cell's own font size onto one that has no explicit
-    override of its own (see google_sheets_export.set_font_sizes and
-    sat_score_report_writer.ReferenceQuestion's own docstrings -- the
-    simplified SAT template's own correct_col specifically) -- every
-    other fill_fn, ACT's and the current-format SAT's alike, leaves it
-    empty.
+    none of these six.
 
     `temp_folder_id`, if given, is where the working Sheet copy is placed
     (e.g. the org's "Temporary Files" folder, alongside the real
@@ -200,7 +190,6 @@ def export_filled_report(
             extend_fill(sheets, copy_id, result.header_bar_extension)
             allow_text_overflow(sheets, copy_id, result.overflow_title_cells)
             delete_rows(sheets, copy_id, result.deleted_row_ranges)
-            set_font_sizes(sheets, copy_id, result.font_size_cells)
             pdf_bytes = export_pdf(copy_id, bottom_margin_in=bottom_margin_in, fit_to_page=fit_to_page)
         except Exception:
             try:
