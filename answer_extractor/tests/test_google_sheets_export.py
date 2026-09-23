@@ -18,12 +18,14 @@ from answer_extractor.google_sheets_export import (
     clear_cells,
     clear_notes,
     copy_template,
+    create_folder,
     delete_file,
     delete_rows,
     export_pdf,
     export_xlsx,
     extend_fill,
     format_date_for_sheets,
+    get_file,
     hide_columns,
     hide_gridlines,
     is_rate_limit_error,
@@ -105,6 +107,30 @@ def test_copy_template_omits_parents_when_no_folder_is_given():
 
     _, kwargs = drive.files.return_value.copy.call_args
     assert "parents" not in kwargs["body"]
+
+
+def test_get_file_asks_for_the_name_and_parent_with_shared_drive_support():
+    drive = MagicMock()
+    folder = {"id": "TEMP_ID", "name": "Temporary Files", "parents": ["EXTRACTOR_ID"]}
+    drive.files.return_value.get.return_value.execute.return_value = folder
+
+    assert get_file(drive, "TEMP_ID") == folder
+    _, kwargs = drive.files.return_value.get.call_args
+    assert kwargs == {"fileId": "TEMP_ID", "fields": "id, name, parents", "supportsAllDrives": True}
+
+
+def test_create_folder_makes_a_folder_inside_the_parent_with_shared_drive_support():
+    drive = MagicMock()
+    drive.files.return_value.create.return_value.execute.return_value = {"id": "NEW_FOLDER_ID"}
+
+    assert create_folder(drive, "MONTH_ID", "12 September") == "NEW_FOLDER_ID"
+    _, kwargs = drive.files.return_value.create.call_args
+    assert kwargs["body"] == {
+        "name": "12 September",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": ["MONTH_ID"],
+    }
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_export_pdf_returns_the_downloaded_bytes():

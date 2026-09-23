@@ -23,6 +23,7 @@ from googleapiclient.discovery import Resource
 
 from .google_sat_simplified_score_report_export import export_simple_sat_score_report
 from .gui_prompt import SKIP, TestModeSkip, prompt_for_date, prompt_for_text
+from .report_folders import ReportFolders
 from .sat_score_report_writer import SatKey, normalize_subject
 from .scan_filename import parse_scan_filename
 from .score_report import ScoreReportRow
@@ -135,14 +136,15 @@ def export_sat_report(
     rows: List[ScoreReportRow],
     output_dir: str | Path,
     prompt_fn: Callable[[str, str], Optional[str]] = prompt_for_text,
-    temp_folder_id: Optional[str] = None,
+    report_folders: Optional[ReportFolders] = None,
 ) -> Path:
     """Produce one student's DSAT score-report PDF in `output_dir`, from
     `rows` -- every ScoreReportRow for one source file (see
     score_report.group_by_source), already run through
-    answer_keys.annotate_rows. `temp_folder_id` is passed straight through
-    to export_simple_sat_score_report (see
-    google_report_export_common.export_filled_report).
+    answer_keys.annotate_rows. `report_folders` picks the Drive folder the
+    report's filled-in Sheet is kept in, from the test date entered here
+    (see report_folders.py); without one, the Sheet lands wherever Drive
+    puts a copy by default.
 
     Prompts once for the actual test date, then once per subject present
     in `rows` for its scaled section score, both via `prompt_fn` (a
@@ -203,6 +205,7 @@ def export_sat_report(
         if score is SKIP:
             continue  # leaves this subject's score cell at the template's own default
         section_scores[subject] = score
+    copy_folder_id = report_folders.folder_for(test_date, scan.student_name) if report_folders is not None else None
 
     pdf_bytes = export_simple_sat_score_report(
         drive=drive,
@@ -215,7 +218,7 @@ def export_sat_report(
         test_date=test_date,
         section_scores=section_scores,
         output_name=base_name,
-        temp_folder_id=temp_folder_id,
+        copy_folder_id=copy_folder_id,
     )
     pdf_path = output_dir / f"{base_name}.pdf"
     pdf_path.write_bytes(pdf_bytes)

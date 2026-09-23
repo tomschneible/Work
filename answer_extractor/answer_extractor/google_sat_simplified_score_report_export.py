@@ -79,12 +79,12 @@ def export_simple_sat_score_report(
     test_date: dt.date | str | None,
     section_scores: Mapping[str, int],
     output_name: str,
-    temp_folder_id: Optional[str] = None,
+    copy_folder_id: Optional[str] = None,
     sheet_name: str = "Student Responses",
 ) -> bytes:
     """Return the filled simplified report's PDF bytes -- see
     google_report_export_common.export_filled_report for
-    `temp_folder_id`/cleanup semantics, and
+    `copy_folder_id`/cleanup semantics, and
     sat_simplified_score_report_writer.fill_simple_sat_score_report for
     what every other argument means.
 
@@ -126,7 +126,7 @@ def export_simple_sat_score_report(
             section_scores=section_scores,
             sheet_name=sheet_name,
         ),
-        temp_folder_id=temp_folder_id,
+        copy_folder_id=copy_folder_id,
         template_id=simplified_template["id"],
         fit_to_page=True,
     )

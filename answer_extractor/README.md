@@ -239,9 +239,9 @@ worked, or to look around the folder tree while debugging.
    to the combined `.xlsx` instead.
 3. **The template is filled in via the Sheets API, not by re-uploading a
    whole workbook.** `copy_template` duplicates the live template --
-   into the org's "Temporary Files" folder by default (override with
-   `--temp-folder-id` or `$ANSWER_EXTRACTOR_TEMP_FOLDER_ID`), not the same
-   folder as the real template, so a working copy never sits amid them --
+   into the test day's own folder under Student Tracking (point 8 below),
+   never the same folder as the real template, so a working copy never
+   sits amid them --
    `export_xlsx` pulls that copy down locally, *read-only*, purely so the
    format-specific writer (`score_report_writer.fill_score_report` for
    ACT, `sat_score_report_writer.fill_sat_score_report` for SAT -- see
@@ -742,6 +742,27 @@ worked, or to look around the folder tree while debugging.
    family token is always exactly whatever the input carried (`ACT`,
    `SAT`, or `DSAT`) -- never a separately-chosen label layered on top, so
    a DSAT report is never redundantly double-labeled ("SAT DSAT ...").
+
+   The kept Google Sheet goes in the folder for the day the test was
+   given, in the org's Student Tracking tree -- e.g.
+   `Student Tracking/Practice Tests 2026/09 September/12 September/` for a
+   test on 9/12/2026. That's the date typed at the prompt (point 5), and
+   any folder along that path that doesn't exist yet -- a new year's
+   `Practice Tests YYYY`, a month, the day itself -- is created then and
+   there (`report_folders.py`). An existing folder is reused even if its
+   name differs only in case, spacing, or a leading zero ("9 September").
+   Student Tracking is found by name, as the nearest folder above
+   "Temporary Files" (which sits in "Answer Extractor", inside Student
+   Tracking), so the dedicated account needs Editor access to Student
+   Tracking itself, not just to Answer Extractor; pass
+   `--student-tracking-folder-id` (or set
+   `$ANSWER_EXTRACTOR_STUDENT_TRACKING_FOLDER_ID`) to name the folder directly
+   instead. A test-mode run (the date typed as "test", point 6) puts its
+   Sheet in "Temporary Files" (override with `--temp-folder-id` or
+   `$ANSWER_EXTRACTOR_TEMP_FOLDER_ID`), and so does a report whose Sheet
+   couldn't be filed -- no access to Student Tracking, or two folders with
+   the same name at some level -- with a warning saying why; the report
+   itself is still made either way.
 
 `answer_extractor/auto_cli.py` (what the macOS droplet calls) is where
 this is wired in: each auto-detected bubble sheet, and each identified

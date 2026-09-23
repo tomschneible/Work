@@ -77,6 +77,7 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     # would be January 17 2026 here) -- see gui_prompt.py's own module docstring for why.
     assert kwargs["test_date"] == dt.date(2026, 3, 8)
     assert kwargs["output_name"] == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+    assert kwargs["copy_folder_id"] is None  # no report_folders given -- Drive's own default
     # output_name/canonical_filename still reads its own date from the
     # input filename, unchanged -- confirmed by the pdf_path assertion
     # above still naming the file after "January 17 2026", not "3/8/2026".
@@ -142,14 +143,37 @@ def test_export_sheet_report_test_mode_skips_the_date(tmp_path):
     assert export_mock.call_args.kwargs["test_date"] is None
 
 
+@pytest.mark.parametrize("typed, folder_date", [("9/12/2026", dt.date(2026, 9, 12)), ("test", None)])
+def test_export_sheet_report_files_the_sheet_by_the_prompted_date(tmp_path, typed, folder_date):
+    # The prompted date picks the folder, not the filename's own January 17;
+    # test mode's missing date is ReportFolders' cue to use Temporary Files.
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
+    report_folders = MagicMock()
+    report_folders.folder_for.return_value = "DAY_FOLDER_ID"
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
+        export_sheet_report(
+            MagicMock(), MagicMock(), "ROOT", result, tmp_path,
+            prompt_fn=MagicMock(return_value=typed), report_folders=report_folders,
+        )
+
+    report_folders.folder_for.assert_called_once_with(folder_date, "Jane Student")
+    assert export_mock.call_args.kwargs["copy_folder_id"] == "DAY_FOLDER_ID"
+
+
 def test_export_sheet_report_raises_when_the_date_prompt_is_cancelled(tmp_path):
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
     prompt_fn = MagicMock(return_value=None)  # Cancel button, or osascript unavailable
+    report_folders = MagicMock()
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         with pytest.raises(ValueError, match="[Nn]o test date"):
-            export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
+            export_sheet_report(
+                MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn, report_folders=report_folders
+            )
+    report_folders.folder_for.assert_not_called()  # no folder made for a report that was never produced
 
 
 def test_export_sheet_report_raises_a_clear_error_for_an_unrecognized_template(tmp_path):

@@ -131,6 +131,35 @@ def test_export_sat_report_test_mode_skips_date_and_scores(tmp_path):
     assert kwargs["section_scores"] == {}
 
 
+@pytest.mark.parametrize("typed, folder_date", [("9/12/2026", dt.date(2026, 9, 12)), ("test", None)])
+def test_export_sat_report_files_the_sheet_by_the_prompted_date(tmp_path, typed, folder_date):
+    rows = [_row(1, 1, "Math", "B", "Module 1")]
+    report_folders = MagicMock()
+    report_folders.folder_for.return_value = "DAY_FOLDER_ID"
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake") as export_mock:
+        export_sat_report(
+            MagicMock(), MagicMock(), "ROOT", rows, tmp_path,
+            prompt_fn=MagicMock(side_effect=[typed, "620"]), report_folders=report_folders,
+        )
+
+    report_folders.folder_for.assert_called_once_with(folder_date, "Jane Student")
+    assert export_mock.call_args.kwargs["copy_folder_id"] == "DAY_FOLDER_ID"
+
+
+def test_export_sat_report_makes_no_folder_for_a_report_cancelled_at_a_score_prompt(tmp_path):
+    rows = [_row(1, 1, "Math", "B", "Module 1")]
+    report_folders = MagicMock()
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report"):
+        with pytest.raises(ValueError, match="cancelled"):
+            export_sat_report(
+                MagicMock(), MagicMock(), "ROOT", rows, tmp_path,
+                prompt_fn=MagicMock(side_effect=["9/12/2026", None]), report_folders=report_folders,
+            )
+    report_folders.folder_for.assert_not_called()
+
+
 def test_export_sat_report_reprompts_on_invalid_input_before_succeeding(tmp_path):
     rows = [_row(1, 1, "Math", "B", "Module 1")]
     prompt_fn = MagicMock(side_effect=["3/8/2026", "not a number", "9999", "620"])

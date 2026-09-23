@@ -19,6 +19,7 @@ from .export import write_xlsx
 from .google_score_report_export import export_score_report
 from .gui_prompt import SKIP, prompt_for_date, prompt_for_text
 from .pipeline import SheetResult
+from .report_folders import ReportFolders
 from .scan_filename import ScanFilename, parse_scan_filename
 from .scoresheet_grid import normalize_section
 
@@ -82,12 +83,13 @@ def export_sheet_report(
     result: SheetResult,
     output_dir: str | Path,
     prompt_fn: Callable[[str, str], Optional[str]] = prompt_for_text,
-    temp_folder_id: Optional[str] = None,
+    report_folders: Optional[ReportFolders] = None,
 ) -> ExportOutcome:
     """Produce this one sheet's score-report PDF -- and, if it has review
     items, the color-coded .xlsx alongside it -- in `output_dir`.
-    `temp_folder_id` is passed straight through to export_score_report
-    (see google_report_export_common.export_filled_report).
+    `report_folders` picks the Drive folder its filled-in Sheet is kept
+    in, from the test date entered here (see report_folders.py); without
+    one, the Sheet lands wherever Drive puts a copy by default.
 
     Prompts once for the actual test date via `prompt_fn` (a native macOS
     dialog by default -- see gui_prompt.py) -- not
@@ -131,6 +133,7 @@ def export_sheet_report(
     # know "don't fill the date cell", not gui_prompt's own sentinel.
     if test_date is SKIP:
         test_date = None
+    copy_folder_id = report_folders.folder_for(test_date, scan.student_name) if report_folders is not None else None
 
     pdf_bytes = export_score_report(
         drive=drive,
@@ -142,7 +145,7 @@ def export_sheet_report(
         student_name=scan.student_name,
         test_date=test_date,
         output_name=base_name,
-        temp_folder_id=temp_folder_id,
+        copy_folder_id=copy_folder_id,
     )
     pdf_path = output_dir / f"{base_name}.pdf"
     pdf_path.write_bytes(pdf_bytes)

@@ -57,7 +57,7 @@ def export_filled_report(
     test_code: Optional[str],
     output_name: str,
     fill_fn: Callable[[str | Path], FillResult],
-    temp_folder_id: Optional[str] = None,
+    copy_folder_id: Optional[str] = None,
     keep_working_copy: bool = True,
     bottom_margin_in: Optional[float] = None,
     fit_to_page: bool = False,
@@ -122,11 +122,12 @@ def export_filled_report(
     sat_score_report_writer.trailing_rows_to_delete). ACT's fill_fn uses
     none of these six.
 
-    `temp_folder_id`, if given, is where the working Sheet copy is placed
-    (e.g. the org's "Temporary Files" folder, alongside the real
-    templates root) instead of Drive's copy default (the same folder as
-    the template it was copied from) -- keeps a working copy from ever
-    sitting amid the real templates.
+    `copy_folder_id`, if given, is where the working Sheet copy is placed
+    -- the test day's own folder under Student Tracking, or "Temporary
+    Files" for a test-mode run (see report_folders.py) -- instead of
+    Drive's copy default (the same folder as the template it was copied
+    from), which would leave a working copy sitting amid the real
+    templates.
 
     `bottom_margin_in`, if given, is passed straight through to
     export_pdf's own `bottom_margin_in` -- see its docstring for what it
@@ -148,7 +149,7 @@ def export_filled_report(
     *failed* attempt is always cleaned up regardless of this flag -- it
     didn't produce a report worth keeping evidence of, and leaving every
     failed/retried attempt behind would just accumulate clutter in
-    `temp_folder_id`. That cleanup is best-effort and can never mask or
+    `copy_folder_id`. That cleanup is best-effort and can never mask or
     be mistaken for the actual failure: the fill/export sequence's own
     exception is always what propagates, even if the best-effort delete
     that follows it *also* fails (a plain `finally: delete_file(...)`
@@ -158,7 +159,7 @@ def export_filled_report(
     failure is logged to stderr rather than thrown away the PDF this
     already-successful call obtained -- unless it's a 404, which means
     the file's already gone (by something else -- a retention policy on
-    `temp_folder_id`, or occasional Shared Drive eventual consistency)
+    `copy_folder_id`, or occasional Shared Drive eventual consistency)
     and there's nothing left to warn about (see
     _cleanup_delete_is_actionable). The local temp file used for the same
     purpose is likewise always cleaned up (and can't mask anything the
@@ -174,7 +175,7 @@ def export_filled_report(
             )
         folder_id = resolve_template_folder(drive, templates_root_folder_id, category_path)
         template_id = find_template_file(drive, folder_id, test_code)["id"]
-    copy_id = copy_template(drive, template_id, output_name, parent_folder_id=temp_folder_id)
+    copy_id = copy_template(drive, template_id, output_name, parent_folder_id=copy_folder_id)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)

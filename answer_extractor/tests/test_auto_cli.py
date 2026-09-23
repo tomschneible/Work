@@ -218,6 +218,56 @@ def test_auto_cli_respects_a_custom_templates_root_folder_id(tmp_path):
     assert export_mock.call_args[0][2] == "CUSTOM_ROOT"
 
 
+def test_auto_cli_files_report_sheets_by_test_date_with_temporary_files_as_the_fallback(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANSWER_EXTRACTOR_TEMP_FOLDER_ID", raising=False)
+    monkeypatch.delenv("ANSWER_EXTRACTOR_STUDENT_TRACKING_FOLDER_ID", raising=False)
+    image_path = _fake_image(tmp_path)
+    outcome = ExportOutcome(pdf_path=tmp_path / "r.pdf", xlsx_path=None)
+    drive = MagicMock()
+
+    with patch("answer_extractor.auto_cli.scan_bubble_sheets", return_value=[_act_result()]), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(drive, MagicMock())), \
+         patch("answer_extractor.auto_cli.ReportFolders") as folders_cls, \
+         patch("answer_extractor.auto_cli.export_sheet_report", return_value=outcome) as export_mock:
+        main(
+            [
+                "--input", str(image_path),
+                "--output", str(tmp_path / "combined.xlsx"),
+                "--report-output-dir", str(tmp_path),
+            ]
+        )
+
+    folders_cls.assert_called_once_with(
+        drive,
+        fallback_folder_id="1eUp4nToItX0_xtDe4Dt3VDlfCQU3ba_y",  # Temporary Files
+        student_tracking_folder_id=None,  # found by name above Temporary Files, at run time
+    )
+    assert export_mock.call_args.kwargs["report_folders"] is folders_cls.return_value
+
+
+def test_auto_cli_respects_a_given_student_tracking_folder_id(tmp_path):
+    score_pdf_path = tmp_path / "score.pdf"
+    write_score_report_pdf(score_pdf_path, [(1, "Math", "A", "A", "Correct")])
+    sat_rows = _sat_rows()
+
+    with patch("answer_extractor.auto_cli.classify_inputs", return_value=([], sat_rows)), \
+         patch("answer_extractor.auto_cli.annotate_rows", return_value=sat_rows), \
+         patch("answer_extractor.auto_cli.build_services", return_value=(MagicMock(), MagicMock())), \
+         patch("answer_extractor.auto_cli.ReportFolders") as folders_cls, \
+         patch("answer_extractor.auto_cli.export_sat_report", return_value=tmp_path / "r.pdf") as export_mock:
+        main(
+            [
+                "--input", str(score_pdf_path),
+                "--output", str(tmp_path / "combined.xlsx"),
+                "--report-output-dir", str(tmp_path),
+                "--student-tracking-folder-id", "TRACKING_ID",
+            ]
+        )
+
+    assert folders_cls.call_args.kwargs["student_tracking_folder_id"] == "TRACKING_ID"
+    assert export_mock.call_args.kwargs["report_folders"] is folders_cls.return_value
+
+
 def test_auto_cli_still_combines_act_sheets_when_a_fixed_template_is_given(tmp_path):
     """--template forces one fixed template for everything, which also
     means opting out of the Sheets-report path -- even for a result whose

@@ -54,6 +54,7 @@ from .export import add_bubble_sheet_answers_sheet
 from .google_sheets_export import build_services
 from .loading import IMAGE_SUFFIXES, PDF_SUFFIXES
 from .pipeline import SheetResult, UndetectedSheet, process_paths, process_paths_auto
+from .report_folders import ReportFolders
 from .sat_score_report_pipeline import export_sat_report
 from .score_report import ScoreReportRow, group_by_source, parse_score_report
 from .score_report_export import add_score_report_answers_sheet
@@ -64,10 +65,11 @@ from .template import Template
 # tree (see README's "Google Sheets score reports" section) --
 # overridable for a different Drive layout without a code change.
 _DEFAULT_TEMPLATES_ROOT_FOLDER_ID = "1hzDrOzqBymstYHdTqjdLxKOmdlbKqSSt"
-# "Temporary Files", the sibling folder the org already set aside for
-# exactly this -- each report's filled-in Sheet copy is kept there
-# (by default -- see export_filled_report's keep_working_copy), rather
-# than in the same folder as the real templates.
+# "Temporary Files", the templates root's sibling folder -- where a
+# report's filled-in Sheet copy goes when it isn't filed under the test
+# day's own folder in Student Tracking (a test-mode run, or filing it
+# failed), and where the search for Student Tracking itself starts (see
+# report_folders.py).
 _DEFAULT_TEMP_FOLDER_ID = "1eUp4nToItX0_xtDe4Dt3VDlfCQU3ba_y"
 
 
@@ -183,10 +185,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--temp-folder-id",
         default=None,
-        help="Drive folder id to place each report's filled-in Sheet copy in (kept there, not deleted "
-        "-- see export_filled_report's keep_working_copy), instead of the same folder as the real "
-        "template it was copied from -- defaults to this org's \"Temporary Files\" folder, or "
-        "$ANSWER_EXTRACTOR_TEMP_FOLDER_ID if set",
+        help="Drive folder id for a report's filled-in Sheet copy when it isn't filed under its test "
+        "day's folder in Student Tracking (a test-mode run, or filing it failed) -- also where the "
+        "search for Student Tracking starts, see report_folders.py -- defaults to this org's "
+        "\"Temporary Files\" folder, or $ANSWER_EXTRACTOR_TEMP_FOLDER_ID if set",
+    )
+    parser.add_argument(
+        "--student-tracking-folder-id",
+        default=None,
+        help="Drive folder id of \"Student Tracking\", whose Practice Tests YYYY/MM Month/DD Month "
+        "folders each report's filled-in Sheet copy is filed in -- by default it's found by name above "
+        "the --temp-folder-id folder, or taken from $ANSWER_EXTRACTOR_STUDENT_TRACKING_FOLDER_ID if set",
     )
     return parser
 
@@ -278,12 +287,19 @@ def main(argv: list[str] | None = None) -> int:
                 or os.environ.get("ANSWER_EXTRACTOR_TEMP_FOLDER_ID")
                 or _DEFAULT_TEMP_FOLDER_ID
             )
+            report_folders = ReportFolders(
+                drive,
+                fallback_folder_id=temp_folder_id,
+                student_tracking_folder_id=(
+                    args.student_tracking_folder_id or os.environ.get("ANSWER_EXTRACTOR_STUDENT_TRACKING_FOLDER_ID")
+                ),
+            )
 
             for r in to_export:
                 try:
                     exported.append(
                         export_sheet_report(
-                            drive, sheets, templates_root_folder_id, r, output_dir, temp_folder_id=temp_folder_id
+                            drive, sheets, templates_root_folder_id, r, output_dir, report_folders=report_folders
                         )
                     )
                 except Exception as exc:
@@ -298,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     exported_sat_paths.append(
                         export_sat_report(
-                            drive, sheets, templates_root_folder_id, group, output_dir, temp_folder_id=temp_folder_id
+                            drive, sheets, templates_root_folder_id, group, output_dir, report_folders=report_folders
                         )
                     )
                 except Exception as exc:

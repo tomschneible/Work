@@ -72,6 +72,7 @@ from openpyxl.utils import get_column_letter
 from .google_auth import get_credentials
 
 _XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 CellValue = Union[str, int, float, bool, None]
 
@@ -287,6 +288,21 @@ def copy_template(
         body["parents"] = [parent_folder_id]
     result = drive.files().copy(fileId=template_file_id, body=body, supportsAllDrives=True).execute()
     return result["id"]
+
+
+def get_file(drive: Resource, file_id: str) -> Dict[str, object]:
+    """A file or folder's own id, name, and parents -- `parents` (its
+    containing folder's id, in a one-item list) is left out entirely for a
+    Drive's own root, and for anything whose containing folder this
+    account can't see."""
+    return drive.files().get(fileId=file_id, fields="id, name, parents", supportsAllDrives=True).execute()
+
+
+def create_folder(drive: Resource, parent_folder_id: str, name: str) -> str:
+    """Create a folder named `name` inside `parent_folder_id`, returning
+    the new folder's own id."""
+    body = {"name": name, "mimeType": FOLDER_MIME_TYPE, "parents": [parent_folder_id]}
+    return drive.files().create(body=body, fields="id", supportsAllDrives=True).execute()["id"]
 
 
 def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
