@@ -253,14 +253,14 @@ def _names_agree_or_unknown(path_a: Path, path_b: Path) -> bool:
     sourced reference report (see this pipeline's own naming-convention
     docs) -- nothing to compare, not evidence of a real mismatch."""
     try:
-        name_a = parse_scan_filename(path_a.stem).student_name
+        scan_a = parse_scan_filename(path_a.stem)
     except ValueError:
         return True
     try:
-        name_b = parse_scan_filename(path_b.stem).student_name
+        scan_b = parse_scan_filename(path_b.stem)
     except ValueError:
         return True
-    return name_a == name_b
+    return scan_a.could_be_same_student(scan_b)
 
 
 def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
@@ -307,7 +307,7 @@ def _pair_with_pending_drop(candidate: Path) -> Optional[Path]:
 
 
 def _student_name_for_output(ours_path: Path, reference_path: Path) -> Optional[str]:
-    """"LastName, FirstName" parsed from whichever of the two compared
+    """"LastName, FirstName [Initial]" parsed from whichever of the two compared
     files' names follows this pipeline's own scan-filename convention
     (scan_filename.parse_scan_filename) first -- ours checked before
     reference, so a reference that doesn't happen to follow the
@@ -326,7 +326,8 @@ def _student_name_for_output(ours_path: Path, reference_path: Path) -> Optional[
             parsed = parse_scan_filename(p.stem)
         except ValueError:
             continue
-        return f"{parsed.last_name}, {parsed.first_name}"
+        initial = f" {parsed.middle_initial}" if parsed.middle_initial else ""
+        return f"{parsed.last_name}, {parsed.first_name}{initial}"
     return None
 
 

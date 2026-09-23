@@ -83,6 +83,20 @@ def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     # above still naming the file after "January 17 2026", not "3/8/2026".
 
 
+def test_export_sheet_report_accepts_a_filename_with_an_initial_and_a_c(tmp_path):
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane M. 2027C ACT 25MC1 January 17 2026", questions)
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
+        outcome = export_sheet_report(
+            MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=MagicMock(return_value="1/17/2026")
+        )
+
+    assert export_mock.call_args.kwargs["student_name"] == "Jane M. Student"
+    assert export_mock.call_args.kwargs["test_code"] == "25MC1"
+    assert outcome.pdf_path.name == "Student, Jane M. 2027C ACT 25MC1 January 17 2026.pdf"
+
+
 def test_export_sheet_report_uses_the_real_enhanced_category_path_for_the_j_form_template(tmp_path):
     """act_j_form_answer_sheet's own real-world Drive templates live in
     "Real Enhanced", a sibling of Enhanced/Legacy directly under ACT --

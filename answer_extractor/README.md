@@ -233,10 +233,15 @@ worked, or to look around the folder tree while debugging.
    `scan_filename.py` for the exact convention
    (`"LastName, FirstName GradYear ACT/SAT/DSAT TestCode Month [Day] Year"`,
    e.g. `Student, Jane 2027 ACT 25MC1 January 17 2026` or
-   `Student, Jane 2027 DSAT 8 March 8 2026`). This is the *only* source
-   for those fields; an input dropped in without being renamed to this
-   convention first fails to export (with a clear error) and falls back
-   to the combined `.xlsx` instead.
+   `Student, Jane 2027 DSAT 8 March 8 2026`). Two additions are also
+   accepted, and nothing looser: one initial after the first name
+   (`Student, Jane M 2027 ...` or `Jane M.`), and a C after the
+   graduation year (`2027C` or `2027 C`). Both carry over into the
+   output filename; the initial also stays part of the student's name on
+   the report. This is the *only* source for those fields; an input
+   dropped in without being renamed to this convention first fails to
+   export (with a clear error) and falls back to the combined `.xlsx`
+   instead.
 3. **The template is filled in via the Sheets API, not by re-uploading a
    whole workbook.** `copy_template` duplicates the live template --
    into the test day's own folder under Student Tracking (point 8 below),
@@ -735,8 +740,8 @@ worked, or to look around the folder tree while debugging.
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
    report's own filename (and the kept Google Sheet working copy behind
-   it) is the same "LastName, FirstName GradYear TestFamily TestCode
-   Month [Day] Year" shape the scan's own input filename was parsed from
+   it) is the same "LastName, FirstName [Initial] GradYear[C] TestFamily
+   TestCode Month [Day] Year" shape the scan's own input filename was parsed from
    in the first place (`ScanFilename.canonical_filename`, point 2 above)
    -- plus a trailing `" FLAG"` for a flagged ACT sheet (point 4). The
    family token is always exactly whatever the input carried (`ACT`,
@@ -1233,7 +1238,7 @@ different script and name):
 bubble sheet and a reference, (b) a spreadsheet this tool already exported
 and a reference, or (c) two already-finished reports (PDF and/or
 spreadsheet) to compare directly -- onto the app's icon together. The
-output is named after the student ("LastName, FirstName comparison.xlsx")
+output is named after the student ("LastName, FirstName [Initial] comparison.xlsx")
 whenever either compared file's name follows this pipeline's own scan
 filename convention (`LastName, FirstName GradYear ACT/SAT/DSAT TestCode
 Month [Day] Year...` -- see `answer_extractor/scan_filename.py`), checking

@@ -154,3 +154,73 @@ def test_canonical_filename_drops_a_leading_hash_the_input_filename_had():
     scan = parse_scan_filename("Smith, John 2026 DSAT #6 March 6 2026")
 
     assert scan.canonical_filename() == "Smith, John 2026 DSAT 6 March 6 2026"
+
+
+@pytest.mark.parametrize("initial", ["M", "M."])
+def test_parse_scan_filename_accepts_one_initial_after_the_first_name(initial):
+    label = f"Student, Jane {initial} 2027 ACT 25MC1 January 17 2026"
+    result = parse_scan_filename(label)
+
+    assert result.first_name == "Jane"
+    assert result.middle_initial == initial
+    assert result.grad_year == 2027
+    assert result.student_name == f"Jane {initial} Student"
+    assert result.canonical_filename() == label
+
+
+@pytest.mark.parametrize("year_part, suffix", [("2027C", "C"), ("2027 C", " C")])
+def test_parse_scan_filename_accepts_a_c_after_the_graduation_year(year_part, suffix):
+    label = f"Student, Jane {year_part} ACT 25MC1 January 17 2026"
+    result = parse_scan_filename(label)
+
+    assert result.grad_year == 2027
+    assert result.grad_year_suffix == suffix
+    assert result.test_family == "ACT"
+    assert result.student_name == "Jane Student"  # the C isn't part of the name
+    assert result.canonical_filename() == label
+
+
+def test_parse_scan_filename_capitalizes_a_lowercase_c_like_the_rest_of_the_name():
+    result = parse_scan_filename("Student, Jane 2027c act 25MC1 january 17 2026")
+
+    assert result.canonical_filename() == "Student, Jane 2027C ACT 25MC1 January 17 2026"
+
+
+def test_parse_scan_filename_accepts_an_initial_and_a_c_together():
+    label = "Student, Jane M. 2027C DSAT 8 March 8 2026"
+    result = parse_scan_filename(label)
+
+    assert (result.middle_initial, result.grad_year_suffix, result.test_code) == ("M.", "C", "8")
+    assert result.canonical_filename(flagged=True) == f"{label} FLAG"
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Student, Mary Kate 2027 ACT 25MC1 January 17 2026",  # a second first name
+        "Student, Jane MK 2027 ACT 25MC1 January 17 2026",  # a two-letter "initial"
+        "Student, Jane M K 2027 ACT 25MC1 January 17 2026",  # two initials
+        "Student, Jane M.K. 2027 ACT 25MC1 January 17 2026",
+        "Student, Jane 2027B ACT 25MC1 January 17 2026",  # a letter other than C
+        "Student, Jane 2027 B ACT 25MC1 January 17 2026",
+        "Student, Jane 2027CC ACT 25MC1 January 17 2026",
+        "Student, Jane 2027 C C ACT 25MC1 January 17 2026",
+    ],
+)
+def test_parse_scan_filename_still_rejects_anything_beyond_those_two_additions(label):
+    with pytest.raises(ValueError, match="doesn't match"):
+        parse_scan_filename(label)
+
+
+@pytest.mark.parametrize(
+    "a, b, same",
+    [
+        ("Student, Jane M 2027 ACT 25MC1 January 17 2026", "Student, Jane 2027 ACT 25MC1 January 17 2026", True),
+        ("Student, Jane M 2027 ACT 25MC1 January 17 2026", "Student, Jane M. 2027C ACT 25MC1 January 17 2026", True),
+        ("Student, Jane M 2027 ACT 25MC1 January 17 2026", "Student, Jane K 2027 ACT 25MC1 January 17 2026", False),
+        ("Student, Jane 2027 ACT 25MC1 January 17 2026", "Student, John 2027 ACT 25MC1 January 17 2026", False),
+    ],
+)
+def test_could_be_same_student_only_lets_a_missing_initial_slide(a, b, same):
+    assert parse_scan_filename(a).could_be_same_student(parse_scan_filename(b)) is same
+    assert parse_scan_filename(b).could_be_same_student(parse_scan_filename(a)) is same

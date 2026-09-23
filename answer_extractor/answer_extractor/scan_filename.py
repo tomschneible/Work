@@ -17,6 +17,14 @@ label when a multi-page PDF is split apart) both still parse. Confirmed
 against real filenames: a trailing descriptive suffix like "Test Scan &
 Bubble" -- or worse, a debug note like "didn't find lines" -- after the
 naming convention's own fields is common in practice, not the exception.
+
+Exactly two additions to the convention are also accepted, nothing looser:
+one initial after the first name ("Student, Jane M 2027 ..." or "Jane
+M."), and the letter C after the graduation year ("2027C" or "2027 C").
+Both are kept in the output filename, so it still matches the input, and
+the initial also stays part of the student's name (on the report, in
+prompts). A second initial, a second first name, any other letter after
+the year, and so on are still rejected.
 """
 from __future__ import annotations
 
@@ -31,7 +39,8 @@ _MONTHS = {
 }
 
 _PATTERN = re.compile(
-    r"^(?P<last>[^,]+),\s*(?P<first>\S+)\s+(?P<grad_year>\d{4})\s+(?P<test_family>ACT|DSAT|SAT)\s+"
+    r"^(?P<last>[^,]+),\s*(?P<first>\S+)(?:\s+(?P<initial>[A-Za-z]\.?))?\s+"
+    r"(?P<grad_year>\d{4})(?P<grad_year_suffix>\s*C)?\s+(?P<test_family>ACT|DSAT|SAT)\s+"
     r"(?P<test_code>\S+)\s+(?P<month>[A-Za-z]+)(?:\s+(?P<day>\d{1,2}))?\s+(?P<year>\d{4})(?:[\s_].*)?$",
     re.IGNORECASE,
 )
@@ -52,13 +61,29 @@ class ScanFilename:
     # check this and show just "Month Year" instead when it's False,
     # rather than implying a specific day nothing in the input confirmed.
     day_known: bool
+    # The one initial allowed after the first name, as written ("M" or
+    # "M."), or "" -- see this module's own docstring.
+    middle_initial: str = ""
+    # "C" or " C" (as written, joined to the year or not) when the filename
+    # carries a C after the graduation year, else "".
+    grad_year_suffix: str = ""
 
     @property
     def student_name(self) -> str:
-        """"FirstName LastName" -- the order score-report templates want
-        (see score_report_writer), the reverse of how the filename itself
-        orders them."""
-        return f"{self.first_name} {self.last_name}"
+        """"FirstName [Initial] LastName" -- the order score-report
+        templates want (see score_report_writer), the reverse of how the
+        filename itself orders them."""
+        first = f"{self.first_name} {self.middle_initial}" if self.middle_initial else self.first_name
+        return f"{first} {self.last_name}"
+
+    def could_be_same_student(self, other: "ScanFilename") -> bool:
+        """Same last and first name, and no conflicting initials -- one
+        filename leaving off an initial the other has isn't a conflict (a
+        report named by someone else may just not carry it)."""
+        if (self.last_name, self.first_name) != (other.last_name, other.first_name):
+            return False
+        mine, theirs = self.middle_initial.rstrip(".").lower(), other.middle_initial.rstrip(".").lower()
+        return not mine or not theirs or mine == theirs
 
     @property
     def formatted_test_date(self) -> str:
@@ -101,9 +126,10 @@ class ScanFilename:
         else:
             date_part = self.test_date.strftime("%B %Y")
         suffix = " FLAG" if flagged else ""
+        initial = f" {self.middle_initial}" if self.middle_initial else ""
         return (
-            f"{self.last_name}, {self.first_name} {self.grad_year} {self.test_family} "
-            f"{self.test_code} {date_part}{suffix}"
+            f"{self.last_name}, {self.first_name}{initial} {self.grad_year}{self.grad_year_suffix} "
+            f"{self.test_family} {self.test_code} {date_part}{suffix}"
         )
 
 
@@ -116,7 +142,7 @@ def parse_scan_filename(label: str) -> ScanFilename:
     if not match:
         raise ValueError(
             f"{label!r} doesn't match the expected "
-            "'LastName, FirstName GradYear ACT/SAT TestCode Month [Day] Year' filename shape"
+            "'LastName, FirstName [Initial] GradYear[C] ACT/SAT/DSAT TestCode Month [Day] Year' filename shape"
         )
     month_name = match.group("month").lower()
     month = _MONTHS.get(month_name)
@@ -150,4 +176,14 @@ def parse_scan_filename(label: str) -> ScanFilename:
         test_code=match.group("test_code").lstrip("#"),
         test_date=test_date,
         day_known=day_str is not None,
+        middle_initial=match.group("initial") or "",
+        grad_year_suffix=_grad_year_suffix(match.group("grad_year_suffix")),
     )
+
+
+def _grad_year_suffix(raw: Optional[str]) -> str:
+    """The C after the graduation year as the filename wrote it -- joined
+    ("2027C") or spaced ("2027 C") -- always as a capital C."""
+    if not raw:
+        return ""
+    return " C" if raw[0].isspace() else "C"

@@ -474,6 +474,20 @@ def test_names_agree_or_unknown_is_false_for_two_different_students(tmp_path):
     assert _names_agree_or_unknown(a, b) is False
 
 
+def test_names_agree_or_unknown_lets_one_side_leave_off_the_initial(tmp_path):
+    # Our own report keeps the initial; a report from elsewhere may not.
+    ours = tmp_path / "Rivera, Sam J. 2026 DSAT 3 March 3 2026.pdf"
+    theirs = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
+    other_sam = tmp_path / "Rivera, Sam K 2026 DSAT 3 March 3 2026.pdf"
+    assert _names_agree_or_unknown(ours, theirs) is True
+    assert _names_agree_or_unknown(ours, other_sam) is False
+
+
+def test_student_name_for_output_keeps_the_initial(tmp_path):
+    ours_path = tmp_path / "Rivera, Sam J. 2026C DSAT 3 March 3 2026.pdf"
+    assert _student_name_for_output(ours_path, tmp_path / "their_report.pdf") == "Rivera, Sam J."
+
+
 def test_names_agree_or_unknown_is_true_when_either_side_does_not_parse(tmp_path):
     named = tmp_path / "Rivera, Sam 2026 DSAT 3 March 3 2026.pdf"
     unnamed = tmp_path / "vendor_answer_key.pdf"
