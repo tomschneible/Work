@@ -56,7 +56,11 @@ carries the last confidently-resolved anchor forward unchanged --
 guessing a normal flip from that anchor, same as the ordinary case, but
 flagged low_confidence for a human to double check, per this project's
 standing rule that a wrong-but-confident answer is worse than one flagged
-for review.
+for review. Before flagging, each such row gets a second look against
+every confirmed row in the section at once (see _group_by_references):
+comparing against a single anchor can tie on a real sheet even when every
+letter is clearly printed, since B against G scores just high enough
+(0.85) to pass for the same letter.
 
 `_is_likely_filled` (deciding which slots are safe to compare in the
 first place) originally used a raw dark-pixel-fraction floor, the same
@@ -117,6 +121,11 @@ _SEARCH_SLACK_RATIO = 0.45
 # side it didn't clearly earn.
 _SIMILARITY_SAME_MIN = 0.85
 _SIMILARITY_DIFF_MAX = 0.70
+
+# See _group_by_references. On a real J-series sheet, every one of 412
+# unmarked letters matched its own group's letters better than the other
+# group's, by 0.073 at the least (G against B, the closest look-alikes).
+_REFERENCE_VOTE_MARGIN = 0.05
 
 # A bubble whose ink survives erosion by this many px, over at least this
 # fraction of its own (already-binarized) dark area, is treated as marked
@@ -269,4 +278,45 @@ def resolve_section_choices(
         # was never confirmed, so the *next* question should still compare
         # against the last row that really was.
 
+    confirmed = [(detected[q], tuple(c for c, _, _ in relabeled[q])) for q in relabeled if q not in low_confidence]
+    for question in sorted(low_confidence):
+        group = _group_by_references(value, binary, radius, detected[question], confirmed, (tuple(odd), tuple(even)))
+        if group is not None:
+            relabeled[question] = relabel(detected[question], group)
+            low_confidence.discard(question)
+
     return relabeled, low_confidence
+
+
+def _group_by_references(
+    value: np.ndarray,
+    binary: np.ndarray,
+    radius: int,
+    bubbles: List[tuple],
+    confirmed: List[Tuple[List[tuple], Tuple[str, ...]]],
+    groups: Tuple[Tuple[str, ...], Tuple[str, ...]],
+) -> "Tuple[str, ...] | None":
+    """Settle a row the anchor chain couldn't: each unmarked letter votes
+    for whichever group's letters in the same slot, across every confirmed
+    row, it matches better (median similarity, by _REFERENCE_VOTE_MARGIN at
+    least). Only a unanimous vote counts."""
+    votes = set()
+    for slot, (_, tx, ty) in enumerate(bubbles):
+        if _is_likely_filled(binary, tx, ty, radius):
+            continue
+        score = {}
+        for group in groups:
+            refs = [
+                row[slot] for row, row_group in confirmed
+                if row_group == group and not _is_likely_filled(binary, row[slot][1], row[slot][2], radius)
+            ]
+            if refs:
+                score[group] = float(np.median([_glyph_similarity(value, rx, ry, tx, ty, radius) for _, rx, ry in refs]))
+        if len(score) < 2:
+            continue
+        first, second = groups
+        if score[first] - score[second] >= _REFERENCE_VOTE_MARGIN:
+            votes.add(first)
+        elif score[second] - score[first] >= _REFERENCE_VOTE_MARGIN:
+            votes.add(second)
+    return next(iter(votes)) if len(votes) == 1 else None

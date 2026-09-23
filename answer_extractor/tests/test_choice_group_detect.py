@@ -228,6 +228,30 @@ def test_is_likely_filled_recognizes_a_moderate_coverage_mark():
     assert not _is_likely_filled(binary, unmarked.x, unmarked.y, resolved.bubble_radius)
 
 
+def test_resolve_section_choices_settles_a_row_its_anchor_cant_by_the_rows_own_letters():
+    # Question 5's marks hide every letter question 6 has left unmarked, so
+    # comparing 6 against its anchor alone gives nothing -- and 6 is a
+    # duplicate, so the ordinary "assume a flip" guess would be wrong. Its
+    # own three unmarked letters still read clearly against the rest of the
+    # section's confirmed rows.
+    template = make_template(9)
+    groups = _sequence_with_duplicates(9, duplicate_at={6})
+
+    def hide_the_comparison(image, resolved):
+        for slot in (1, 2, 3):
+            b = resolved.bubbles()[("Answers", 5)][slot]
+            fill_bubble(image, b.x, b.y, resolved.bubble_radius, coverage=1.0, darkness=10)
+        b = resolved.bubbles()[("Answers", 6)][0]
+        fill_bubble(image, b.x, b.y, resolved.bubble_radius, coverage=1.0, darkness=10)
+
+    gray, binary, section, detected = render_and_detect(template, groups, extra_ops=hide_the_comparison)
+
+    relabeled, low_confidence = resolve_section_choices(gray, binary, template, section, detected)
+
+    assert [c for c, _, _ in relabeled[6]] == groups[6]
+    assert 6 not in low_confidence
+
+
 def test_resolve_section_choices_falls_back_and_flags_when_a_row_is_unreadable():
     """Every slot of question 6 marked (an extreme, deliberately
     unrealistic case -- a student can't validly fill 4 choices at once,
