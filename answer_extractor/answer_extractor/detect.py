@@ -274,6 +274,16 @@ def _solidity_standout_choice(
     return None
 
 
+def _only_dark_fill_is(
+    answer: str, binary: np.ndarray, value: np.ndarray, bubbles: List[Tuple[str, int, int]], radius: int
+) -> bool:
+    """Where fills are recognized by darkness (see _solid_fill_strength),
+    whether `answer`'s bubble is its row's only dark fill -- decisive there,
+    unlike erosion: on a real J-series sheet, marks and unmarked bubbles
+    never came within 18 brightness levels."""
+    return not _solidity_can_confirm_a_fill(radius) and _solidity_standout_choice(binary, value, bubbles, radius) == answer
+
+
 # Absolute floor for _dark_fraction, independent of any per-sheet
 # calibration: a question where *every* choice falls below this has
 # essentially no dark ink anywhere in the row -- not even the printed
@@ -1337,6 +1347,9 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 if standout is not None:
                     answer, candidates, low_confidence = standout, [standout], True
                     solid_fill = True
+
+            if low_confidence and _only_dark_fill_is(answer, binary, value, bubbles, template.bubble_radius):
+                low_confidence = False
 
             if question in dynamic_choice_low_confidence:
                 # This question's own choice group (A/B/C/D vs F/G/H/J)

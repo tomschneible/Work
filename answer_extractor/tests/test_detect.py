@@ -17,6 +17,7 @@ from answer_extractor.detect import (
     _partial_mark_choice,
     _reconsider_low_confidence_pattern,
     _residual_ratio,
+    _only_dark_fill_is,
     _solid_fill_choice,
     _solidity,
     _solidity_can_confirm_a_fill,
@@ -841,6 +842,27 @@ def test_solid_fill_rescue_on_a_small_bubble_ignores_bold_print_on_a_gray_row():
     binary, value, bubbles = _gray_row_bubbles(marked=False)
     assert _solid_fill_choice({"F": 0.72, "G": 0.89}, binary, value, bubbles, radius=9) is None
     assert _solidity_standout_choice(binary, value, bubbles, radius=9) is None
+
+
+def test_only_dark_fill_confirms_a_small_bubble_answer_that_is_its_rows_only_dark_fill():
+    # What lets a J-series answer that came from a fallback check be trusted
+    # without a human glance -- a real sheet otherwise flagged 28 correct
+    # answers, every one its row's only dark fill.
+    binary, value, bubbles = _gray_row_bubbles(marked=True)
+    assert _only_dark_fill_is("G", binary, value, bubbles, radius=9)
+    assert not _only_dark_fill_is("F", binary, value, bubbles, radius=9)
+
+
+def test_only_dark_fill_does_not_confirm_a_row_with_two_dark_fills():
+    binary, value, bubbles = _gray_row_bubbles(marked=True)
+    cv2.circle(value, (20, 20), 8, 45, -1)  # F filled too -- a double mark
+    assert not _only_dark_fill_is("G", binary, value, bubbles, radius=9)
+
+
+def test_only_dark_fill_never_applies_where_erosion_decides():
+    # Radius 11 and up keep their fallback answers flagged, as before.
+    binary, value, bubbles = _gray_row_bubbles(marked=True)
+    assert not _only_dark_fill_is("G", binary, value, bubbles, radius=11)
 
 
 def _thick_ring_template() -> Template:
