@@ -167,6 +167,22 @@ def test_export_sat_report_copies_the_dropped_score_report_and_the_new_one_to_dr
     )
 
 
+def test_export_sat_report_numbers_the_pdf_instead_of_overwriting_the_score_report_it_came_from(tmp_path):
+    # The dropped score report sitting in the output folder under exactly the new report's name.
+    dropped = tmp_path / "Student, Jane 2027 DSAT 8 March 8 2026.pdf"
+    dropped.write_bytes(b"dropped report")
+    rows = [dataclasses.replace(_row(1, 1, "Math", "B", "Module 1"), source_path=str(dropped))]
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake"):
+        pdf_path = export_sat_report(
+            MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=MagicMock(side_effect=["9/12/2026", "620"])
+        )
+
+    assert dropped.read_bytes() == b"dropped report"
+    assert pdf_path == tmp_path / "Student, Jane 2027 DSAT 8 March 8 2026 (2).pdf"
+    assert pdf_path.read_bytes() == b"%PDF-fake"
+
+
 def test_export_sat_report_makes_no_folder_for_a_report_cancelled_at_a_score_prompt(tmp_path):
     rows = [_row(1, 1, "Math", "B", "Module 1")]
     report_folders = MagicMock()

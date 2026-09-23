@@ -18,6 +18,7 @@ from googleapiclient.discovery import Resource
 from .export import write_xlsx
 from .google_score_report_export import export_score_report
 from .gui_prompt import SKIP, prompt_for_date, prompt_for_text
+from .output_files import unused_base_name
 from .pipeline import SheetResult
 from .report_folders import ReportFolders
 from .scan_filename import ScanFilename, parse_scan_filename
@@ -86,7 +87,9 @@ def export_sheet_report(
     report_folders: Optional[ReportFolders] = None,
 ) -> ExportOutcome:
     """Produce this one sheet's score-report PDF -- and, if it has review
-    items, the color-coded .xlsx alongside it -- in `output_dir`.
+    items, the color-coded .xlsx alongside it -- in `output_dir`, numbered
+    "(2)", "(3)", ... rather than written over a file already there (see
+    output_files.py).
     `report_folders` picks the Drive folder its filled-in Sheet is kept
     in, from the test date entered here, and saves a copy of the scanned
     file and of the report PDF there too (see report_folders.py); without
@@ -149,16 +152,15 @@ def export_sheet_report(
         copy_folder_id=copy_folder_id,
     )
     pdf_name = f"{base_name}.pdf"
-    # Copied before the PDF is written below: a scan dropped from
-    # output_dir under exactly the report's own name is overwritten by it.
     if report_folders is not None and test_date is not None:
         report_folders.save_copies(copy_folder_id, Path(result.source), pdf_name, pdf_bytes, scan.student_name)
-    pdf_path = output_dir / pdf_name
+    local_name = unused_base_name(output_dir, base_name, [".pdf", ".xlsx"] if flagged else [".pdf"])
+    pdf_path = output_dir / f"{local_name}.pdf"
     pdf_path.write_bytes(pdf_bytes)
 
     xlsx_path = None
     if flagged:
-        xlsx_path = output_dir / f"{base_name}.xlsx"
+        xlsx_path = output_dir / f"{local_name}.xlsx"
         write_xlsx([result], xlsx_path)
 
     return ExportOutcome(pdf_path=pdf_path, xlsx_path=xlsx_path)

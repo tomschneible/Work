@@ -23,6 +23,7 @@ from googleapiclient.discovery import Resource
 
 from .google_sat_simplified_score_report_export import export_simple_sat_score_report
 from .gui_prompt import SKIP, TestModeSkip, prompt_for_date, prompt_for_text
+from .output_files import unused_base_name
 from .report_folders import ReportFolders
 from .sat_score_report_writer import SatKey, normalize_subject
 from .scan_filename import parse_scan_filename
@@ -138,7 +139,9 @@ def export_sat_report(
     prompt_fn: Callable[[str, str], Optional[str]] = prompt_for_text,
     report_folders: Optional[ReportFolders] = None,
 ) -> Path:
-    """Produce one student's DSAT score-report PDF in `output_dir`, from
+    """Produce one student's DSAT score-report PDF in `output_dir` (numbered
+    "(2)", "(3)", ... rather than written over a file already there -- see
+    output_files.py), from
     `rows` -- every ScoreReportRow for one source file (see
     score_report.group_by_source), already run through
     answer_keys.annotate_rows. `report_folders` picks the Drive folder the
@@ -222,11 +225,9 @@ def export_sat_report(
         copy_folder_id=copy_folder_id,
     )
     pdf_name = f"{base_name}.pdf"
-    # Copied before the PDF is written below: a score report dropped from
-    # output_dir under exactly this report's own name is overwritten by it.
     if report_folders is not None and test_date is not None:
         dropped_file = Path(rows[0].source_path) if rows[0].source_path else None
         report_folders.save_copies(copy_folder_id, dropped_file, pdf_name, pdf_bytes, scan.student_name)
-    pdf_path = output_dir / pdf_name
+    pdf_path = output_dir / f"{unused_base_name(output_dir, base_name, ['.pdf'])}.pdf"
     pdf_path.write_bytes(pdf_bytes)
     return pdf_path

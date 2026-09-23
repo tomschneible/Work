@@ -742,6 +742,11 @@ worked, or to look around the folder tree while debugging.
    family token is always exactly whatever the input carried (`ACT`,
    `SAT`, or `DSAT`) -- never a separately-chosen label layered on top, so
    a DSAT report is never redundantly double-labeled ("SAT DSAT ...").
+   Nothing already on the Desktop is written over -- an earlier run's
+   report, or the very scan a report was made from when it was dropped
+   from the Desktop under the same name: the new file gets " (2)", " (3)",
+   ... instead, the way Finder numbers downloads (`output_files.py`), and
+   a flagged report's PDF and `.xlsx` always share one number.
 
    The kept Google Sheet goes in the folder for the day the test was
    given, in the org's Student Tracking tree -- e.g.
