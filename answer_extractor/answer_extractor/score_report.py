@@ -32,6 +32,9 @@ class ScoreReportRow:
     # confidently identifies which second-module variant this is.
     test: str = ""
     module_label: str = ""
+    # The whole path of the PDF this row came from -- `source` is only its
+    # name, which is what grouping and filename parsing key on.
+    source_path: str = ""
 
 
 def _extract_lines(path: str | Path) -> List[str]:
@@ -151,6 +154,7 @@ def parse_score_report(path: str | Path) -> List[ScoreReportRow]:
         rows.append(
             ScoreReportRow(
                 source=path.stem,
+                source_path=str(path),
                 module=module,
                 question=question,
                 section=section,

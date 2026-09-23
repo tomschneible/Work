@@ -32,6 +32,7 @@ from answer_extractor.google_sheets_export import (
     list_folder,
     narrow_columns,
     replace_content,
+    upload_bytes,
     write_cells,
 )
 
@@ -130,6 +131,21 @@ def test_create_folder_makes_a_folder_inside_the_parent_with_shared_drive_suppor
         "mimeType": "application/vnd.google-apps.folder",
         "parents": ["MONTH_ID"],
     }
+    assert kwargs["supportsAllDrives"] is True
+
+
+def test_upload_bytes_stores_the_content_as_is_with_shared_drive_support():
+    drive = MagicMock()
+    drive.files.return_value.create.return_value.execute.return_value = {"id": "NEW_FILE_ID"}
+
+    assert upload_bytes(drive, "DAY_ID", "Jane scan.pdf", b"%PDF-scan", "application/pdf") == "NEW_FILE_ID"
+    _, kwargs = drive.files.return_value.create.call_args
+    # No Google mimeType in the body -- that would convert it instead of storing the PDF itself.
+    assert kwargs["body"] == {"name": "Jane scan.pdf", "parents": ["DAY_ID"]}
+    media = kwargs["media_body"]
+    assert media.mimetype() == "application/pdf"
+    assert media.resumable()
+    assert media.getbytes(0, media.size()) == b"%PDF-scan"
     assert kwargs["supportsAllDrives"] is True
 
 

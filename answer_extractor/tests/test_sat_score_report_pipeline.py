@@ -1,4 +1,6 @@
+import dataclasses
 import datetime as dt
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -145,6 +147,24 @@ def test_export_sat_report_files_the_sheet_by_the_prompted_date(tmp_path, typed,
 
     report_folders.folder_for.assert_called_once_with(folder_date, "Jane Student")
     assert export_mock.call_args.kwargs["copy_folder_id"] == "DAY_FOLDER_ID"
+    assert report_folders.save_copies.called == (folder_date is not None)  # a test run uploads no copies
+
+
+def test_export_sat_report_copies_the_dropped_score_report_and_the_new_one_to_drive(tmp_path):
+    dropped = "/Users/staff/Downloads/Student, Jane 2027 DSAT 8 March 8 2026.pdf"
+    rows = [dataclasses.replace(_row(1, 1, "Math", "B", "Module 1"), source_path=dropped)]
+    report_folders = MagicMock()
+    report_folders.folder_for.return_value = "DAY_FOLDER_ID"
+
+    with patch(f"{_MODULE}.export_simple_sat_score_report", return_value=b"%PDF-fake"):
+        export_sat_report(
+            MagicMock(), MagicMock(), "ROOT", rows, tmp_path,
+            prompt_fn=MagicMock(side_effect=["9/12/2026", "620"]), report_folders=report_folders,
+        )
+
+    report_folders.save_copies.assert_called_once_with(
+        "DAY_FOLDER_ID", Path(dropped), "Student, Jane 2027 DSAT 8 March 8 2026.pdf", b"%PDF-fake", "Jane Student"
+    )
 
 
 def test_export_sat_report_makes_no_folder_for_a_report_cancelled_at_a_score_prompt(tmp_path):

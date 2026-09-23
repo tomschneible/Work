@@ -1,8 +1,10 @@
 """Tests for report_folders -- Drive is replaced by a small in-memory
-folder tree (FakeDrive) patched in for list_folder/get_file/create_folder,
-whose own request-shaping is covered in test_google_sheets_export.py."""
+folder tree (FakeDrive) patched in for list_folder/get_file/create_folder/
+upload_bytes, whose own request-shaping is covered in
+test_google_sheets_export.py."""
 import datetime as dt
 import itertools
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +12,7 @@ from answer_extractor import report_folders
 from answer_extractor.report_folders import (
     ReportFolders,
     date_folder_names,
+    dropped_file_copy_name,
     find_ancestor_folder,
     find_or_create_subfolder,
 )
@@ -25,6 +28,8 @@ class FakeDrive:
     def __init__(self):
         self.files = {}
         self.created = []  # (parent id, name) of each folder create_folder made, in order
+        self.uploads = []  # (folder id, name, content, mime type) of each file upload_bytes stored
+        self.failing_uploads = set()  # names upload_bytes should fail on
         self.calls = 0
         # Drive's own listing can lag a moment behind a brand-new folder.
         self.new_folders_listed = True
@@ -64,11 +69,18 @@ class FakeDrive:
         self.created.append((parent_folder_id, name))
         return self.add(name, parent=parent_folder_id, listed=self.new_folders_listed)
 
+    def upload_bytes(self, drive, parent_folder_id, name, content, mime_type):
+        self.calls += 1
+        if name in self.failing_uploads:
+            raise RuntimeError("upload failed")
+        self.uploads.append((parent_folder_id, name, content, mime_type))
+        return self.add(name, parent=parent_folder_id, mime_type=mime_type)
+
 
 @pytest.fixture
 def drive(monkeypatch):
     fake = FakeDrive()
-    for name in ("list_folder", "get_file", "create_folder"):
+    for name in ("list_folder", "get_file", "create_folder", "upload_bytes"):
         monkeypatch.setattr(report_folders, name, getattr(fake, name))
     return fake
 
@@ -212,3 +224,60 @@ def test_folder_for_uses_a_given_student_tracking_folder_without_searching(drive
     day = folders.folder_for(dt.date(2026, 9, 12), "Jane Student")
 
     assert drive.path(day) == ["Student Tracking", "Practice Tests 2026", "09 September", "12 September"]
+
+
+
+_REPORT_PDF = "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf"
+
+
+@pytest.mark.parametrize(
+    "dropped, copy_name",
+    [
+        (
+            "Student, Jane 2027 ACT 25MC1 January 17 2026 Test Scan & Bubble.pdf",
+            "Student, Jane 2027 ACT 25MC1 January 17 2026 Test Scan & Bubble.pdf",
+        ),
+        ("Student, Jane 2027 ACT 25MC1 January 17 2026.png", "Student, Jane 2027 ACT 25MC1 January 17 2026.png"),
+        # Named exactly like the report PDF -- the org names a report after its input.
+        (_REPORT_PDF, "Student, Jane 2027 ACT 25MC1 January 17 2026 (original).pdf"),
+    ],
+)
+def test_dropped_file_copy_name_keeps_its_own_name_unless_the_report_has_it_too(dropped, copy_name):
+    assert dropped_file_copy_name(Path("/scans") / dropped, _REPORT_PDF) == copy_name
+
+
+def test_save_copies_uploads_the_dropped_file_and_the_report_pdf_as_they_are(drive, tmp_path):
+    scan = tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026 Test Scan & Bubble.png"
+    scan.write_bytes(b"scan bytes")
+    folders = ReportFolders(object(), fallback_folder_id="TEMP")
+
+    folders.save_copies("DAY", scan, _REPORT_PDF, b"%PDF-report", "Jane Student")
+
+    assert drive.uploads == [
+        ("DAY", scan.name, b"scan bytes", "image/png"),
+        ("DAY", _REPORT_PDF, b"%PDF-report", "application/pdf"),
+    ]
+
+
+def test_save_copies_without_a_dropped_file_uploads_just_the_report(drive):
+    ReportFolders(object(), fallback_folder_id="TEMP").save_copies("DAY", None, _REPORT_PDF, b"%PDF", "Jane Student")
+    assert [name for _, name, _, _ in drive.uploads] == [_REPORT_PDF]
+
+
+def test_save_copies_still_uploads_the_report_when_the_dropped_file_is_gone(drive, tmp_path, capsys):
+    missing = tmp_path / "moved away mid-run.pdf"
+    ReportFolders(object(), fallback_folder_id="TEMP").save_copies("DAY", missing, _REPORT_PDF, b"%PDF", "Jane Student")
+
+    assert [name for _, name, _, _ in drive.uploads] == [_REPORT_PDF]
+    assert "couldn't save a copy of 'moved away mid-run.pdf' to Jane Student's Drive folder" in capsys.readouterr().err
+
+
+def test_save_copies_still_uploads_the_dropped_file_when_the_report_upload_fails(drive, tmp_path, capsys):
+    scan = tmp_path / "scan.pdf"
+    scan.write_bytes(b"scan bytes")
+    drive.failing_uploads.add(_REPORT_PDF)
+
+    ReportFolders(object(), fallback_folder_id="TEMP").save_copies("DAY", scan, _REPORT_PDF, b"%PDF", "Jane Student")
+
+    assert [name for _, name, _, _ in drive.uploads] == ["scan.pdf"]
+    assert f"couldn't save a copy of {_REPORT_PDF!r}" in capsys.readouterr().err

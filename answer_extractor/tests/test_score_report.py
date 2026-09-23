@@ -27,6 +27,7 @@ def test_parse_single_module():
     assert [r.your_answer for r in rows] == ["D", "D", "C"]
     assert all(r.module == 1 for r in rows)
     assert all(r.section == "Reading and Writing" for r in rows)
+    assert all(r.source == "report" and r.source_path == str(path) for r in rows)
 
 
 def test_parse_detects_module_boundaries_when_numbering_restarts(tmp_path):

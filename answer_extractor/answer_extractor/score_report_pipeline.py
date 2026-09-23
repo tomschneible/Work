@@ -88,7 +88,8 @@ def export_sheet_report(
     """Produce this one sheet's score-report PDF -- and, if it has review
     items, the color-coded .xlsx alongside it -- in `output_dir`.
     `report_folders` picks the Drive folder its filled-in Sheet is kept
-    in, from the test date entered here (see report_folders.py); without
+    in, from the test date entered here, and saves a copy of the scanned
+    file and of the report PDF there too (see report_folders.py); without
     one, the Sheet lands wherever Drive puts a copy by default.
 
     Prompts once for the actual test date via `prompt_fn` (a native macOS
@@ -147,7 +148,12 @@ def export_sheet_report(
         output_name=base_name,
         copy_folder_id=copy_folder_id,
     )
-    pdf_path = output_dir / f"{base_name}.pdf"
+    pdf_name = f"{base_name}.pdf"
+    # Copied before the PDF is written below: a scan dropped from
+    # output_dir under exactly the report's own name is overwritten by it.
+    if report_folders is not None and test_date is not None:
+        report_folders.save_copies(copy_folder_id, Path(result.source), pdf_name, pdf_bytes, scan.student_name)
+    pdf_path = output_dir / pdf_name
     pdf_path.write_bytes(pdf_bytes)
 
     xlsx_path = None

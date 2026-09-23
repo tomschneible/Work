@@ -66,7 +66,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 from openpyxl.utils import get_column_letter
 
 from .google_auth import get_credentials
@@ -303,6 +303,17 @@ def create_folder(drive: Resource, parent_folder_id: str, name: str) -> str:
     the new folder's own id."""
     body = {"name": name, "mimeType": FOLDER_MIME_TYPE, "parents": [parent_folder_id]}
     return drive.files().create(body=body, fields="id", supportsAllDrives=True).execute()["id"]
+
+
+def upload_bytes(drive: Resource, parent_folder_id: str, name: str, content: bytes, mime_type: str) -> str:
+    """Upload `content` into `parent_folder_id` as a file named `name`,
+    returning its id. Stored exactly as given -- a PDF stays a PDF, never
+    converted to a Google Docs format -- and sent as a resumable upload,
+    since a scanned PDF can easily outgrow the 5 MB a single-request
+    upload allows."""
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=True)
+    body = {"name": name, "parents": [parent_folder_id]}
+    return drive.files().create(body=body, media_body=media, fields="id", supportsAllDrives=True).execute()["id"]
 
 
 def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:

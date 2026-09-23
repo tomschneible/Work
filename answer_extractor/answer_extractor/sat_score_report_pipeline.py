@@ -142,9 +142,10 @@ def export_sat_report(
     `rows` -- every ScoreReportRow for one source file (see
     score_report.group_by_source), already run through
     answer_keys.annotate_rows. `report_folders` picks the Drive folder the
-    report's filled-in Sheet is kept in, from the test date entered here
-    (see report_folders.py); without one, the Sheet lands wherever Drive
-    puts a copy by default.
+    report's filled-in Sheet is kept in, from the test date entered here,
+    and saves a copy of the dropped score-report PDF and of this report's
+    PDF there too (see report_folders.py); without one, the Sheet lands
+    wherever Drive puts a copy by default.
 
     Prompts once for the actual test date, then once per subject present
     in `rows` for its scaled section score, both via `prompt_fn` (a
@@ -220,6 +221,12 @@ def export_sat_report(
         output_name=base_name,
         copy_folder_id=copy_folder_id,
     )
-    pdf_path = output_dir / f"{base_name}.pdf"
+    pdf_name = f"{base_name}.pdf"
+    # Copied before the PDF is written below: a score report dropped from
+    # output_dir under exactly this report's own name is overwritten by it.
+    if report_folders is not None and test_date is not None:
+        dropped_file = Path(rows[0].source_path) if rows[0].source_path else None
+        report_folders.save_copies(copy_folder_id, dropped_file, pdf_name, pdf_bytes, scan.student_name)
+    pdf_path = output_dir / pdf_name
     pdf_path.write_bytes(pdf_bytes)
     return pdf_path

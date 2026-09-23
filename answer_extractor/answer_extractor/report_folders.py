@@ -1,5 +1,8 @@
-"""Where each report's filled-in Google Sheet is kept in Drive: the folder
-for the day the test was given, in the org's own "Student Tracking" tree --
+"""Where each report's filled-in Google Sheet is kept in Drive -- along
+with a copy of the file that was dropped to make it (the scanned bubble
+sheet, or a SAT's score-report PDF) and a copy of the finished report PDF
+-- the folder for the day the test was given, in the org's own "Student
+Tracking" tree --
 
     Student Tracking/Practice Tests 2026/09 September/12 September/
 
@@ -20,18 +23,22 @@ A report's Sheet goes to "Temporary Files" instead when there's no date to
 file it under (a test-mode run -- the date prompt answered "test", see
 gui_prompt.SKIP), or when filing it fails for any reason (no access to
 Student Tracking, two folders with the same name, ...): the report itself
-still gets made, with a warning saying why its Sheet is there.
+still gets made, with a warning saying why its Sheet is there. The two
+copies go wherever the Sheet does, except on a test-mode run, which
+uploads none.
 """
 from __future__ import annotations
 
 import datetime as dt
+import mimetypes
 import re
 import sys
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from googleapiclient.discovery import Resource
 
-from .google_sheets_export import FOLDER_MIME_TYPE, create_folder, get_file, list_folder
+from .google_sheets_export import FOLDER_MIME_TYPE, create_folder, get_file, list_folder, upload_bytes
 
 STUDENT_TRACKING_FOLDER_NAME = "Student Tracking"
 # Spelled out rather than taken from calendar.month_name or strftime("%B"),
@@ -103,13 +110,24 @@ def find_or_create_subfolder(drive: Resource, parent_folder_id: str, name: str) 
     return create_folder(drive, parent_folder_id, name)
 
 
+def dropped_file_copy_name(dropped_file: Path, report_name: str) -> str:
+    """The dropped file's own name for its copy in Drive -- with
+    " (original)" added when that's exactly the report PDF's name too (the
+    org names a report after its input), so the two can be told apart
+    without opening them."""
+    if dropped_file.name.lower() != report_name.lower():
+        return dropped_file.name
+    return f"{dropped_file.stem} (original){dropped_file.suffix}"
+
+
 class ReportFolders:
-    """Picks the Drive folder for each report's Sheet (see this module's
-    own docstring). Meant to be made once per run: every report from the
-    same day shares one lookup, and a folder this run created is
-    remembered rather than looked up again -- Drive's own folder listing
-    can lag a moment behind a brand-new folder, and looking it up again
-    too soon would make a second one."""
+    """Picks the Drive folder for each report's Sheet, and saves the
+    report's other copies there (see this module's own docstring). Meant
+    to be made once per run: every report from the same day shares one
+    lookup, and a folder this run created is remembered rather than looked
+    up again -- Drive's own folder listing can lag a moment behind a
+    brand-new folder, and looking it up again too soon would make a
+    second one."""
 
     def __init__(self, drive: Resource, fallback_folder_id: str, student_tracking_folder_id: Optional[str] = None):
         self._drive = drive
@@ -133,6 +151,32 @@ class ReportFolders:
                 file=sys.stderr,
             )
             return self._fallback_folder_id
+
+    def save_copies(
+        self,
+        folder_id: str,
+        dropped_file: Optional[Path],
+        report_name: str,
+        report_pdf: bytes,
+        student_name: str,
+    ) -> None:
+        """Upload a copy of `dropped_file` (skipped when None) and of the
+        report PDF into `folder_id`. The report is already made by the time
+        this runs, so a copy that fails to upload only gets a warning on
+        stderr naming `student_name` -- never an exception."""
+        copies = []
+        if dropped_file is not None:
+            copies.append((dropped_file_copy_name(dropped_file, report_name), dropped_file.read_bytes))
+        copies.append((report_name, lambda: report_pdf))
+        for name, read in copies:
+            try:
+                mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+                upload_bytes(self._drive, folder_id, name, read(), mime_type)
+            except Exception as exc:
+                print(
+                    f"Warning: couldn't save a copy of {name!r} to {student_name}'s Drive folder ({exc}).",
+                    file=sys.stderr,
+                )
 
     def _day_folder(self, test_date: dt.date) -> str:
         if self._student_tracking_folder_id is None:

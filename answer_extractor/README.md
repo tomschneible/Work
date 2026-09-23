@@ -764,6 +764,16 @@ worked, or to look around the folder tree while debugging.
    the same name at some level -- with a warning saying why; the report
    itself is still made either way.
 
+   Two more files go in alongside the Sheet: a copy of the file that was
+   dropped to make the report (the scanned bubble sheet, or a SAT's
+   score-report PDF), under its own name, and a copy of the report PDF.
+   A dropped file named exactly like its report gets " (original)" added
+   to its copy's name, so the two can be told apart without opening them.
+   Both are stored as-is (a PDF stays a PDF, an image an image). A copy
+   that fails to upload only gets a warning, since the report is already
+   made by then, and a test-mode run uploads neither. The flagged `.xlsx`
+   stays on the Desktop only.
+
 `answer_extractor/auto_cli.py` (what the macOS droplet calls) is where
 this is wired in: each auto-detected bubble sheet, and each identified
 score-report PDF (grouped by source file -- one PDF, one student -- via

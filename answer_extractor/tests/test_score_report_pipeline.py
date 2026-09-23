@@ -160,6 +160,34 @@ def test_export_sheet_report_files_the_sheet_by_the_prompted_date(tmp_path, type
 
     report_folders.folder_for.assert_called_once_with(folder_date, "Jane Student")
     assert export_mock.call_args.kwargs["copy_folder_id"] == "DAY_FOLDER_ID"
+    assert report_folders.save_copies.called == (folder_date is not None)  # a test run uploads no copies
+
+
+def test_export_sheet_report_copies_the_scan_and_report_to_drive_before_writing_the_pdf(tmp_path):
+    # Before, not after: a scan dropped from the output folder under exactly
+    # the report's own name is overwritten when the report is written there.
+    scan_path = tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf"
+    scan_path.write_bytes(b"scan bytes")
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = SheetResult(
+        label=scan_path.stem, source=str(scan_path), used_contour_alignment=False, questions=questions,
+        template_name="act_answer_sheet",
+    )
+    report_folders = MagicMock()
+    report_folders.folder_for.return_value = "DAY_FOLDER_ID"
+    scan_when_copied = []
+    report_folders.save_copies.side_effect = lambda *args: scan_when_copied.append(scan_path.read_bytes())
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
+        export_sheet_report(
+            MagicMock(), MagicMock(), "ROOT", result, tmp_path,
+            prompt_fn=MagicMock(return_value="9/12/2026"), report_folders=report_folders,
+        )
+
+    report_folders.save_copies.assert_called_once_with(
+        "DAY_FOLDER_ID", scan_path, "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf", b"%PDF-fake", "Jane Student"
+    )
+    assert scan_when_copied == [b"scan bytes"]
 
 
 def test_export_sheet_report_raises_when_the_date_prompt_is_cancelled(tmp_path):
