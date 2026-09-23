@@ -5,6 +5,7 @@ tolerance for light or partial marks.
 from __future__ import annotations
 
 import dataclasses
+import functools
 from typing import Dict, List, Set, Tuple
 
 import cv2
@@ -97,19 +98,23 @@ def _dark_fraction(value: np.ndarray, x: int, y: int, radius: int, thresh: int =
     Area and darkness are complementary signals -- neither alone tells the
     whole story, which is why this exists alongside score_bubbles rather
     than replacing it."""
+    sampled = _sampled_values(value, x, y, radius)
+    if sampled.size == 0:
+        return 0.0
+    return float(np.mean(sampled < thresh))
+
+
+def _sampled_values(value: np.ndarray, x: int, y: int, radius: int) -> np.ndarray:
     h, w = value.shape
     r = max(1, int(radius * 0.85))
     x0, x1 = max(0, x - r), min(w, x + r + 1)
     y0, y1 = max(0, y - r), min(h, y + r + 1)
     if x0 >= x1 or y0 >= y1:
-        return 0.0
+        return np.empty(0, dtype=value.dtype)
     patch = value[y0:y1, x0:x1]
     mask = np.zeros_like(patch, dtype=np.uint8)
     cv2.circle(mask, (x - x0, y - y0), r, 255, -1)
-    sampled = patch[mask > 0]
-    if sampled.size == 0:
-        return 0.0
-    return float(np.mean(sampled < thresh))
+    return patch[mask > 0]
 
 
 _SOLIDITY_ERODE_PX = 3  # structuring-element radius; see _solidity
@@ -172,13 +177,41 @@ def _solidity(binary: np.ndarray, x: int, y: int, radius: int, erode_px: int = _
 # above the confirmed ambiguous-mark ceiling.
 _SOLID_FILL_MIN = 0.32
 
+# On bubbles too small for erosion to confirm a fill at all -- a perfect,
+# edge-to-edge fill tops out at 0.315 solidity at radius 9, just under
+# _SOLID_FILL_MIN -- a fill is recognized by darkness instead: the median
+# brightness across the bubble's sampled interior. On the J-series sheet,
+# genuine marks' medians reached at most 89 and unmarked bubbles' (bold
+# letters on gray-shaded rows included) no lower than 107.
+_SOLID_FILL_MAX_MEDIAN = 98
+
+
+@functools.lru_cache(maxsize=None)
+def _solidity_can_confirm_a_fill(radius: int) -> bool:
+    size = 2 * radius + 1
+    perfect_fill = np.full((size, size), 255, dtype=np.uint8)
+    return _solidity(perfect_fill, radius, radius, radius) >= _SOLID_FILL_MIN
+
+
+def _solid_fill_strength(binary: np.ndarray, value: np.ndarray, x: int, y: int, radius: int) -> float:
+    """How clearly this bubble holds a genuine solid fill -- 1.0 or more
+    counts as one. Solidity against _SOLID_FILL_MIN wherever a perfect fill
+    could clear it, median darkness against _SOLID_FILL_MAX_MEDIAN on
+    bubbles too small for that."""
+    if _solidity_can_confirm_a_fill(radius):
+        return _solidity(binary, x, y, radius) / _SOLID_FILL_MIN
+    sampled = _sampled_values(value, x, y, radius)
+    if sampled.size == 0:
+        return 0.0
+    return _SOLID_FILL_MAX_MEDIAN / max(float(np.median(sampled)), 1.0)
+
 
 def _solid_fill_choice(
     fill_ratios: Dict[str, float],
     binary: np.ndarray,
+    value: np.ndarray,
     bubbles: List[Tuple[str, int, int]],
     radius: int,
-    min_solidity: float = _SOLID_FILL_MIN,
 ) -> "str | None":
     """If fill_ratio's own (baseline-adjusted) leading choice is a
     genuinely solid fill -- not just the highest of a compressed, noisy
@@ -201,22 +234,22 @@ def _solid_fill_choice(
         return None
     max_ratio = max(adjusted.values())
     tied_for_top = [choice for choice, ratio in adjusted.items() if ratio == max_ratio]
-    best_choice, best_solidity = None, 0.0
+    best_choice, best_strength = None, 0.0
     for choice in tied_for_top:
         x, y = next((bx, by) for c, bx, by in bubbles if c == choice)
-        solidity = _solidity(binary, x, y, radius)
-        if solidity > best_solidity:
-            best_choice, best_solidity = choice, solidity
-    if best_choice is not None and best_solidity >= min_solidity:
+        strength = _solid_fill_strength(binary, value, x, y, radius)
+        if strength > best_strength:
+            best_choice, best_strength = choice, strength
+    if best_choice is not None and best_strength >= 1.0:
         return best_choice
     return None
 
 
 def _solidity_standout_choice(
     binary: np.ndarray,
+    value: np.ndarray,
     bubbles: List[Tuple[str, int, int]],
     radius: int,
-    min_solidity: float = _SOLID_FILL_MIN,
 ) -> "str | None":
     """Last-resort rescue for a row where fill_ratio's own area-based
     ranking is simply misleading, not just too compressed to clear a
@@ -229,13 +262,13 @@ def _solidity_standout_choice(
     was the only one of the four whose ink actually survived erosion.
 
     Ignores fill_ratio's ranking entirely and checks every choice's own
-    solidity directly; if exactly one clears `min_solidity`, it's
-    trusted. Two or more clearing it is left alone rather than guessed
-    at -- indistinguishable from this same signal's job on a genuine
-    double-mark (see evaluate_sheet's MULTIPLE handling), and a real
-    reason for solid_fill_choice's own exact-tie case above to exist
+    solidity directly (see _solid_fill_strength); if exactly one counts
+    as a solid fill, it's trusted. Two or more is left alone rather than
+    guessed at -- indistinguishable from this same signal's job on a
+    genuine double-mark (see evaluate_sheet's MULTIPLE handling), and a
+    real reason for solid_fill_choice's own exact-tie case above to exist
     rather than just reusing this."""
-    solid = [choice for choice, x, y in bubbles if _solidity(binary, x, y, radius) >= min_solidity]
+    solid = [choice for choice, x, y in bubbles if _solid_fill_strength(binary, value, x, y, radius) >= 1.0]
     if len(solid) == 1:
         return solid[0]
     return None
@@ -1234,7 +1267,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                     # ink (which reads ~0 on that strict scale regardless of
                     # which signal picked the answer).
                     x, y = next((bx, by) for choice, bx, by in bubbles if choice == answer)
-                    if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
+                    if _solid_fill_strength(binary, value, x, y, template.bubble_radius) >= 1.0:
                         solid_fill = True
 
                 if answer == "":
@@ -1276,7 +1309,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
             # like the partial-mark override, since it's still worth a
             # human glance.
             if answer == "":
-                solid_choice = _solid_fill_choice(fill_ratios, binary, bubbles, template.bubble_radius)
+                solid_choice = _solid_fill_choice(fill_ratios, binary, value, bubbles, template.bubble_radius)
                 if solid_choice is not None:
                     answer, candidates, low_confidence = solid_choice, [solid_choice], True
                     solid_fill = True
@@ -1288,7 +1321,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
                 # fill clears that worry independently of fill_ratio's own
                 # numbers.
                 x, y = next((bx, by) for choice, bx, by in bubbles if choice == answer)
-                if _solidity(binary, x, y, template.bubble_radius) >= _SOLID_FILL_MIN:
+                if _solid_fill_strength(binary, value, x, y, template.bubble_radius) >= 1.0:
                     low_confidence = False
 
             # Absolute last resort, only reached if fill_ratio's own
@@ -1300,7 +1333,7 @@ def evaluate_sheet(image: np.ndarray, template: Template) -> Tuple[List[Question
             # even reaches those checks (they only ever reconsider
             # fill_ratio's own leader).
             if answer in ("", "MULTIPLE"):
-                standout = _solidity_standout_choice(binary, bubbles, template.bubble_radius)
+                standout = _solidity_standout_choice(binary, value, bubbles, template.bubble_radius)
                 if standout is not None:
                     answer, candidates, low_confidence = standout, [standout], True
                     solid_fill = True

@@ -19,6 +19,7 @@ from answer_extractor.detect import (
     _residual_ratio,
     _solid_fill_choice,
     _solidity,
+    _solidity_can_confirm_a_fill,
     _solidity_standout_choice,
     _value_channel,
     binarize,
@@ -736,7 +737,7 @@ def test_solid_fill_choice_returns_the_solid_leader():
     cv2.circle(binary, (60, 20), 15, 255, -1)
     bubbles = [("F", 20, 20), ("G", 60, 20)]
     fill_ratios = {"F": 0.20, "G": 0.35}  # G leads fill_ratio's own adjusted ranking
-    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) == "G"
+    assert _solid_fill_choice(fill_ratios, binary, 255 - binary, bubbles, radius=18) == "G"
 
 
 def test_solid_fill_choice_none_when_the_leader_is_not_solid():
@@ -747,7 +748,7 @@ def test_solid_fill_choice_none_when_the_leader_is_not_solid():
     cv2.circle(binary, (60, 20), 12, 255, 2)
     bubbles = [("F", 20, 20), ("G", 60, 20)]
     fill_ratios = {"F": 0.20, "G": 0.15}
-    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) is None
+    assert _solid_fill_choice(fill_ratios, binary, 255 - binary, bubbles, radius=18) is None
 
 
 def test_solid_fill_choice_breaks_an_exact_tie_by_solidity():
@@ -762,7 +763,7 @@ def test_solid_fill_choice_breaks_an_exact_tie_by_solidity():
     cv2.circle(binary, (20, 60), 15, 255, -1)  # H: genuine solid fill
     bubbles = [("G", 20, 20), ("H", 20, 60)]
     fill_ratios = {"G": 0.30, "H": 0.30}  # exact tie
-    assert _solid_fill_choice(fill_ratios, binary, bubbles, radius=18) == "H"
+    assert _solid_fill_choice(fill_ratios, binary, 255 - binary, bubbles, radius=18) == "H"
 
 
 # -- _solidity_standout_choice: pure logic tests ------------------------------
@@ -781,7 +782,7 @@ def test_solidity_standout_choice_finds_the_only_solid_choice():
     cv2.circle(binary, (20, 20), 15, 255, 3)  # F: thin ring
     cv2.circle(binary, (20, 60), 15, 255, -1)  # G: genuine solid fill
     bubbles = [("F", 20, 20), ("G", 20, 60)]
-    assert _solidity_standout_choice(binary, bubbles, radius=18) == "G"
+    assert _solidity_standout_choice(binary, 255 - binary, bubbles, radius=18) == "G"
 
 
 def test_solidity_standout_choice_none_when_nothing_is_solid():
@@ -789,7 +790,7 @@ def test_solidity_standout_choice_none_when_nothing_is_solid():
     cv2.circle(binary, (20, 20), 15, 255, 3)
     cv2.circle(binary, (20, 60), 15, 255, 2)
     bubbles = [("F", 20, 20), ("G", 20, 60)]
-    assert _solidity_standout_choice(binary, bubbles, radius=18) is None
+    assert _solidity_standout_choice(binary, 255 - binary, bubbles, radius=18) is None
 
 
 def test_solidity_standout_choice_none_when_more_than_one_is_solid():
@@ -800,7 +801,46 @@ def test_solidity_standout_choice_none_when_more_than_one_is_solid():
     cv2.circle(binary, (20, 20), 15, 255, -1)
     cv2.circle(binary, (20, 60), 15, 255, -1)
     bubbles = [("F", 20, 20), ("G", 20, 60)]
-    assert _solidity_standout_choice(binary, bubbles, radius=18) is None
+    assert _solidity_standout_choice(binary, 255 - binary, bubbles, radius=18) is None
+
+
+# -- small bubbles: darkness stands in for erosion ---------------------------
+#
+# The J-series sheet's bubbles (radius 9) are too small for erosion to ever
+# confirm a fill: a perfect one tops out just under _SOLID_FILL_MIN. On a real
+# sheet that silently dropped five genuine marks on gray-shaded rows to blank.
+
+
+def test_solidity_cannot_confirm_even_a_perfect_fill_on_a_radius_9_bubble():
+    assert not _solidity_can_confirm_a_fill(9)
+    assert _solidity_can_confirm_a_fill(11)
+
+
+def _gray_row_bubbles(marked: bool):
+    """Two radius-9 bubbles on a gray-shaded row, each filling the whole
+    binarized sample (as bold print does there) -- F only ever a dark
+    letter stroke, G a real pencil fill when `marked`."""
+    binary = np.zeros((40, 80), dtype=np.uint8)
+    cv2.circle(binary, (20, 20), 9, 255, -1)
+    cv2.circle(binary, (60, 20), 9, 255, -1)
+    value = np.full((40, 80), 198, dtype=np.uint8)
+    for cx in (20, 60):
+        cv2.rectangle(value, (cx - 4, 14), (cx - 2, 26), 46, -1)
+    if marked:
+        cv2.circle(value, (60, 20), 8, 45, -1)
+    return binary, value, [("F", 20, 20), ("G", 60, 20)]
+
+
+def test_solid_fill_rescue_on_a_small_bubble_recognizes_a_dark_fill():
+    binary, value, bubbles = _gray_row_bubbles(marked=True)
+    assert _solid_fill_choice({"F": 0.72, "G": 1.0}, binary, value, bubbles, radius=9) == "G"
+    assert _solidity_standout_choice(binary, value, bubbles, radius=9) == "G"
+
+
+def test_solid_fill_rescue_on_a_small_bubble_ignores_bold_print_on_a_gray_row():
+    binary, value, bubbles = _gray_row_bubbles(marked=False)
+    assert _solid_fill_choice({"F": 0.72, "G": 0.89}, binary, value, bubbles, radius=9) is None
+    assert _solidity_standout_choice(binary, value, bubbles, radius=9) is None
 
 
 def _thick_ring_template() -> Template:
