@@ -19,7 +19,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from googleapiclient.discovery import Resource
 
 from .google_sat_simplified_score_report_export import export_simple_sat_score_report
-from .gui_prompt import SKIP, TestModeSkip, prompt_for_date, prompt_for_text
+from .gui_prompt import SKIP, TestModeSkip, prompt_for_test_date, prompt_for_text
 from .output_files import unused_base_name
 from .report_folders import ReportFolders
 from .sat_score_report_writer import SatKey, normalize_subject
@@ -199,10 +199,11 @@ def export_sat_report(
     PDF there too (see report_folders.py); without one, the Sheet lands
     wherever Drive puts a copy by default.
 
-    Prompts once for the actual test date, then once per subject present
-    in `rows` for its scaled section score, both via `prompt_fn` (a
-    native macOS dialog by default -- see gui_prompt.py) -- the date
-    because this org's own scan/upload filenames turned out not to
+    Prompts once for the actual test date (its box starting with the last
+    date typed that day -- see gui_prompt.prompt_for_test_date), then once
+    per subject present in `rows` for its scaled section score, both via
+    `prompt_fn` (a native macOS dialog by default -- see gui_prompt.py) --
+    the date because this org's own scan/upload filenames turned out not to
     reliably carry it as trustworthy *data* even when they parse cleanly
     (see gui_prompt.py's own module docstring for why this moved off
     scan_filename.ScanFilename.test_date), the section scores because
@@ -238,7 +239,7 @@ def export_sat_report(
     active_variants = active_variants_from_rows(rows)
     # Not scan.test_date/formatted_test_date -- see gui_prompt.py's own
     # module docstring for why the filename isn't trusted for the date.
-    test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
+    test_date = prompt_for_test_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
     # SKIP (typed "test") is translated to plain None here, not passed

@@ -9,7 +9,7 @@ Tracking" tree --
 -- a "Practice Tests YYYY" folder per year, "MM Month" folders inside it,
 and a "DD Month" folder inside those for each day a test was given. The
 date is the one typed in at the test-date prompt (see
-gui_prompt.prompt_for_date), not the input's filename, and any level of
+gui_prompt.prompt_for_test_date), not the input's filename, and any level of
 that path that doesn't exist yet -- a new year, a month nobody has made a
 folder for, the day itself -- is created on the spot.
 

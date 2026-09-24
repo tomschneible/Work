@@ -385,6 +385,12 @@ worked, or to look around the folder tree while debugging.
    for both `score_report_pipeline.export_sheet_report` (ACT) and
    `sat_score_report_pipeline.export_sat_report` (SAT/DSAT) -- prompted
    once per report, before any section-score prompts on the SAT side.
+   The box starts out holding the last date typed there that day
+   (`gui_prompt.prompt_for_test_date`, kept in
+   `~/.cache/answer_extractor/last_test_date.json`), so for a group tested
+   together, only the first student's date needs typing -- after that
+   it's just Enter. A date typed on an earlier day is never offered: each
+   day starts with an empty box.
    The typed date is the one everything uses -- the report's Test Date,
    its Drive folder (point 8), and every output's name, day included
    (`ScanFilename.dated`). Since filenames carry only a month and year,

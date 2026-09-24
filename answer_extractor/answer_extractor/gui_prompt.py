@@ -19,7 +19,10 @@ which Drive template to use (see scan_filename.py's own docstring) --
 only the *date* moved off it. The typed date is then used for everything
 -- the report, its Drive folder, every output's name -- once it's checked
 against the month and year the filename names (the pipelines'
-ScanFilename.check_month_and_year).
+ScanFilename.check_month_and_year). The date box starts out holding the
+last date typed there that day (prompt_for_test_date), so a group tested
+together only needs Enter after the first student; each day starts with
+an empty box.
 
 Uses osascript's `display dialog`, the same mechanism scripts/mac_droplet.sh
 already relies on for GUI notifications/alerts (an Automator droplet has no
@@ -43,10 +46,16 @@ omitted answer already does.
 from __future__ import annotations
 
 import datetime as dt
+import json
+import os
 import subprocess
+from pathlib import Path
 from typing import Callable, Optional
 
 _APP_TITLE = "Answer Extractor"
+# Where prompt_for_test_date keeps the last date typed, and the day it was
+# typed on -- ANSWER_EXTRACTOR_LAST_TEST_DATE_FILE moves it.
+_DEFAULT_LAST_TEST_DATE_PATH = Path.home() / ".cache" / "answer_extractor" / "last_test_date.json"
 
 
 class TestModeSkip:
@@ -132,6 +141,49 @@ def prompt_for_date(
         except ValueError:
             default = raw
             message = f"{raw!r} isn't a date in M/D/YYYY form (e.g. 3/8/2026) -- {base_message}"
+
+
+def prompt_for_test_date(
+    prompt_fn: Callable[[str, str], Optional[str]], base_message: str
+) -> dt.date | TestModeSkip | None:
+    """prompt_for_date, with the box already holding the last date typed
+    here today, if there is one -- after a day's first report, each one
+    from the same test date only needs Enter. A date typed on an earlier
+    day is never offered, so each day starts with an empty box. "test"
+    and a cancelled dialog leave the remembered date as it was."""
+    last = _last_test_date_typed_today()
+    default = f"{last.month}/{last.day}/{last.year}" if last else ""
+    answer = prompt_for_date(prompt_fn, base_message, default)
+    if isinstance(answer, dt.date):
+        _remember_test_date(answer)
+    return answer
+
+
+def _last_test_date_path() -> Path:
+    return Path(os.environ.get("ANSWER_EXTRACTOR_LAST_TEST_DATE_FILE", _DEFAULT_LAST_TEST_DATE_PATH))
+
+
+def _last_test_date_typed_today() -> Optional[dt.date]:
+    """The date last typed at prompt_for_test_date, if that was today --
+    None if it was an earlier day, or if there's none (or it can't be
+    read, which only means an empty box)."""
+    try:
+        saved = json.loads(_last_test_date_path().read_text())
+        if dt.date.fromisoformat(saved["typed_on"]) != dt.date.today():
+            return None
+        return dt.date.fromisoformat(saved["test_date"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _remember_test_date(test_date: dt.date) -> None:
+    path = _last_test_date_path()
+    saved = {"typed_on": dt.date.today().isoformat(), "test_date": test_date.isoformat()}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(saved))
+    except OSError:
+        pass  # the next prompt just starts empty
 
 
 def _applescript_string(value: str) -> str:

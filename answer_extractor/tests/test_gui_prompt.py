@@ -5,9 +5,17 @@ pipeline caller uses it with), so its own tests use a bare MagicMock
 rather than mocking subprocess -- osascript's own request-shaping is
 prompt_for_text's concern, already covered above."""
 import datetime as dt
+import json
+import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from answer_extractor.gui_prompt import SKIP, prompt_for_date, prompt_for_text
+from answer_extractor.gui_prompt import SKIP, prompt_for_date, prompt_for_test_date, prompt_for_text
+
+
+def _press_enter():
+    """A prompt_fn that accepts whatever the box already holds."""
+    return MagicMock(side_effect=lambda message, default: default)
 
 
 def test_prompt_for_text_returns_what_was_typed():
@@ -103,3 +111,55 @@ def test_prompt_for_date_returns_none_immediately_without_retrying_a_cancel():
     prompt_for_date(prompt_fn, "Test date?")
 
     assert prompt_fn.call_count == 1
+
+
+def test_prompt_for_test_date_starts_empty_then_offers_the_date_typed_earlier_today():
+    first = MagicMock(return_value="1/17/2026")
+    assert prompt_for_test_date(first, "Jane Student's test date (M/D/YYYY)?") == dt.date(2026, 1, 17)
+    assert first.call_args[0][1] == ""
+
+    enter = _press_enter()
+    assert prompt_for_test_date(enter, "John Student's test date (M/D/YYYY)?") == dt.date(2026, 1, 17)
+    assert enter.call_args[0][1] == "1/17/2026"
+
+
+def test_prompt_for_test_date_offers_the_most_recent_date_typed():
+    prompt_for_test_date(MagicMock(return_value="1/17/2026"), "Q?")
+    prompt_for_test_date(MagicMock(return_value="1/24/2026"), "Q?")
+
+    assert prompt_for_test_date(_press_enter(), "Q?") == dt.date(2026, 1, 24)
+
+
+def test_prompt_for_test_date_never_offers_a_date_typed_on_an_earlier_day():
+    yesterday = dt.date.today() - dt.timedelta(days=1)
+    Path(os.environ["ANSWER_EXTRACTOR_LAST_TEST_DATE_FILE"]).write_text(
+        json.dumps({"typed_on": yesterday.isoformat(), "test_date": "2026-01-17"})
+    )
+    prompt_fn = MagicMock(return_value="1/24/2026")
+
+    assert prompt_for_test_date(prompt_fn, "Q?") == dt.date(2026, 1, 24)
+    assert prompt_fn.call_args[0][1] == ""
+
+
+def test_prompt_for_test_date_keeps_the_remembered_date_through_test_mode_and_cancel():
+    prompt_for_test_date(MagicMock(return_value="1/17/2026"), "Q?")
+    assert prompt_for_test_date(MagicMock(return_value="test"), "Q?") is SKIP
+    assert prompt_for_test_date(MagicMock(return_value=None), "Q?") is None
+
+    assert prompt_for_test_date(_press_enter(), "Q?") == dt.date(2026, 1, 17)
+
+
+def test_prompt_for_test_date_starts_empty_when_the_remembered_date_cant_be_read():
+    Path(os.environ["ANSWER_EXTRACTOR_LAST_TEST_DATE_FILE"]).write_text("not json")
+    prompt_fn = MagicMock(return_value="1/17/2026")
+
+    assert prompt_for_test_date(prompt_fn, "Q?") == dt.date(2026, 1, 17)
+    assert prompt_fn.call_args[0][1] == ""
+
+
+def test_prompt_for_test_date_still_returns_a_date_it_cant_remember(tmp_path, monkeypatch):
+    not_a_folder = tmp_path / "not-a-folder"
+    not_a_folder.write_text("a file where the folder would go")
+    monkeypatch.setenv("ANSWER_EXTRACTOR_LAST_TEST_DATE_FILE", str(not_a_folder / "last_test_date.json"))
+
+    assert prompt_for_test_date(MagicMock(return_value="1/17/2026"), "Q?") == dt.date(2026, 1, 17)

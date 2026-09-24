@@ -94,6 +94,24 @@ def test_export_sheet_report_rejects_a_date_in_another_month_than_the_file_is_na
     export_mock.assert_not_called()
 
 
+def test_the_next_report_that_day_only_needs_enter_for_the_same_date(tmp_path):
+    """Two students tested together: the first report's date is typed, and
+    the second's box already holds it."""
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    jane = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions)
+    john = _result("Student, John 2027 ACT 25MC1 January 2026", questions)
+    enter = MagicMock(side_effect=lambda message, default: default)
+
+    with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
+        export_sheet_report(
+            MagicMock(), MagicMock(), "ROOT", jane, tmp_path, prompt_fn=MagicMock(return_value="1/17/2026")
+        )
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", john, tmp_path, prompt_fn=enter)
+
+    assert enter.call_args[0][1] == "1/17/2026"
+    assert outcome.pdf_path.name == "Student, John 2027 ACT 25MC1 January 17 2026.pdf"
+
+
 def test_export_sheet_report_accepts_a_filename_with_an_initial_and_a_c(tmp_path):
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane M. 2027C ACT 25MC1 January 17 2026", questions)

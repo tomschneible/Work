@@ -17,7 +17,7 @@ from googleapiclient.discovery import Resource
 
 from .export import write_xlsx
 from .google_score_report_export import export_score_report
-from .gui_prompt import SKIP, prompt_for_date, prompt_for_text
+from .gui_prompt import SKIP, prompt_for_test_date, prompt_for_text
 from .output_files import unused_base_name
 from .pipeline import SheetResult
 from .report_folders import ReportFolders
@@ -96,7 +96,8 @@ def export_sheet_report(
     one, the Sheet lands wherever Drive puts a copy by default.
 
     Prompts once for the actual test date via `prompt_fn` (a native macOS
-    dialog by default -- see gui_prompt.py) -- not
+    dialog by default, its box starting with the last date typed that day
+    -- see gui_prompt.prompt_for_test_date) -- not
     scan.test_date/formatted_test_date any more: this org's own scan/
     upload filenames turned out not to reliably carry the real test date
     as trustworthy *data* even when they parse cleanly (see gui_prompt.py's
@@ -129,7 +130,7 @@ def export_sheet_report(
     scan = parse_scan_filename(result.label)
     category_path = _TEMPLATE_NAME_TO_CATEGORY_PATH[result.template_name]
     flagged = result.has_review_items
-    test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
+    test_date = prompt_for_test_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
     # SKIP (typed "test") is translated to plain None here, not passed
