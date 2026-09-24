@@ -25,6 +25,11 @@ BLANK_FILL = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="so
 MULTIPLE_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
 PATTERN_INFERRED_FILL = PatternFill(start_color="D1E7FF", end_color="D1E7FF", fill_type="solid")
 UNREADABLE_FILL = PatternFill(start_color="E2E3E5", end_color="E2E3E5", fill_type="solid")
+# An answer read off the page, but not confidently. It flags a report on its
+# own, so it needs a color like every other review item -- a gray italic
+# answer alone was easy to miss, leaving a flagged report with nothing
+# visibly flagged.
+LOW_CONFIDENCE_FILL = PatternFill(start_color="FFE0B2", end_color="FFE0B2", fill_type="solid")
 LOW_CONFIDENCE_FONT = Font(italic=True, color="808080")
 
 _INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
@@ -73,6 +78,16 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
+        # A section whose bubble grid couldn't be found flags the report
+        # too, with nothing else to show for it -- every answer in it was
+        # read from where its bubbles normally sit, not where they were seen.
+        if cell.value in result.fallback_sections:
+            cell.fill = LOW_CONFIDENCE_FILL
+            cell.comment = Comment(
+                "This section's bubbles couldn't be located on the sheet, so its answers were read "
+                "from where the bubbles normally sit. Check the whole section against the original sheet.",
+                "answer_extractor",
+            )
 
     by_section: Dict[str, Dict[int, "object"]] = {name: {} for name in sections}
     for q in result.questions:
@@ -115,6 +130,13 @@ def _write_sheet_tab(ws: Worksheet, result: SheetResult, sections: List[str]) ->
                     "bubble's own ink -- either because nothing was read here at all, or because "
                     "what was read looked shaky enough that this context outweighed it. Worth a "
                     "manual check.",
+                    "answer_extractor",
+                )
+            elif q.low_confidence:
+                cell.fill = LOW_CONFIDENCE_FILL
+                cell.comment = Comment(
+                    "Read as this answer, but not with confidence -- the mark may be light, partly "
+                    "erased, or unusual in some other way. Worth checking against the original sheet.",
                     "answer_extractor",
                 )
             if q.low_confidence:

@@ -1,8 +1,9 @@
 import cv2
+import openpyxl
 import pytest
 
 from answer_extractor.detect import QuestionResult
-from answer_extractor.export import write_xlsx
+from answer_extractor.export import LOW_CONFIDENCE_FILL, PATTERN_INFERRED_FILL, write_xlsx
 from answer_extractor.pipeline import SheetResult, process_path, process_paths, untaken_sections
 from answer_extractor.template import Template
 from tests.synth import render_oval_sheet, render_sheet
@@ -88,6 +89,63 @@ def test_write_xlsx_produces_file(tmp_path):
 
     assert out_path.exists()
     assert out_path.stat().st_size > 0
+
+
+def _written_cells(tmp_path, questions, fallback_sections=()):
+    result = SheetResult(
+        label="sheet",
+        source="test",
+        used_contour_alignment=False,
+        questions=questions,
+        fallback_sections=list(fallback_sections),
+    )
+    path = tmp_path / "flagged.xlsx"
+    write_xlsx([result], path)
+    return openpyxl.load_workbook(path).worksheets[0]
+
+
+def test_an_answer_read_without_confidence_is_colored_and_explained(tmp_path):
+    """The only thing that flagged a real report was one answer read without
+    confidence -- the spreadsheet has to show it as clearly as any other
+    reason, not only in gray italics."""
+    ws = _written_cells(
+        tmp_path,
+        [
+            QuestionResult("Science", 1, "C", ["C"], {}, low_confidence=False),
+            QuestionResult("Science", 2, "C", ["C"], {}, low_confidence=True),
+        ],
+    )
+
+    confident, unsure = ws["B2"], ws["B3"]
+    assert confident.fill.fill_type is None and confident.comment is None
+    assert unsure.value == "C"
+    assert unsure.fill.start_color.rgb == LOW_CONFIDENCE_FILL.start_color.rgb
+    assert "not with confidence" in unsure.comment.text
+    assert unsure.font.italic
+
+
+def test_a_more_specific_flag_keeps_its_own_color(tmp_path):
+    ws = _written_cells(
+        tmp_path, [QuestionResult("Science", 1, "C", ["C"], {}, low_confidence=True, pattern_inferred=True)]
+    )
+
+    assert ws["B2"].fill.start_color.rgb == PATTERN_INFERRED_FILL.start_color.rgb
+
+
+def test_a_section_whose_bubbles_werent_located_has_its_heading_colored_and_explained(tmp_path):
+    ws = _written_cells(
+        tmp_path,
+        [
+            QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False),
+            QuestionResult("Science", 1, "C", ["C"], {}, low_confidence=False),
+        ],
+        fallback_sections=["Science"],
+    )
+
+    english, science = ws["B1"], ws["C1"]
+    assert english.fill.fill_type is None and english.comment is None
+    assert science.fill.start_color.rgb == LOW_CONFIDENCE_FILL.start_color.rgb
+    assert "couldn't be located" in science.comment.text
 
 
 def make_two_section_template(science_optional=True) -> Template:

@@ -1016,10 +1016,15 @@ silent-miss/unmatched summary the droplets produce, written to
    a Question column and one column per section (e.g. English, Mathematics,
    Reading, Science) — matching the sheet's own layout rather than one
    column per individual question. The output opens on the first sheet's
-   tab. Blank answers are highlighted amber, `MULTIPLE` answers red (with
-   the candidate letters in a cell comment), and low-confidence detections
-   (marked but only marginally above the floor) are italicized for manual
-   review.
+   tab. Every answer that needs a look is colored, with a note saying why
+   when hovered: blank answers amber, `MULTIPLE` answers red (the note
+   lists the candidate letters), answers filled in from a guessing pattern
+   blue, unreadable ones gray, and answers read without confidence (a
+   light, partly erased or otherwise unusual mark) orange -- also shown in
+   gray italics. A section whose bubbles couldn't be located on the page
+   has its column heading colored orange instead, since every answer in
+   it was read from where its bubbles normally sit. So a flagged report's
+   `.xlsx` always shows what flagged it.
 
 ## Building your own template
 

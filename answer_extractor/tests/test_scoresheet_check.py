@@ -147,6 +147,7 @@ def _write_our_output(path: Path) -> None:
         QuestionResult(
             "Mathematics", 2, "", [], {}, low_confidence=False, unreadable=True
         ),  # flagged blank
+        QuestionResult("Mathematics", 3, "G", ["G"], {}, low_confidence=True),  # read, not confidently
     ]
     result = SheetResult(label="sheet1", source="test", used_contour_alignment=False, questions=questions)
     write_xlsx([result], path)
@@ -164,6 +165,7 @@ def test_parse_program_output_reads_answers_and_flags_back_off_the_cell_styling(
     assert result[("english", 3)].flag == "blank"
     assert result[("mathematics", 2)].answer == ""
     assert result[("mathematics", 2)].flag == "unreadable"
+    assert result[("mathematics", 3)] == OurAnswer(answer="G", flag=None, low_confidence=True)
 
 
 def test_compare_categorizes_by_severity(tmp_path):
