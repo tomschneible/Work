@@ -3,7 +3,7 @@ mocked (each has its own dedicated tests: template_lookup's in
 test_template_lookup.py, the Drive/Sheets calls' in
 test_google_sheets_export.py), so this only checks that export_filled_report
 calls them in the right order, with the right arguments passed between
-them, calls `fill_fn` with the downloaded local path and pushes what it
+them, calls `fill_fn` with the template's local .xlsx and pushes what it
 returns via write_cells, keeps (by default) or deletes (opted out via
 keep_working_copy=False) the working Drive copy on success, always
 cleans up a *failed* attempt's working copy regardless, and always
@@ -16,6 +16,7 @@ from googleapiclient.errors import HttpError
 
 from answer_extractor.google_report_export_common import export_filled_report
 from answer_extractor.google_sheets_export import CellWrite, FillResult
+from answer_extractor.template_cache import template_xlsx
 
 _MODULE = "answer_extractor.google_report_export_common"
 
@@ -29,7 +30,7 @@ def _patch_all(**overrides):
         resolve_template_folder=MagicMock(return_value="FOLDER_ID"),
         find_template_file=MagicMock(return_value={"id": "TEMPLATE_ID", "name": "ACT 25MC1"}),
         copy_template=MagicMock(return_value="COPY_ID"),
-        export_xlsx=MagicMock(return_value=b"raw xlsx bytes"),
+        template_xlsx=MagicMock(return_value=b"raw xlsx bytes"),
         write_cells=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
@@ -74,8 +75,10 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     assert mocks["copy_template"].call_args[0][2] == "Jane Student - 2026-03-04"
     assert mocks["copy_template"].call_args.kwargs["parent_folder_id"] is None  # copy_folder_id omitted
 
-    mocks["export_xlsx"].assert_called_once()
-    assert mocks["export_xlsx"].call_args[0][1] == "COPY_ID"
+    # The template's own .xlsx (the same content as the copy), so an
+    # unchanged template's download can be reused -- see template_cache.py.
+    mocks["template_xlsx"].assert_called_once()
+    assert mocks["template_xlsx"].call_args[0][1] == "TEMPLATE_ID"
 
     fill_fn.assert_called_once()  # called with the local temp path -- the fill_fn owns its own args otherwise
 
@@ -86,6 +89,44 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"
     assert mocks["export_pdf"].call_args.kwargs["fit_to_page"] is False  # omitted -- simplified-SAT-only
+
+
+def test_each_report_keeps_its_own_sheet_but_an_unchanged_template_is_downloaded_once():
+    """Two students' reports from the same template: each still gets its own
+    copy of the template, kept in Drive, but the template's .xlsx (read to
+    find where things go) is downloaded only for the first -- see
+    template_cache.py."""
+    mocks, patchers = _patch_all(template_xlsx=template_xlsx)  # the real one
+    copies = iter(["JANE_SHEET_ID", "JOHN_SHEET_ID"])
+    mocks["copy_template"].side_effect = lambda *args, **kwargs: next(copies)
+    read = []
+
+    def _fill(path):
+        with open(path, "rb") as f:
+            read.append(f.read())
+        return FillResult(cell_writes=[])
+
+    try:
+        with patch("answer_extractor.template_cache.file_version", return_value="5"), \
+             patch("answer_extractor.template_cache.export_xlsx", return_value=b"template xlsx") as download_mock:
+            for student in ("Student, Jane", "Student, John"):
+                export_filled_report(
+                    drive=MagicMock(),
+                    sheets=MagicMock(),
+                    templates_root_folder_id="ROOT",
+                    category_path=["ACT", "Enhanced"],
+                    test_code="25MC1",
+                    output_name=student,
+                    fill_fn=_fill,
+                )
+    finally:
+        _stop_all(patchers)
+
+    download_mock.assert_called_once()
+    assert read == [b"template xlsx", b"template xlsx"]
+    assert [c[0][2] for c in mocks["copy_template"].call_args_list] == ["Student, Jane", "Student, John"]
+    assert [c[0][0] for c in mocks["export_pdf"].call_args_list] == ["JANE_SHEET_ID", "JOHN_SHEET_ID"]
+    mocks["delete_file"].assert_not_called()
 
 
 def test_export_filled_report_forwards_fit_to_page_to_export_pdf():
@@ -132,6 +173,7 @@ def test_export_filled_report_uses_a_given_template_id_without_any_lookup():
     mocks["find_template_file"].assert_not_called()
     mocks["copy_template"].assert_called_once()
     assert mocks["copy_template"].call_args[0][1] == "SIMPLIFIED_TEMPLATE_ID"
+    assert mocks["template_xlsx"].call_args[0][1] == "SIMPLIFIED_TEMPLATE_ID"
 
 
 def test_export_filled_report_raises_if_given_both_template_id_and_lookup_args():

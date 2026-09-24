@@ -46,6 +46,32 @@ def test_get_credentials_refreshes_an_expired_token_and_rewrites_the_cache(tmp_p
     cached.refresh.assert_called_once()
     flow_cls.from_client_secrets_file.assert_not_called()
     assert result is cached
+    # Written back, so the next call -- the next report's PDF export, or
+    # the next run within the hour -- doesn't have to refresh it again.
+    assert token_cache_path.read_text() == '{"refreshed": true}'
+    assert [p.name for p in tmp_path.iterdir()] == ["token.json"]  # nothing half-written left behind
+
+
+def test_get_credentials_still_returns_a_refreshed_token_it_cant_write_back(tmp_path):
+    client_secret_path, token_cache_path = _paths(tmp_path)
+    token_cache_path.write_text("{}")
+
+    cached = MagicMock(valid=False, expired=True, refresh_token="r")
+
+    def _refresh(request):
+        cached.valid = True
+
+    cached.refresh.side_effect = _refresh
+    cached.to_json.return_value = '{"refreshed": true}'
+
+    with patch("answer_extractor.google_auth.Credentials.from_authorized_user_file", return_value=cached), \
+         patch("answer_extractor.google_auth.InstalledAppFlow") as flow_cls, \
+         patch("answer_extractor.google_auth.tempfile.mkstemp", side_effect=OSError("read-only folder")):
+        result = get_credentials(client_secret_path, token_cache_path)
+
+    assert result is cached
+    flow_cls.from_client_secrets_file.assert_not_called()
+    assert token_cache_path.read_text() == "{}"
 
 
 def test_get_credentials_falls_back_to_interactive_flow_when_refresh_fails(tmp_path):

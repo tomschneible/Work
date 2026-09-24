@@ -21,6 +21,7 @@ from answer_extractor.google_sheets_export import (
     delete_file,
     export_pdf,
     export_xlsx,
+    file_version,
     format_date_for_sheets,
     get_file,
     hide_gridlines,
@@ -112,6 +113,22 @@ def test_get_file_asks_for_the_name_and_parent_with_shared_drive_support():
     assert get_file(drive, "TEMP_ID") == folder
     _, kwargs = drive.files.return_value.get.call_args
     assert kwargs == {"fileId": "TEMP_ID", "fields": "id, name, parents", "supportsAllDrives": True}
+
+
+def test_file_version_asks_only_for_the_version_with_shared_drive_support():
+    drive = MagicMock()
+    drive.files.return_value.get.return_value.execute.return_value = {"version": "412"}
+
+    assert file_version(drive, "TEMPLATE_ID") == "412"
+    _, kwargs = drive.files.return_value.get.call_args
+    assert kwargs == {"fileId": "TEMPLATE_ID", "fields": "version", "supportsAllDrives": True}
+
+
+def test_file_version_is_none_when_drive_gives_none():
+    drive = MagicMock()
+    drive.files.return_value.get.return_value.execute.return_value = {}
+
+    assert file_version(drive, "TEMPLATE_ID") is None
 
 
 def test_create_folder_makes_a_folder_inside_the_parent_with_shared_drive_support():

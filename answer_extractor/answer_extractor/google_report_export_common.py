@@ -4,7 +4,7 @@ google_sat_simplified_score_report_export.py): find the right template, duplicat
 it, fill it in via direct Sheets API cell writes, and export the result
 as a PDF. The only thing that differs between formats is *how* a local
 copy gets scanned to figure out what to write -- everything else
-(finding the template, downloading a read-only local copy to locate
+(finding the template, getting a read-only local copy of it to locate
 cells, writing them into the live Sheet, exporting the PDF -- see
 google_sheets_export.py's own module docstring for why this no longer
 edits/re-uploads the whole workbook) is identical, so that difference is
@@ -21,7 +21,8 @@ from typing import Callable, List, Optional
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from .google_sheets_export import FillResult, copy_template, delete_file, export_pdf, export_xlsx, write_cells
+from .google_sheets_export import FillResult, copy_template, delete_file, export_pdf, write_cells
+from .template_cache import template_xlsx
 from .template_lookup import find_template_file, resolve_template_folder
 
 
@@ -68,10 +69,12 @@ def export_filled_report(
       every test (see that module's own docstring). Raises ValueError if
       neither form -- or a mix of both -- is given.
 
-    `fill_fn` receives a local, read-only path to the duplicated template
-    (already downloaded as .xlsx, purely so `fill_fn` can figure out where
-    things go) and must return a FillResult -- the caller-specific part of
-    this (score_report_writer.fill_score_report or
+    `fill_fn` receives a local, read-only path to the template as an .xlsx
+    (the same content as the copy just made -- from
+    template_cache.template_xlsx, which reuses an earlier report's
+    download while the template is unchanged), purely so `fill_fn` can
+    figure out where things go, and must return a FillResult -- the
+    caller-specific part of this (score_report_writer.fill_score_report or
     sat_simplified_score_report_writer.fill_simple_sat_score_report, each
     pre-bound with the rest of their own arguments). Its `cell_writes` are
     pushed directly into the live Sheet via the Sheets API
@@ -134,7 +137,7 @@ def export_filled_report(
     try:
         try:
             with open(tmp_path, "wb") as f:
-                f.write(export_xlsx(drive, copy_id))
+                f.write(template_xlsx(drive, template_id))
             result = fill_fn(tmp_path)
             write_cells(sheets, copy_id, result.cell_writes)
             pdf_bytes = export_pdf(copy_id, fit_to_page=fit_to_page)

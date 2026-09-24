@@ -32,7 +32,7 @@ def _xlsx_bytes(sheet_names) -> bytes:
 def test_load_reference_worksheet_downloads_the_current_format_template_read_only():
     with patch(f"{_MODULE}.resolve_template_folder", return_value="SAT_FOLDER") as resolve_mock, \
          patch(f"{_MODULE}.find_template_file", return_value={"id": "REF_ID", "name": "DSAT 8"}) as find_mock, \
-         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes(["Student Responses"])) as export_mock:
+         patch(f"{_MODULE}.template_xlsx", return_value=_xlsx_bytes(["Student Responses"])) as export_mock:
         ws = _load_reference_worksheet(MagicMock(), "ROOT", "8", "Student Responses")
 
     assert resolve_mock.call_args[0][1] == "ROOT"
@@ -45,7 +45,7 @@ def test_load_reference_worksheet_downloads_the_current_format_template_read_onl
 def test_load_reference_worksheet_raises_when_sheet_name_is_missing():
     with patch(f"{_MODULE}.resolve_template_folder", return_value="SAT_FOLDER"), \
          patch(f"{_MODULE}.find_template_file", return_value={"id": "REF_ID", "name": "DSAT 8"}), \
-         patch(f"{_MODULE}.export_xlsx", return_value=_xlsx_bytes(["Some Other Tab"])):
+         patch(f"{_MODULE}.template_xlsx", return_value=_xlsx_bytes(["Some Other Tab"])):
         with pytest.raises(ValueError, match="Student Responses"):
             _load_reference_worksheet(MagicMock(), "ROOT", "8", "Student Responses")
 

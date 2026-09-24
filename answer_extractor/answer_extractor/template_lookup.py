@@ -22,6 +22,24 @@ from .google_sheets_export import list_folder
 
 _SPREADSHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 
+# Each template folder's contents, listed once per run: this program never
+# changes those folders (people do, between runs), and a run making several
+# reports -- or a SAT report, which needs two templates -- would otherwise
+# list the same folders again for each one.
+_listings: Dict[str, List[Dict[str, str]]] = {}
+
+
+def _listing(drive: Resource, folder_id: str) -> List[Dict[str, str]]:
+    if folder_id not in _listings:
+        _listings[folder_id] = list_folder(drive, folder_id)
+    return _listings[folder_id]
+
+
+def forget_listings() -> None:
+    """Drop every folder listing kept so far, so the next lookup lists
+    Drive again (for tests, which each set up their own folders)."""
+    _listings.clear()
+
 
 def find_subfolder(drive: Resource, parent_folder_id: str, name: str) -> str:
     """The id of the single subfolder of `parent_folder_id` named `name`
@@ -29,13 +47,14 @@ def find_subfolder(drive: Resource, parent_folder_id: str, name: str) -> str:
     -- either is a real problem worth failing loudly over, not something
     to guess through."""
     folder_type = "application/vnd.google-apps.folder"
+    listing = _listing(drive, parent_folder_id)
     matches = [
         f
-        for f in list_folder(drive, parent_folder_id)
+        for f in listing
         if f["mimeType"] == folder_type and f["name"].strip().lower() == name.strip().lower()
     ]
     if not matches:
-        available = ", ".join(f["name"] for f in list_folder(drive, parent_folder_id)) or "(empty)"
+        available = ", ".join(f["name"] for f in listing) or "(empty)"
         raise ValueError(f"No {name!r} subfolder in Drive folder {parent_folder_id} (found: {available})")
     if len(matches) > 1:
         raise ValueError(f"More than one {name!r} subfolder in Drive folder {parent_folder_id} -- ambiguous")
@@ -63,7 +82,8 @@ def find_template_file(drive: Resource, folder_id: str, test_code: str) -> Dict[
     folder was searched, or two templates for the same test code exist
     and need cleaning up in Drive, not something this should guess past."""
     code = test_code.strip().lower()
-    spreadsheets = [f for f in list_folder(drive, folder_id) if f["mimeType"] == _SPREADSHEET_MIME_TYPE]
+    listing = _listing(drive, folder_id)
+    spreadsheets = [f for f in listing if f["mimeType"] == _SPREADSHEET_MIME_TYPE]
     # The code as a whole word first, so "1" means "DSAT 1" and not also
     # "DSAT 10"/"DSAT 11" (likewise "25MC1" vs "25MC10"); a plain substring
     # only if nothing matches that way, for a name like "DSAT1".
@@ -72,7 +92,7 @@ def find_template_file(drive: Resource, folder_id: str, test_code: str) -> Dict[
     if not candidates:
         candidates = [f for f in spreadsheets if code in f["name"].strip().lower()]
     if not candidates:
-        available = ", ".join(f["name"] for f in list_folder(drive, folder_id)) or "(empty)"
+        available = ", ".join(f["name"] for f in listing) or "(empty)"
         raise ValueError(f"No template matching test code {test_code!r} in Drive folder {folder_id} (found: {available})")
     if len(candidates) > 1:
         names = ", ".join(f["name"] for f in candidates)
@@ -89,13 +109,14 @@ def find_file_by_exact_name(drive: Resource, folder_id: str, name: str) -> Dict[
     module docstring for why). Raises ValueError if none or more than one
     match -- either means the file's own name, or which folder was
     searched, needs fixing in Drive, not something to guess past."""
+    listing = _listing(drive, folder_id)
     candidates = [
         f
-        for f in list_folder(drive, folder_id)
+        for f in listing
         if f["mimeType"] == _SPREADSHEET_MIME_TYPE and f["name"].strip().lower() == name.strip().lower()
     ]
     if not candidates:
-        available = ", ".join(f["name"] for f in list_folder(drive, folder_id)) or "(empty)"
+        available = ", ".join(f["name"] for f in listing) or "(empty)"
         raise ValueError(f"No file named {name!r} in Drive folder {folder_id} (found: {available})")
     if len(candidates) > 1:
         raise ValueError(f"More than one file named {name!r} in Drive folder {folder_id} -- ambiguous")

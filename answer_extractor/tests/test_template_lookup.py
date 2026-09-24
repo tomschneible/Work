@@ -9,6 +9,7 @@ from answer_extractor.template_lookup import (
     find_file_by_exact_name,
     find_subfolder,
     find_template_file,
+    forget_listings,
     resolve_template_folder,
 )
 
@@ -162,3 +163,38 @@ def test_find_template_file_matches_the_code_as_a_whole_word_first(code, names, 
     listing = [{"id": n, "name": n, "mimeType": _SHEET} for n in names]
     with patch("answer_extractor.template_lookup.list_folder", return_value=listing):
         assert find_template_file(MagicMock(), "FOLDER", code)["name"] == expected
+
+
+def test_each_folder_is_listed_once_per_run():
+    """A run making several reports -- or one SAT report, which finds two
+    templates under the same root -- looks in the same folders again and
+    again; Drive is only asked the first time."""
+    root = [
+        {"id": "sat", "name": "SAT", "mimeType": _FOLDER},
+        {"id": "simple", "name": "SAT Template", "mimeType": _FOLDER},
+    ]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=root) as list_mock:
+        assert resolve_template_folder(MagicMock(), "ROOT", ["SAT"]) == "sat"
+        assert resolve_template_folder(MagicMock(), "ROOT", ["SAT Template"]) == "simple"
+        assert find_subfolder(MagicMock(), "ROOT", "SAT") == "sat"
+
+    list_mock.assert_called_once()
+
+
+def test_a_missing_file_is_reported_from_the_same_single_listing():
+    listing = [{"id": "t1", "name": "ACT 25MC1", "mimeType": _SHEET}]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing) as list_mock:
+        with pytest.raises(ValueError, match="ACT 25MC1"):
+            find_template_file(MagicMock(), "FOLDER", "25MC9")
+
+    list_mock.assert_called_once()
+
+
+def test_forget_listings_makes_the_next_lookup_list_drive_again():
+    listing = [{"id": "t1", "name": "ACT 25MC1", "mimeType": _SHEET}]
+    with patch("answer_extractor.template_lookup.list_folder", return_value=listing) as list_mock:
+        find_template_file(MagicMock(), "FOLDER", "25MC1")
+        forget_listings()
+        find_template_file(MagicMock(), "FOLDER", "25MC1")
+
+    assert list_mock.call_count == 2

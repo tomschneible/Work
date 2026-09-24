@@ -26,6 +26,7 @@ or a future second identity) isn't stuck with the single default either.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -102,6 +103,14 @@ def get_credentials(
             # hand (e.g. a security event, or the account's password
             # changed).
             creds = None
+        else:
+            # Saved so the next call -- the next report's PDF export, or
+            # the next run within the hour the new token lasts -- can use
+            # it as-is instead of asking Google for another one.
+            try:
+                _save_token(token_cache_path, creds)
+            except OSError:
+                pass  # the next call just refreshes again
 
     if not creds or not creds.valid:
         if not client_secret_path.exists():
@@ -115,7 +124,21 @@ def get_credentials(
             )
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_path), SCOPES)
         creds = flow.run_local_server(port=0)
-        token_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        token_cache_path.write_text(creds.to_json())
+        _save_token(token_cache_path, creds)
 
     return creds
+
+
+def _save_token(token_cache_path: Path, creds: Credentials) -> None:
+    """Write `creds` to `token_cache_path` whole or not at all: two droplet
+    runs at once can both be saving a token, and a file half-written by
+    one of them would stop every later run from reading it."""
+    token_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, partial = tempfile.mkstemp(dir=token_cache_path.parent, suffix=".partial")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(creds.to_json())
+        os.replace(partial, token_cache_path)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise

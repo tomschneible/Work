@@ -252,6 +252,14 @@ def get_file(drive: Resource, file_id: str) -> Dict[str, object]:
     return request.execute(num_retries=_DRIVE_RETRIES)
 
 
+def file_version(drive: Resource, file_id: str) -> Optional[str]:
+    """Drive's version number for `file_id`, which goes up with every
+    change made to the file, by anyone -- None if Drive doesn't give one.
+    See template_cache.py for what it's used for."""
+    request = drive.files().get(fileId=file_id, fields="version", supportsAllDrives=True)
+    return request.execute(num_retries=_DRIVE_RETRIES).get("version")
+
+
 def create_folder(drive: Resource, parent_folder_id: str, name: str) -> str:
     """Create a folder named `name` inside `parent_folder_id`, returning
     the new folder's own id."""

@@ -250,8 +250,8 @@ worked, or to look around the folder tree while debugging.
    whole workbook.** `copy_template` duplicates the live template --
    into the test day's own folder under Student Tracking (point 8 below),
    never the same folder as the real template, so a working copy never
-   sits amid them --
-   `export_xlsx` pulls that copy down locally, *read-only*, purely so the
+   sits amid them -- and the template is downloaded as an `.xlsx` (the
+   same content as that copy), *read-only*, purely so the
    format-specific writer (`score_report_writer.fill_score_report` for
    ACT, `sat_simplified_score_report_writer.fill_simple_sat_score_report`
    for SAT -- see
@@ -297,6 +297,21 @@ worked, or to look around the folder tree while debugging.
    shared by both formats' own thin wrapper
    (`google_score_report_export.export_score_report`,
    `google_sat_simplified_score_report_export.export_simple_sat_score_report`).
+
+   Each template's `.xlsx` download is kept on the Mac, in
+   `~/.cache/answer_extractor/templates` (`template_cache.py`; move it with
+   `$ANSWER_EXTRACTOR_TEMPLATE_CACHE_DIR`), and reused for as long as Drive's
+   version number for that template stays the same. Any edit to a
+   template, by anyone, changes that number, and the next report
+   downloads it again. That saves a download of a few seconds on every
+   report after a template's first -- two for a SAT report, which also
+   reads the test's current-format template -- whether files are dropped
+   one at a time or together. The folder holds blank templates only, no
+   student data, and deleting it just means each template is downloaded
+   again. Within one run, each template folder is listed once however many
+   reports it makes, and a refreshed Google sign-in is saved to the token
+   file, so the next report (or the next run, within the hour it lasts)
+   doesn't have to ask Google for another.
 
    A template's own gridlines showing up in its exported PDF is a
    property of the template file itself, not something a per-report fill

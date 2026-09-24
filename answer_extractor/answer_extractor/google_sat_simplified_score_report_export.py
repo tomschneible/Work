@@ -27,9 +27,9 @@ from googleapiclient.discovery import Resource
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .google_report_export_common import export_filled_report
-from .google_sheets_export import export_xlsx
 from .sat_score_report_writer import SatKey
 from .sat_simplified_score_report_writer import fill_simple_sat_score_report
+from .template_cache import template_xlsx
 from .template_lookup import find_file_by_exact_name, find_template_file, resolve_template_folder
 
 # The one simplified template's own exact file name in Drive -- see this
@@ -49,14 +49,15 @@ def _load_reference_worksheet(
     read-only, and return its `sheet_name` tab -- purely a reference
     source (see this module's own docstring); this never duplicates or
     writes to it, unlike every use of find_template_file elsewhere in
-    this package."""
+    this package. The download is template_cache.template_xlsx's, so an
+    earlier report's is reused while the template is unchanged."""
     folder_id = resolve_template_folder(drive, templates_root_folder_id, ["SAT"])
     template = find_template_file(drive, folder_id, test_code)
     fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)
     try:
         with open(tmp_path, "wb") as f:
-            f.write(export_xlsx(drive, template["id"]))
+            f.write(template_xlsx(drive, template["id"]))
         wb = openpyxl.load_workbook(tmp_path, data_only=True)
     finally:
         os.unlink(tmp_path)
