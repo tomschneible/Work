@@ -350,9 +350,12 @@ worked, or to look around the folder tree while debugging.
    ORDER`, not alphabetical, which would ask for Math first) (see
    `gui_prompt.py`, and `sat_score_report_pipeline.py`'s
    `answers_from_rows`/`active_variants_from_rows`/`export_sat_report` for
-   the rest of that glue). Cancelling a prompt, or a Module 2 whose
-   difficulty couldn't be confidently identified, falls that report back
-   to the combined `.xlsx` the same as any other export failure.
+   the rest of that glue). Cancelling a prompt, a Module 2 whose
+   difficulty couldn't be confidently identified, or a module missing any
+   of its questions (every SAT module has all 27 or 22, omitted ones
+   included, so a gap means a row couldn't be read -- checked before any
+   prompt) falls that report back to the combined `.xlsx` the same as any
+   other export failure.
 5. **The test date is prompted for too, program-wide -- not read from the
    file's own name any more.** Used to come straight from
    `scan_filename.parse_scan_filename`'s own `test_date`/`day_known`

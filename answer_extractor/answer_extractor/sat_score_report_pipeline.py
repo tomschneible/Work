@@ -37,6 +37,9 @@ _SCORE_MIN, _SCORE_MAX = 200, 800
 # writing", which is backwards from what anyone entering scores in the
 # order the actual score report lists them would expect).
 _SUBJECT_PROMPT_ORDER = ["reading and writing", "math"]
+# Questions in every digital SAT module, by subject.
+_MODULE_QUESTION_COUNTS = {"reading and writing": 27, "math": 22}
+_SUBJECT_DISPLAY_NAMES = {"reading and writing": "Reading and Writing", "math": "Math"}
 
 
 def _module_slot_for_label(label: str, section: str) -> str:
@@ -148,6 +151,34 @@ def _check_test_number(scan: ScanFilename, identified_test: str) -> None:
         )
 
 
+def _check_every_question_present(rows: List[ScoreReportRow]) -> None:
+    """Raise ValueError naming any question missing from a module the
+    score report does have -- a row the parser couldn't read. Every SAT
+    module has a fixed number of questions (_MODULE_QUESTION_COUNTS), and
+    an omitted answer still has its own row, so a gap is always a reading
+    problem, never a blank; filling the report in anyway would show a
+    blank where the student may well have answered."""
+    questions_by_module: Dict[Tuple[str, int], set] = {}
+    labels: Dict[Tuple[str, int], str] = {}
+    for row in rows:
+        key = (normalize_subject(row.section), row.module)
+        questions_by_module.setdefault(key, set()).add(row.question)
+        labels[key] = row.module_label or f"Module {row.module}"
+    missing = []
+    for key, questions in questions_by_module.items():
+        subject = key[0]
+        gaps = sorted(set(range(1, _MODULE_QUESTION_COUNTS.get(subject, 0) + 1)) - questions)
+        if gaps:
+            numbers = ", ".join(str(q) for q in gaps)
+            plural = "s" if len(gaps) > 1 else ""
+            missing.append(f"{_SUBJECT_DISPLAY_NAMES[subject]} {labels[key]} question{plural} {numbers}")
+    if missing:
+        raise ValueError(
+            f"couldn't find {'; '.join(missing)} in the score report -- no report was made, "
+            "rather than show a blank where the student may have answered"
+        )
+
+
 def export_sat_report(
     drive: Resource,
     sheets: Resource,
@@ -202,6 +233,7 @@ def export_sat_report(
         raise ValueError(f"{source!r} isn't a SAT/DSAT filename (test_family={scan.test_family!r})")
 
     _check_test_number(scan, rows[0].test)
+    _check_every_question_present(rows)
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
     # Not scan.test_date/formatted_test_date any more -- see gui_prompt.py's
