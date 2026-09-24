@@ -240,7 +240,8 @@ def test_export_sat_report_checks_the_filenames_test_number_against_the_identifi
         if ok:
             export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
         else:
-            with pytest.raises(ValueError, match="named as test 8, but its answers match SAT Practice 4"):
+            expected = "^this appears to be DSAT 4, not DSAT 8 -- are you sure the file is named correctly[?]$"
+            with pytest.raises(ValueError, match=expected):
                 export_sat_report(MagicMock(), MagicMock(), "ROOT", rows, tmp_path, prompt_fn=prompt_fn)
     assert export_mock.called == ok
     assert prompt_fn.called == ok  # a mismatch is caught before anyone is asked anything

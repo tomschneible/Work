@@ -26,7 +26,7 @@ from .gui_prompt import SKIP, TestModeSkip, prompt_for_date, prompt_for_text
 from .output_files import unused_base_name
 from .report_folders import ReportFolders
 from .sat_score_report_writer import SatKey, normalize_subject
-from .scan_filename import parse_scan_filename
+from .scan_filename import ScanFilename, parse_scan_filename
 from .score_report import ScoreReportRow
 
 _MODULE_LABEL_PATTERN = re.compile(
@@ -130,20 +130,24 @@ def _prompt_for_section_score(
         )
 
 
-def _check_test_number(source: str, test_code: str, identified_test: str) -> None:
+def _check_test_number(scan: ScanFilename, identified_test: str) -> None:
     """Raise ValueError when the practice test answer-key identification
     matched (e.g. "SAT Practice 6") isn't the one the filename names (e.g.
     "DSAT 4") -- the filename's number picks the reference template, so a
     misnamed file would otherwise be marked against another test's key.
-    Skipped when identification found nothing or either side isn't a
-    plain number."""
+    The message names the test the answers match the same way the filename
+    would ("DSAT 6"), so it says exactly what to rename to; it leaves out
+    the file itself, which the caller's own warning already names. Skipped
+    when identification found nothing or either side isn't a plain
+    number."""
     match = re.search(r"(\d+)\s*$", identified_test)
-    if not match or not test_code.isdigit():
+    if not match or not scan.test_code.isdigit():
         return
-    if int(match.group(1)) != int(test_code):
+    identified = int(match.group(1))
+    if identified != int(scan.test_code):
         raise ValueError(
-            f"{source!r} is named as test {test_code}, but its answers match {identified_test} -- "
-            "check the test number in the filename"
+            f"this appears to be {scan.test_family} {identified}, not {scan.test_family} {scan.test_code} -- "
+            "are you sure the file is named correctly?"
         )
 
 
@@ -200,7 +204,7 @@ def export_sat_report(
     if scan.test_family not in ("SAT", "DSAT"):
         raise ValueError(f"{source!r} isn't a SAT/DSAT filename (test_family={scan.test_family!r})")
 
-    _check_test_number(source, scan.test_code, rows[0].test)
+    _check_test_number(scan, rows[0].test)
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
     # Not scan.test_date/formatted_test_date any more -- see gui_prompt.py's
