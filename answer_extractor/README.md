@@ -335,7 +335,13 @@ worked, or to look around the folder tree while debugging.
    both filenames get a `" FLAG"` suffix, so a report that needs a human
    look never looks identical to a clean one in a folder listing (see
    `score_report_pipeline.py`: `should_export_to_sheets`,
-   `answers_from_result`, `export_sheet_report`). SAT has no equivalent
+   `answers_from_result`, `export_sheet_report`). One exception: an
+   optional section left entirely blank -- Science, on the enhanced and
+   J-series sheets (`optional: true` in their template) -- counts as not
+   taken rather than as a page of blanks, so it doesn't flag the report on
+   its own. That's only when every one of its questions reads as a clean
+   blank and its bubble grid was found on the page; anything marked,
+   doubtful, or unreadable in it still flags as usual. SAT has no equivalent
    confidence signal to flag on (a parsed PDF's answers are just correct
    text extraction, not an OMR read), but it does need one piece of input
    nothing upstream can supply: each subject's scaled section score,

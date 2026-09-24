@@ -1,9 +1,11 @@
 import cv2
+import pytest
 
+from answer_extractor.detect import QuestionResult
 from answer_extractor.export import write_xlsx
-from answer_extractor.pipeline import SheetResult, process_path, process_paths
+from answer_extractor.pipeline import SheetResult, process_path, process_paths, untaken_sections
 from answer_extractor.template import Template
-from tests.synth import render_sheet
+from tests.synth import render_oval_sheet, render_sheet
 
 
 def make_template() -> Template:
@@ -86,3 +88,100 @@ def test_write_xlsx_produces_file(tmp_path):
 
     assert out_path.exists()
     assert out_path.stat().st_size > 0
+
+
+def make_two_section_template(science_optional=True) -> Template:
+    def column(y):
+        return [{"first_question": 1, "last_question": 4, "x_start": 150, "y_start": y, "row_height": 60}]
+
+    return Template.from_dict(
+        {
+            "page": {"width": 900, "height": 900},
+            "sections": [
+                {"name": "English", "columns": column(100)},
+                {"name": "Science", "optional": science_optional, "columns": column(500)},
+            ],
+            "bubble_spacing_x": 60,
+            "bubble_radius": 18,
+            "choices": {"even": ["A", "B", "C", "D"], "odd": ["F", "G", "H", "J"]},
+        }
+    )
+
+
+def _question(section, question, answer="", **flags):
+    return QuestionResult(section, question, answer, [answer] if answer else [], {}, low_confidence=False, **flags)
+
+
+def _sheet(english_answers, science):
+    return [_question("English", q, a) for q, a in enumerate(english_answers, start=1)] + science
+
+
+def test_an_optional_section_left_entirely_blank_is_untaken_and_does_not_flag(tmp_path):
+    template = make_two_section_template()
+    questions = _sheet("FBGA", [_question("Science", q) for q in range(1, 5)])
+
+    untaken = untaken_sections(template, questions, fallback_sections=[])
+    result = SheetResult("x", "x", False, questions, untaken_sections=untaken)
+
+    assert untaken == ["Science"]
+    assert not result.has_review_items
+
+
+def test_an_untaken_section_does_not_hide_a_blank_elsewhere():
+    template = make_two_section_template()
+    questions = _sheet("FB A", [_question("Science", q) for q in range(1, 5)])
+    questions[2] = _question("English", 3)  # a real blank in a required section
+
+    result = SheetResult("x", "x", False, questions, untaken_sections=untaken_sections(template, questions, []))
+
+    assert result.has_review_items
+
+
+@pytest.mark.parametrize(
+    "science",
+    [
+        [_question("Science", 1, "F")] + [_question("Science", q) for q in range(2, 5)],  # one answer: taken
+        [QuestionResult("Science", 1, "", [], {}, low_confidence=True)]
+        + [_question("Science", q) for q in range(2, 5)],
+        [_question("Science", 1, unreadable=True)] + [_question("Science", q) for q in range(2, 5)],
+    ],
+    ids=["one-answer", "low-confidence", "unreadable"],
+)
+def test_an_optional_section_with_anything_in_it_is_not_untaken(science):
+    template = make_two_section_template()
+    assert untaken_sections(template, _sheet("FBGA", science), []) == []
+
+
+def test_a_blank_optional_section_whose_grid_was_not_found_is_not_untaken():
+    template = make_two_section_template()
+    questions = _sheet("FBGA", [_question("Science", q) for q in range(1, 5)])
+    assert untaken_sections(template, questions, fallback_sections=["Science"]) == []
+
+
+def test_a_required_section_left_blank_is_never_untaken():
+    template = make_two_section_template(science_optional=False)
+    questions = _sheet("FBGA", [_question("Science", q) for q in range(1, 5)])
+    assert untaken_sections(template, questions, []) == []
+
+
+@pytest.mark.parametrize(
+    "name, optional",
+    [("act_answer_sheet", True), ("act_j_form_answer_sheet", True), ("legacy_act_answer_sheet", False)],
+)
+def test_science_is_optional_only_on_the_enhanced_templates(name, optional):
+    template = Template.from_yaml(f"templates/{name}.yaml")
+    assert {s.name: s.optional for s in template.sections} == {
+        "English": False, "Mathematics": False, "Reading": False, "Science": optional
+    }
+
+
+def test_a_real_enhanced_sheet_with_science_left_blank_is_not_flagged(tmp_path):
+    template = Template.from_yaml("templates/act_answer_sheet.yaml")
+    answers = {k: bubbles[k[1] % len(bubbles)].choice for k, bubbles in template.bubbles().items() if k[0] != "Science"}
+    cv2.imwrite(str(tmp_path / "sheet.png"), render_oval_sheet(template, answers))
+
+    (result,) = process_path(tmp_path / "sheet.png", template)
+
+    assert result.untaken_sections == ["Science"]
+    assert not result.has_review_items
+    assert {(q.section, q.question): q.answer for q in result.questions if q.section != "Science"} == answers

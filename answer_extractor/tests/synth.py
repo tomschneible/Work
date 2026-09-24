@@ -147,3 +147,22 @@ def render_sheet(
                     darkness,
                 )
     return image
+
+
+def render_oval_sheet(template: Template, answers: Dict) -> np.ndarray:
+    """A sheet drawn the way the real ACT forms print: oval bubbles (wider
+    than tall, so neighbouring rows don't touch -- render_sheet's circles
+    merge at the real templates' 23px row spacing and never match them)
+    with each choice letter inside. `answers` maps (section, question) to
+    the one letter to fill in; anything absent is left blank. Meant for
+    running the shipped templates end to end."""
+    image = np.full((template.page_height, template.page_width, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (10, 10), (template.page_width - 11, template.page_height - 11), (0, 0, 0), 4)
+    rx, ry = template.bubble_radius + 1, template.bubble_radius - 3
+    for key, bubbles in template.bubbles().items():
+        for b in bubbles:
+            cv2.ellipse(image, (b.x, b.y), (rx, ry), 0, 0, 360, (0, 0, 0), 2)
+            cv2.putText(image, b.choice, (b.x - 5, b.y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+            if answers.get(key) == b.choice:
+                cv2.ellipse(image, (b.x, b.y), (rx - 1, ry - 1), 0, 0, 360, (30, 30, 30), -1)
+    return image

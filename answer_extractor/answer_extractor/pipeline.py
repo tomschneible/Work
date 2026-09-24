@@ -25,13 +25,42 @@ class SheetResult:
     # Which template's file this sheet was scored against -- "" when the
     # caller supplied a fixed template rather than auto-detecting one.
     template_name: str = ""
+    # Optional sections (e.g. Science on the enhanced ACT) the student left
+    # entirely blank -- see untaken_sections(). Their blanks are a skipped
+    # section, not answers to review, so has_review_items leaves them out.
+    untaken_sections: List[str] = dataclasses.field(default_factory=list)
 
     @property
     def has_review_items(self) -> bool:
         return (
-            any(q.answer in ("", "MULTIPLE") or q.low_confidence for q in self.questions)
+            any(
+                (q.answer in ("", "MULTIPLE") or q.low_confidence) and q.section not in self.untaken_sections
+                for q in self.questions
+            )
             or bool(self.fallback_sections)
         )
+
+
+def untaken_sections(
+    template: Template, questions: List[QuestionResult], fallback_sections: List[str]
+) -> List[str]:
+    """Every optional section (Section.optional) whose questions all read as
+    clean blanks -- no answer, nothing low-confidence, unreadable, or
+    inferred -- i.e. a section the student didn't take. Never a section
+    whose bubble grid couldn't be located on this sheet (fallback_sections):
+    all-blank there could just mean every bubble was sampled in the wrong
+    place."""
+    untaken = []
+    for section in template.sections:
+        if not section.optional or section.name in fallback_sections:
+            continue
+        section_questions = [q for q in questions if q.section == section.name]
+        if section_questions and all(
+            q.answer == "" and not (q.low_confidence or q.unreadable or q.pattern_inferred)
+            for q in section_questions
+        ):
+            untaken.append(section.name)
+    return untaken
 
 
 @dataclasses.dataclass
@@ -58,6 +87,7 @@ def process_path(path: str | Path, template: Template) -> List[SheetResult]:
                 used_contour_alignment=alignment.used_contour,
                 questions=questions,
                 fallback_sections=fallback_sections,
+                untaken_sections=untaken_sections(template, questions, fallback_sections),
             )
         )
     return results
@@ -135,6 +165,7 @@ def process_path_auto(
                     questions=questions,
                     fallback_sections=fallback_sections,
                     template_name=match.path.stem,
+                    untaken_sections=untaken_sections(match.template, questions, fallback_sections),
                 )
             )
             break

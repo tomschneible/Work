@@ -61,6 +61,7 @@ sections:
       - {first_question: 22, last_question: 27, x_start: 1024.5, y_start: 1272.0, row_height: 23}
   - name: Science
     dynamic_choices: true
+    optional: true  # Science is optional on the enhanced ACT
     columns:
       - {first_question: 1, last_question: 7, x_start: 288.5, y_start: 1554.0, row_height: 23}
       - {first_question: 8, last_question: 14, x_start: 534.5, y_start: 1554.0, row_height: 23}

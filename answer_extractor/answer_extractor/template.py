@@ -43,6 +43,12 @@ A template is a YAML file (see templates/*.yaml) with:
                                  every other template already uses), and (3)
                                  the fallback -- flagged low_confidence -- for
                                  a row too damaged/marked to read either way.
+      optional:               - OPTIONAL, default false. True for a section a
+                                 student may choose not to take at all (e.g.
+                                 Science on the enhanced ACT). One left
+                                 entirely blank then counts as not taken
+                                 rather than as a page of blanks to review
+                                 (see pipeline.SheetResult.untaken_sections).
       columns:                - one or more question column-groups within this section
         - first_question, last_question   - question numbers, local to this section
           x_start              - x pixel coordinate of the first (leftmost) bubble
@@ -105,6 +111,8 @@ class Section:
     odd_choices: Optional[List[str]] = None
     # See the module docstring's `dynamic_choices` entry under `sections`.
     dynamic_choices: bool = False
+    # See the module docstring's `optional` entry under `sections`.
+    optional: bool = False
 
     @property
     def num_questions(self) -> int:
@@ -232,6 +240,7 @@ class Template:
             even_choices=even_choices,
             odd_choices=odd_choices,
             dynamic_choices=bool(data.get("dynamic_choices", False)),
+            optional=bool(data.get("optional", False)),
         )
 
     def validate(self) -> None:
