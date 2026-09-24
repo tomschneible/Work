@@ -33,14 +33,15 @@ reading one bubble.
 from __future__ import annotations
 
 import dataclasses
+import functools
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 from . import grid_detect
-from .align import align_to_template
+from .align import AlignmentResult, align_to_template
 from .template import Template
 
 DEFAULT_TEMPLATES_DIR = "templates"
@@ -80,17 +81,28 @@ class TemplateMatch:
         return not self.unmatched_sections
 
 
-def score_template(image: np.ndarray, path: Path, template: Template) -> TemplateMatch:
+def score_template(
+    image: np.ndarray, path: Path, template: Template, alignment: Optional[AlignmentResult] = None
+) -> TemplateMatch:
     """Check `template`'s printed bubble-grid geometry -- not any pencil
     marks -- against `image`. See module docstring for why this is a
-    reliable way to identify the sheet."""
-    alignment = align_to_template(image, template.page_width, template.page_height)
+    reliable way to identify the sheet. `alignment` is `image` already
+    aligned to this template's page size, when the caller has it.
+
+    Stops at the first section that doesn't match -- a partial match is
+    never the answer, so the rest would only lengthen the failure
+    message -- which makes a page that isn't this sheet at all (most
+    pages of a test booklet) cheap to rule out."""
+    if alignment is None:
+        alignment = align_to_template(image, template.page_width, template.page_height)
     gray = cv2.cvtColor(alignment.image, cv2.COLOR_BGR2GRAY)
     matched: List[str] = []
     unmatched: List[str] = []
     for section in template.sections:
-        detected = grid_detect.locate_section_bubbles(gray, template, section)
-        (matched if detected is not None else unmatched).append(section.name)
+        if grid_detect.locate_section_bubbles(gray, template, section) is None:
+            unmatched.append(section.name)
+            break
+        matched.append(section.name)
     return TemplateMatch(
         path=path,
         template=template,
@@ -125,17 +137,39 @@ class DetectionResult:
         return "didn't match any known template -- " + "; ".join(parts)
 
 
+def load_templates(templates_dir: str | Path = DEFAULT_TEMPLATES_DIR) -> List[Tuple[Path, Template]]:
+    """Every template discover_template_paths finds, parsed and validated
+    -- once per run rather than once per page (parsing them was about a
+    third of the time it took to check a page), but re-read whenever a
+    file's modification time changes."""
+    paths = discover_template_paths(templates_dir)
+    return list(_load_templates_cached(tuple((str(p), p.stat().st_mtime_ns) for p in paths)))
+
+
+@functools.lru_cache(maxsize=8)
+def _load_templates_cached(paths_and_mtimes: Tuple[Tuple[str, int], ...]) -> Tuple[Tuple[Path, Template], ...]:
+    loaded = []
+    for path_str, _mtime in paths_and_mtimes:
+        template = Template.from_yaml(path_str)
+        template.validate()
+        loaded.append((Path(path_str), template))
+    return tuple(loaded)
+
+
 def detect_template(
     image: np.ndarray, templates_dir: str | Path = DEFAULT_TEMPLATES_DIR
 ) -> DetectionResult:
     """Try every known template against `image` and return the one whose
     structure fully matched -- only when exactly one candidate does (see
-    module docstring)."""
+    module docstring). `image` is aligned once per page size, not once
+    per template (every shipped template shares one)."""
     attempts: List[TemplateMatch] = []
-    for path in discover_template_paths(templates_dir):
-        template = Template.from_yaml(path)
-        template.validate()
-        attempts.append(score_template(image, path, template))
+    alignments: Dict[Tuple[int, int], AlignmentResult] = {}
+    for path, template in load_templates(templates_dir):
+        size = (template.page_width, template.page_height)
+        if size not in alignments:
+            alignments[size] = align_to_template(image, *size)
+        attempts.append(score_template(image, path, template, alignments[size]))
     full_matches = [a for a in attempts if a.is_full_match]
     match = full_matches[0] if len(full_matches) == 1 else _longest_of_siblings(full_matches)
     return DetectionResult(match=match, attempts=attempts)

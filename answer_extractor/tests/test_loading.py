@@ -12,10 +12,10 @@ template at all -- see loading._MAX_PLAUSIBLE_PAGE_POINTS.
 from __future__ import annotations
 
 import cv2
-from answer_extractor.pdf_lib import fitz
 import numpy as np
 
 from answer_extractor.loading import PDF_RENDER_DPI, load_sheets
+from answer_extractor.pdf_lib import fitz
 
 
 def _write_pdf_with_oversized_page(

@@ -5,11 +5,14 @@ import dataclasses
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
+import cv2
+import numpy as np
+
 from .align import align_to_template
 from .detect import QuestionResult, evaluate_sheet
 from .loading import iter_source_files, load_sheets
 from .template import Template
-from .template_detect import DEFAULT_TEMPLATES_DIR, detect_template
+from .template_detect import DEFAULT_TEMPLATES_DIR, DetectionResult, detect_template
 
 
 @dataclasses.dataclass
@@ -87,44 +90,44 @@ def process_path_auto(
     be confidently matched to a template are returned separately rather
     than silently skipped or guessed at.
 
-    Within any *one* source file (`path` itself, or each file found by
-    walking it if it's a directory -- see iter_source_files), only the
-    LAST matching page is kept as a real result when more than one
-    matches. Real-world case this exists for: a whole multi-page test
-    booklet PDF (not just the bubble sheet cropped out on its own) whose
-    answer sheet is always the last page that's actually a bubble sheet,
-    per this project's own template_detect module docstring on why a
-    structural, ink-independent match is trusted at all -- but that same
-    docstring's assumption ("a wrong template's sections essentially
-    never all agree by coincidence") turned out not to hold for dense
-    justified body text: a reading passage's short words can fall in the
-    same bounding-box size range _find_glyph_boxes looks for, and enough
-    of them can coincidentally line up into a matching row/column grid.
-    Confirmed against a real 50-page booklet where two ordinary passage
-    pages structurally matched a template this way, alongside the one
-    genuine bubble sheet at the very end. Demoting every earlier match in
-    the same file to undetected (rather than silently guessing which of
-    several is "the" answer sheet, or reporting all of them as if there
-    were several real ones) is what a single test booklet needs; a batch
-    scan of many *different* students' sheets concatenated into one PDF
-    -- every page a real, independent bubble sheet -- would lose all but
-    the last student's under this same rule, so don't combine unrelated
-    students' sheets into one file when using this function."""
+    Each source file (`path` itself, or each file found by walking it if
+    it's a directory -- see iter_source_files) gives at most ONE result:
+    its LAST page that matches a template. Pages are checked from the last
+    one back and checking stops at the first match, so nothing before it
+    is even rendered -- a whole multi-page test booklet PDF (not just the
+    bubble sheet cropped out on its own), whose answer sheet is always
+    the last page that's actually a bubble sheet, costs one page's work
+    instead of dozens. Keeping only the last match is also a safeguard:
+    a template_detect module docstring assumption ("a wrong template's
+    sections essentially never all agree by coincidence") turned out not
+    to hold for dense justified body text -- confirmed against a real
+    50-page booklet where two ordinary passage pages structurally matched
+    a template, alongside the one genuine bubble sheet at the very end. A
+    batch scan of many *different* students' sheets concatenated into one
+    PDF would lose all but the last student's under this same rule, so
+    don't combine unrelated students' sheets into one file when using
+    this function.
+
+    A page that doesn't match upright is tried turned around too (see
+    _detect_any_orientation) -- a sheet fed into the scanner upside down
+    or sideways reads the same as one fed the right way.
+
+    A file with no matching page at all is reported once: with its own
+    reason for a single page, or as one entry for the whole file (giving
+    its last page's reason) for several."""
     results: List[SheetResult] = []
     undetected: List[UndetectedSheet] = []
     for file_path in iter_source_files(path):
-        file_results: List[SheetResult] = []
-        file_undetected: List[UndetectedSheet] = []
-        for label, image in load_sheets(file_path):
-            detection = detect_template(image, templates_dir)
+        failures: List[UndetectedSheet] = []
+        for label, image in load_sheets(file_path, last_first=True):
+            detection = _detect_any_orientation(image, templates_dir)
             if detection.match is None:
-                file_undetected.append(
-                    UndetectedSheet(label=label, source=str(file_path), reason=detection.describe_failure())
-                )
+                reason = detection.describe_failure()
+                failures.append(UndetectedSheet(label=label, source=str(file_path), reason=reason))
                 continue
             match = detection.match
             questions, fallback_sections = evaluate_sheet(match.aligned_image, match.template)
-            file_results.append(
+            results.append(
                 SheetResult(
                     label=label,
                     source=str(file_path),
@@ -134,22 +137,40 @@ def process_path_auto(
                     template_name=match.path.stem,
                 )
             )
-        if len(file_results) > 1:
-            for extra in file_results[:-1]:
-                file_undetected.append(
+            break
+        else:
+            if len(failures) == 1:
+                undetected.extend(failures)
+            elif failures:
+                undetected.append(
                     UndetectedSheet(
-                        label=extra.label,
+                        label=file_path.stem,
                         source=str(file_path),
-                        reason=(
-                            "a later page in this same file also matched a template; "
-                            "kept only that last match, treating this one as a false positive"
-                        ),
+                        reason=f"none of its {len(failures)} pages matched a known template -- "
+                        f"last page: {failures[0].reason}",
                     )
                 )
-            file_results = file_results[-1:]
-        results.extend(file_results)
-        undetected.extend(file_undetected)
     return results, undetected
+
+
+def _detect_any_orientation(image: np.ndarray, templates_dir: str | Path) -> DetectionResult:
+    """detect_template, retried with `image` turned around when it doesn't
+    match as-is: upside down, then a quarter-turn each way -- the
+    quarter-turns first for a landscape page, a sideways portrait sheet
+    being the likelier reason for it. The upright attempt's own failure is
+    what's reported if none match -- the orientation the page actually
+    came in."""
+    detection = detect_template(image, templates_dir)
+    if detection.match is not None:
+        return detection
+    height, width = image.shape[:2]
+    quarter_turns = [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]
+    turns = [cv2.ROTATE_180, *quarter_turns] if height >= width else [*quarter_turns, cv2.ROTATE_180]
+    for turn in turns:
+        turned = detect_template(cv2.rotate(image, turn), templates_dir)
+        if turned.match is not None:
+            return turned
+    return detection
 
 
 def process_paths_auto(

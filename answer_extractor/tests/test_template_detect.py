@@ -7,9 +7,10 @@ columns/section, Math has 5 choices) -- don't get confused for each other.
 from pathlib import Path
 
 import cv2
-from answer_extractor.pdf_lib import fitz
 import numpy as np
+import pytest
 
+from answer_extractor.pdf_lib import fitz
 from answer_extractor.pipeline import process_path_auto
 from answer_extractor.template import Template
 from answer_extractor.template_detect import (
@@ -319,8 +320,53 @@ def test_process_path_auto_keeps_only_the_last_matching_page_within_one_pdf(tmp_
     assert len(results) == 1
     answers = {(r.section, r.question): r.answer for r in results[0].questions}
     assert answers[("Answers", 1)] == "G"  # the later page's answer, not the earlier page's
-    assert len(undetected) == 1
-    assert "later page" in undetected[0].reason
+    assert undetected == []  # pages before the last match are never even checked
+
+
+def test_process_path_auto_skips_a_trailing_non_sheet_page_without_a_warning(tmp_path):
+    template_a = Template.from_yaml(make_template_a(tmp_path))
+    sheet = render_sheet(template_a, {1: ["G"]}, letters=True)
+    back_cover = np.full_like(sheet, 255)
+    pdf_path = tmp_path / "booklet.pdf"
+    _write_multi_page_pdf(
+        str(pdf_path), [sheet, back_cover], page_width_pt=template_a.page_width, page_height_pt=template_a.page_height
+    )
+
+    results, undetected = process_path_auto(pdf_path, templates_dir=tmp_path)
+
+    assert [r.label for r in results] == ["booklet_p1"]
+    assert undetected == []
+
+
+def test_process_path_auto_reports_a_file_with_no_matching_page_once(tmp_path):
+    template_a = Template.from_yaml(make_template_a(tmp_path))
+    blank = np.full((template_a.page_height, template_a.page_width, 3), 255, dtype=np.uint8)
+    pdf_path = tmp_path / "not_a_sheet.pdf"
+    _write_multi_page_pdf(
+        str(pdf_path), [blank, blank, blank], page_width_pt=template_a.page_width, page_height_pt=template_a.page_height
+    )
+
+    results, undetected = process_path_auto(pdf_path, templates_dir=tmp_path)
+
+    assert results == []
+    assert [u.label for u in undetected] == ["not_a_sheet"]
+    assert "none of its 3 pages matched" in undetected[0].reason
+
+
+@pytest.mark.parametrize(
+    "turn", [cv2.ROTATE_180, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE], ids=["upside-down", "cw", "ccw"]
+)
+def test_process_path_auto_reads_a_sheet_scanned_upside_down_or_sideways(tmp_path, turn):
+    template_a = Template.from_yaml(make_template_a(tmp_path))
+    answers = {1: ["F"], 2: ["B"], 7: ["H"], 12: ["D"]}
+    image_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(image_path), cv2.rotate(render_sheet(template_a, answers, letters=True), turn))
+
+    results, undetected = process_path_auto(image_path, templates_dir=tmp_path)
+
+    assert undetected == []
+    read = {r.question: r.answer for r in results[0].questions}
+    assert {q: read[q] for q in answers} == {q: marks[0] for q, marks in answers.items()}
 
 
 def test_process_path_auto_does_not_collapse_matches_across_different_files(tmp_path):

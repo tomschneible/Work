@@ -1088,6 +1088,15 @@ individual bubbles. Pass `--template` (or set `ANSWER_EXTRACTOR_TEMPLATE`
 for the droplet) to force one fixed template instead when a sheet's format
 doesn't auto-detect cleanly.
 
+A multi-page PDF gives one sheet: its **last** page that matches a
+template. Pages are checked from the end, and checking stops at the first
+match, so a whole scanned test booklet with the answer sheet at the back
+costs one page's work, and the pages before it never produce a warning.
+A PDF with no matching page at all gets a single warning for the whole
+file. A page that doesn't match as it came in is also tried upside down
+and turned a quarter each way, so a sheet fed into the scanner the wrong
+way round is read the same as one fed correctly.
+
 ## Tuning detection sensitivity
 
 Both knobs live under `thresholds:` in the template YAML:
