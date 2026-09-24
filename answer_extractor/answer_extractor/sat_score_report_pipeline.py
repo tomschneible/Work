@@ -236,10 +236,8 @@ def export_sat_report(
     _check_every_question_present(rows)
     answers = answers_from_rows(rows)
     active_variants = active_variants_from_rows(rows)
-    # Not scan.test_date/formatted_test_date any more -- see gui_prompt.py's
-    # own module docstring for why the filename isn't trusted for this any
-    # more; canonical_filename() below still reads its own date from it
-    # unchanged, this is only about what's actually written into the report.
+    # Not scan.test_date/formatted_test_date -- see gui_prompt.py's own
+    # module docstring for why the filename isn't trusted for the date.
     test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
@@ -248,6 +246,12 @@ def export_sat_report(
     # "don't fill the date cell", not gui_prompt's own test-mode sentinel.
     if test_date is SKIP:
         test_date = None
+    else:
+        # The typed date is the one everything uses -- the report, its Drive
+        # folder, and its file's name -- once it's confirmed to agree with
+        # the month and year the file is named for.
+        scan.check_month_and_year(test_date)
+        scan = scan.dated(test_date)
     base_name = scan.canonical_filename()
 
     present_subjects = {normalize_subject(row.section) for row in rows}

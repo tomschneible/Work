@@ -16,9 +16,10 @@ score -- replaces that guess with an answer someone's actually
 confirming in the moment; see prompt_for_date. The filename is still
 this pipeline's only source for a scan's student name, test code, and
 which Drive template to use (see scan_filename.py's own docstring) --
-only the *date* moved off it, and only for what's actually written into
-a report -- ScanFilename.canonical_filename's own output-file naming
-convention still reads its date from the input filename, unchanged.
+only the *date* moved off it. The typed date is then used for everything
+-- the report, its Drive folder, every output's name -- once it's checked
+against the month and year the filename names (the pipelines'
+ScanFilename.check_month_and_year).
 
 Uses osascript's `display dialog`, the same mechanism scripts/mac_droplet.sh
 already relies on for GUI notifications/alerts (an Automator droplet has no

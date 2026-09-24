@@ -370,10 +370,15 @@ worked, or to look around the folder tree while debugging.
    for both `score_report_pipeline.export_sheet_report` (ACT) and
    `sat_score_report_pipeline.export_sat_report` (SAT/DSAT) -- prompted
    once per report, before any section-score prompts on the SAT side.
-   `ScanFilename.canonical_filename`'s own *output-file naming*
-   convention is untouched by this and still reads its date from the
-   input filename -- only what's actually written into the report as the
-   Test Date moved off it.
+   The typed date is the one everything uses -- the report's Test Date,
+   its Drive folder (point 8), and every output's name, day included
+   (`ScanFilename.dated`). Since filenames carry only a month and year,
+   those are checked against it first: a date typed in another month or
+   year is refused ("the test date typed (2/17/2026) is in February 2026,
+   but the file is named January 2026 -- are you sure the file is named
+   correctly?"), falling back to the combined `.xlsx` like any other
+   export failure. A test-mode run (point 6) has no date to check and
+   keeps the filename's own for its names.
 6. **Typing "test" instead of a real date or score skips it, for faster
    reference checking.** Both `gui_prompt.prompt_for_date` and
    `sat_score_report_pipeline._prompt_for_section_score` treat the literal
@@ -399,9 +404,10 @@ worked, or to look around the folder tree while debugging.
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
    report's own filename (and the kept Google Sheet working copy behind
    it) is the same "LastName, FirstName [Initial] GradYear[C] TestFamily
-   TestCode Month [Day] Year" shape the scan's own input filename was parsed from
-   in the first place (`ScanFilename.canonical_filename`, point 2 above)
-   -- plus a trailing `" FLAG"` for a flagged ACT sheet (point 4). The
+   TestCode Month Day Year" shape as the scan's own input filename
+   (`ScanFilename.canonical_filename`, point 2 above), with the date typed
+   at the prompt (point 5) -- plus a trailing `" FLAG"` for a flagged ACT
+   sheet (point 4). The
    family token is always exactly whatever the input carried (`ACT`,
    `SAT`, or `DSAT`) -- never a separately-chosen label layered on top, so
    a DSAT report is never redundantly double-labeled ("SAT DSAT ...").

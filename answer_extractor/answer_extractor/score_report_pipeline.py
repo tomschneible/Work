@@ -102,9 +102,10 @@ def export_sheet_report(
     as trustworthy *data* even when they parse cleanly (see gui_prompt.py's
     own module docstring for the full reasoning, and
     sat_score_report_pipeline.export_sat_report for the same change on the
-    SAT/DSAT side). output_base_name's own output-file naming convention
-    still reads its date from the input filename, unchanged -- only what's
-    actually written into the report moved off it. Typing the literal
+    SAT/DSAT side). The typed date is what every output is named from
+    too, once it's confirmed to fall in the month and year the filename
+    names -- a date in any other month or year is refused (ValueError).
+    Typing the literal
     word "test" at that prompt (see gui_prompt.SKIP) leaves the date cell
     at the template's own default instead of failing -- meant for checking
     this pipeline's own answer-extraction against a reference copy, where
@@ -128,7 +129,6 @@ def export_sheet_report(
     scan = parse_scan_filename(result.label)
     category_path = _TEMPLATE_NAME_TO_CATEGORY_PATH[result.template_name]
     flagged = result.has_review_items
-    base_name = output_base_name(scan, flagged)
     test_date = prompt_for_date(prompt_fn, f"{scan.student_name}'s test date (M/D/YYYY)?")
     if test_date is None:
         raise ValueError(f"No test date was entered for {scan.student_name} -- cancelled")
@@ -137,6 +137,13 @@ def export_sheet_report(
     # know "don't fill the date cell", not gui_prompt's own sentinel.
     if test_date is SKIP:
         test_date = None
+    else:
+        # The typed date is the one everything uses -- the report, its Drive
+        # folder, and every output's name -- once it's confirmed to agree
+        # with the month and year the file is named for.
+        scan.check_month_and_year(test_date)
+        scan = scan.dated(test_date)
+    base_name = output_base_name(scan, flagged)
     copy_folder_id = report_folders.folder_for(test_date, scan.student_name) if report_folders is not None else None
 
     pdf_bytes = export_score_report(

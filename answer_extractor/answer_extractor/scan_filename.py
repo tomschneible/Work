@@ -85,6 +85,23 @@ class ScanFilename:
         mine, theirs = self.middle_initial.rstrip(".").lower(), other.middle_initial.rstrip(".").lower()
         return not mine or not theirs or mine == theirs
 
+    def dated(self, test_date: dt.date) -> "ScanFilename":
+        """This filename with its date swapped for `test_date` (the real one,
+        typed in at the prompt, day included) -- what every output is named
+        from. Call check_month_and_year first."""
+        return dataclasses.replace(self, test_date=test_date, day_known=True)
+
+    def check_month_and_year(self, test_date: dt.date) -> None:
+        """Raise ValueError when `test_date` (typed in at the prompt) falls in
+        a different month or year than this filename names. Filenames only
+        carry a month and year, so that's all that's compared."""
+        if (test_date.year, test_date.month) != (self.test_date.year, self.test_date.month):
+            typed = f"{test_date.month}/{test_date.day}/{test_date.year}"
+            raise ValueError(
+                f"the test date typed ({typed}) is in {test_date.strftime('%B %Y')}, but the file is named "
+                f"{self.test_date.strftime('%B %Y')} -- are you sure the file is named correctly?"
+            )
+
     @property
     def formatted_test_date(self) -> str:
         """The Test Date field's actual display value: the real date when

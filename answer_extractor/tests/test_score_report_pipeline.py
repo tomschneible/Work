@@ -59,28 +59,39 @@ def test_output_base_name_appends_flag_suffix_only_when_flagged():
 def test_export_sheet_report_writes_only_the_pdf_when_not_flagged(tmp_path):
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
-    prompt_fn = MagicMock(return_value="3/8/2026")
+    prompt_fn = MagicMock(return_value="1/20/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
         outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
-    assert outcome.pdf_path == tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.pdf"
+    # Everything comes from the typed date -- the report, and every output's
+    # name -- not the filename's own January 17.
+    assert outcome.pdf_path == tmp_path / "Student, Jane 2027 ACT 25MC1 January 20 2026.pdf"
     assert outcome.pdf_path.read_bytes() == b"%PDF-fake"
     assert outcome.xlsx_path is None
-    assert not (tmp_path / "Student, Jane 2027 ACT 25MC1 January 17 2026.xlsx").exists()
+    assert not (tmp_path / "Student, Jane 2027 ACT 25MC1 January 20 2026.xlsx").exists()
 
     kwargs = export_mock.call_args.kwargs
     assert kwargs["category_path"] == ["ACT", "Enhanced"]
     assert kwargs["test_code"] == "25MC1"
     assert kwargs["student_name"] == "Jane Student"
-    # The prompted date, not the filename's own (parse_scan_filename(result.label).test_date
-    # would be January 17 2026 here) -- see gui_prompt.py's own module docstring for why.
-    assert kwargs["test_date"] == dt.date(2026, 3, 8)
-    assert kwargs["output_name"] == "Student, Jane 2027 ACT 25MC1 January 17 2026"
+    assert kwargs["test_date"] == dt.date(2026, 1, 20)
+    assert kwargs["output_name"] == "Student, Jane 2027 ACT 25MC1 January 20 2026"
     assert kwargs["copy_folder_id"] is None  # no report_folders given -- Drive's own default
-    # output_name/canonical_filename still reads its own date from the
-    # input filename, unchanged -- confirmed by the pdf_path assertion
-    # above still naming the file after "January 17 2026", not "3/8/2026".
+
+
+@pytest.mark.parametrize("typed", ["2/17/2026", "1/17/2025"])
+def test_export_sheet_report_rejects_a_date_in_another_month_than_the_file_is_named_for(tmp_path, typed):
+    questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
+    result = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions)
+
+    expected = r"but the file is named January 2026 -- are you sure the file is named correctly\?"
+    with patch(f"{_MODULE}.export_score_report") as export_mock:
+        with pytest.raises(ValueError, match=expected):
+            export_sheet_report(
+                MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=MagicMock(return_value=typed)
+            )
+    export_mock.assert_not_called()
 
 
 def test_export_sheet_report_accepts_a_filename_with_an_initial_and_a_c(tmp_path):
@@ -103,7 +114,7 @@ def test_export_sheet_report_uses_the_real_enhanced_category_path_for_the_j_form
     not this pipeline's own naming, the org's actual Drive folder name."""
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT J01 January 17 2026", questions, template_name="act_j_form_answer_sheet")
-    prompt_fn = MagicMock(return_value="3/8/2026")
+    prompt_fn = MagicMock(return_value="1/17/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
         export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
@@ -115,7 +126,7 @@ def test_export_sheet_report_also_writes_the_flagged_xlsx_when_the_sheet_has_rev
     questions = [QuestionResult("English", 1, "", [], {}, low_confidence=False)]  # blank -> has_review_items
     result = _result("Student, Jane 2027 ACT 25MC1 January 17 2026", questions)
     assert result.has_review_items
-    prompt_fn = MagicMock(return_value="3/8/2026")
+    prompt_fn = MagicMock(return_value="1/17/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
@@ -135,12 +146,13 @@ def test_export_sheet_report_uses_the_prompted_date_even_when_the_filename_has_n
     scan.formatted_test_date used to produce."""
     questions = [QuestionResult("English", 1, "A", ["A"], {}, low_confidence=False)]
     result = _result("Student, Jane 2027 ACT 25MC1 January 2026", questions)  # no day
-    prompt_fn = MagicMock(return_value="3/8/2026")
+    prompt_fn = MagicMock(return_value="1/8/2026")
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake") as export_mock:
-        export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
+        outcome = export_sheet_report(MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=prompt_fn)
 
-    assert export_mock.call_args.kwargs["test_date"] == dt.date(2026, 3, 8)
+    assert export_mock.call_args.kwargs["test_date"] == dt.date(2026, 1, 8)
+    assert outcome.pdf_path.name == "Student, Jane 2027 ACT 25MC1 January 8 2026.pdf"  # the typed day, too
 
 
 def test_export_sheet_report_test_mode_skips_the_date(tmp_path):
@@ -157,7 +169,7 @@ def test_export_sheet_report_test_mode_skips_the_date(tmp_path):
     assert export_mock.call_args.kwargs["test_date"] is None
 
 
-@pytest.mark.parametrize("typed, folder_date", [("9/12/2026", dt.date(2026, 9, 12)), ("test", None)])
+@pytest.mark.parametrize("typed, folder_date", [("1/17/2026", dt.date(2026, 1, 17)), ("test", None)])
 def test_export_sheet_report_files_the_sheet_by_the_prompted_date(tmp_path, typed, folder_date):
     # The prompted date picks the folder, not the filename's own January 17;
     # test mode's missing date is ReportFolders' cue to use Temporary Files.
@@ -193,7 +205,7 @@ def test_export_sheet_report_saves_copies_of_the_scan_and_report(tmp_path):
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         export_sheet_report(
             MagicMock(), MagicMock(), "ROOT", _scanned_result(scan_path), tmp_path,
-            prompt_fn=MagicMock(return_value="9/12/2026"), report_folders=report_folders,
+            prompt_fn=MagicMock(return_value="1/17/2026"), report_folders=report_folders,
         )
 
     report_folders.save_copies.assert_called_once_with(
@@ -209,7 +221,7 @@ def test_export_sheet_report_numbers_the_pdf_instead_of_overwriting_the_scan_it_
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         outcome = export_sheet_report(
             MagicMock(), MagicMock(), "ROOT", _scanned_result(scan_path), tmp_path,
-            prompt_fn=MagicMock(return_value="9/12/2026"),
+            prompt_fn=MagicMock(return_value="1/17/2026"),
         )
 
     assert scan_path.read_bytes() == b"scan bytes"
@@ -226,7 +238,7 @@ def test_export_sheet_report_numbers_a_flagged_reports_pdf_and_xlsx_as_a_pair(tm
 
     with patch(f"{_MODULE}.export_score_report", return_value=b"%PDF-fake"):
         outcome = export_sheet_report(
-            MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=MagicMock(return_value="9/12/2026")
+            MagicMock(), MagicMock(), "ROOT", result, tmp_path, prompt_fn=MagicMock(return_value="1/17/2026")
         )
 
     assert outcome.pdf_path.name == "Student, Jane 2027 ACT 25MC1 January 17 2026 FLAG (2).pdf"
