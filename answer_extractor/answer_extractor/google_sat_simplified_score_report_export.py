@@ -1,8 +1,7 @@
 """Produce a filled-in *simplified* DSAT score-report PDF for one
-student, end to end -- shares google_report_export_common.export_filled_report
-with google_sat_score_report_export.py (the current-format path), but
-supplies sat_simplified_score_report_writer.fill_simple_sat_score_report
-as its fill step instead, and finds its own template by a fixed name
+student, end to end -- google_report_export_common.export_filled_report
+with sat_simplified_score_report_writer.fill_simple_sat_score_report as
+its fill step, finding its own template by a fixed name
 rather than by test code (see that module's own docstring for why: it
 carries no per-test content of its own to make a new copy of for every
 test -- there's exactly one of it, for now, regardless of test code).

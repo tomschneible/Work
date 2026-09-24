@@ -157,20 +157,11 @@ def test_fill_simple_sat_score_report_writes_name_date_answers_and_reference_dat
     assert _at(result, "J6") == "C"
     assert _at(result, "L6") == "Expression of Ideas"
     assert _at(result, "M6") == "Rhetorical Synthesis"
-    # Omitted answer -- still an explicit write, just a blank one, same
-    # as fill_sat_score_report's own module1 handling.
+    # Omitted answer -- still an explicit write, just a blank one.
     assert _at(result, "J7") is None
     assert _at(result, "I7") == "D"  # correct-answer key still shown regardless
 
     assert _at(result, "AN10") == 690
-
-    # This template never has an inactive occurrence sitting on it, so
-    # none of these apply -- unlike fill_sat_score_report's own result.
-    assert result.cleared_ranges == ()
-    assert result.hidden_column_ranges == ()
-    assert result.narrowed_column_ranges == ()
-    assert result.header_bar_extension == ()
-    assert result.deleted_row_ranges == ()
 
 
 def test_fill_simple_sat_score_report_leaves_the_date_cell_alone_in_test_mode(tmp_path):

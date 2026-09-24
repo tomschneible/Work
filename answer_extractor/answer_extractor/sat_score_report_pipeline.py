@@ -1,10 +1,7 @@
 """Bridge between score_report.py's ScoreReportRow objects (already run
 through answer_keys.annotate_rows) and the Drive-backed SAT score-report
-export (google_sat_simplified_score_report_export.py, the simplified
-template's own path -- see its module docstring, and
-sat_score_report_writer.py's README section, for why this moved off the
-current-format template's own google_sat_score_report_export.py) -- the
-SAT counterpart to score_report_pipeline.py, which does the same job for
+export (google_sat_simplified_score_report_export.py -- see its module
+docstring) -- the SAT counterpart to score_report_pipeline.py, which does the same job for
 bubble-sheet SheetResult objects.
 
 Everything here operates on one student's rows at a time (all sharing one

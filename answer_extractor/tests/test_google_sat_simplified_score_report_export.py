@@ -1,6 +1,7 @@
-"""See test_google_sat_score_report_export.py's module docstring -- same
-shape, plus coverage for the extra reference-template download this
-path needs that the current-format one doesn't."""
+"""Orchestration tests for export_simple_sat_score_report: the shared
+export sequence is mocked (see test_google_report_export_common.py), so
+these check what it's called with, plus the extra reference-template
+download this path needs."""
 import datetime as dt
 import io
 from unittest.mock import MagicMock, patch
@@ -90,8 +91,7 @@ def test_export_simple_sat_score_report_finds_the_one_simplified_template_by_exa
     # Cover Page splits across two PDF pages despite "Fit to page" already
     # being its own saved setting -- forcing that scale explicitly on
     # export is a next attempt at closing that gap (see export_pdf's own
-    # docstring). Simplified-SAT-only, same as SAT's own bottom_margin_in
-    # was for the current-format path.
+    # docstring). Simplified-SAT-only.
     assert export_kwargs["fit_to_page"] is True
 
 

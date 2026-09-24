@@ -31,12 +31,6 @@ def _patch_all(**overrides):
         copy_template=MagicMock(return_value="COPY_ID"),
         export_xlsx=MagicMock(return_value=b"raw xlsx bytes"),
         write_cells=MagicMock(),
-        clear_cells=MagicMock(),
-        hide_columns=MagicMock(),
-        narrow_columns=MagicMock(),
-        extend_fill=MagicMock(),
-        allow_text_overflow=MagicMock(),
-        delete_rows=MagicMock(),
         export_pdf=MagicMock(return_value=b"%PDF-final"),
         delete_file=MagicMock(),
     )
@@ -55,23 +49,7 @@ def _stop_all(patchers):
 def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     mocks, patchers = _patch_all()
     fake_writes = [CellWrite(sheet="ScoreSheet", row=1, column=1, value="Jane Student")]
-    fake_cleared_ranges = [("Student Responses", 3, 7, 14, 20)]
-    fake_hidden_column_ranges = [("Student Responses", 14, 20)]
-    fake_narrowed_column_ranges = [("Student Responses", 7, 20, 0.75)]
-    fake_header_bar_extension = [("Student Responses", 0, "FF0497D4", 14, 20)]
-    fake_overflow_title_cells = [("Student Responses", 3, 7)]
-    fake_deleted_row_ranges = [("Student Responses", 64, 996)]
-    fill_fn = MagicMock(
-        return_value=FillResult(
-            cell_writes=fake_writes,
-            cleared_ranges=fake_cleared_ranges,
-            hidden_column_ranges=fake_hidden_column_ranges,
-            narrowed_column_ranges=fake_narrowed_column_ranges,
-            header_bar_extension=fake_header_bar_extension,
-            overflow_title_cells=fake_overflow_title_cells,
-            deleted_row_ranges=fake_deleted_row_ranges,
-        )
-    )
+    fill_fn = MagicMock(return_value=FillResult(cell_writes=fake_writes))
     try:
         result = export_filled_report(
             drive=MagicMock(),
@@ -105,54 +83,9 @@ def test_export_filled_report_runs_every_step_in_order_and_returns_the_pdf():
     assert mocks["write_cells"].call_args[0][1] == "COPY_ID"
     assert mocks["write_cells"].call_args[0][2] == fake_writes
 
-    mocks["clear_cells"].assert_called_once()
-    assert mocks["clear_cells"].call_args[0][1] == "COPY_ID"
-    assert mocks["clear_cells"].call_args[0][2] == fake_cleared_ranges
-
-    mocks["hide_columns"].assert_called_once()
-    assert mocks["hide_columns"].call_args[0][1] == "COPY_ID"
-    assert mocks["hide_columns"].call_args[0][2] == fake_hidden_column_ranges
-
-    mocks["narrow_columns"].assert_called_once()
-    assert mocks["narrow_columns"].call_args[0][1] == "COPY_ID"
-    assert mocks["narrow_columns"].call_args[0][2] == fake_narrowed_column_ranges
-
-    mocks["extend_fill"].assert_called_once()
-    assert mocks["extend_fill"].call_args[0][1] == "COPY_ID"
-    assert mocks["extend_fill"].call_args[0][2] == fake_header_bar_extension
-
-    mocks["allow_text_overflow"].assert_called_once()
-    assert mocks["allow_text_overflow"].call_args[0][1] == "COPY_ID"
-    assert mocks["allow_text_overflow"].call_args[0][2] == fake_overflow_title_cells
-
-    mocks["delete_rows"].assert_called_once()
-    assert mocks["delete_rows"].call_args[0][1] == "COPY_ID"
-    assert mocks["delete_rows"].call_args[0][2] == fake_deleted_row_ranges
-
     mocks["export_pdf"].assert_called_once()
     assert mocks["export_pdf"].call_args[0][0] == "COPY_ID"
-    assert mocks["export_pdf"].call_args.kwargs["bottom_margin_in"] is None  # omitted -- SAT-only
     assert mocks["export_pdf"].call_args.kwargs["fit_to_page"] is False  # omitted -- simplified-SAT-only
-
-
-def test_export_filled_report_forwards_a_given_bottom_margin_to_export_pdf():
-    mocks, patchers = _patch_all()
-    fill_fn = MagicMock(return_value=FillResult(cell_writes=[]))
-    try:
-        export_filled_report(
-            drive=MagicMock(),
-            sheets=MagicMock(),
-            templates_root_folder_id="ROOT",
-            category_path=["SAT"],
-            test_code="8",
-            output_name="Jane Student - 2026-03-08",
-            fill_fn=fill_fn,
-            bottom_margin_in=0.25,
-        )
-    finally:
-        _stop_all(patchers)
-
-    assert mocks["export_pdf"].call_args.kwargs["bottom_margin_in"] == 0.25
 
 
 def test_export_filled_report_forwards_fit_to_page_to_export_pdf():

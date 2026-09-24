@@ -73,11 +73,7 @@ def fill_score_report(
 ) -> FillResult:
     """Return every cell write needed to fill `template_path`'s
     `sheet_name` tab in with the student's name, test date, and every
-    answer in `answers` (FillResult.cleared_ranges is always empty here
-    -- there's nothing conditionally-administered to clear the way SAT's
-    Module 2 variants are; see
-    sat_score_report_writer.fill_sat_score_report). `answers` maps
-    (normalized_section,
+    answer in `answers`. `answers` maps (normalized_section,
     question_number) -> answer letter ("" for omitted), the same shape
     scoresheet_check.parse_reference_scoresheet and
     .scoresheet_grid.normalize_section produce -- feed it this

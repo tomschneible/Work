@@ -253,7 +253,8 @@ worked, or to look around the folder tree while debugging.
    sits amid them --
    `export_xlsx` pulls that copy down locally, *read-only*, purely so the
    format-specific writer (`score_report_writer.fill_score_report` for
-   ACT, `sat_score_report_writer.fill_sat_score_report` for SAT -- see
+   ACT, `sat_simplified_score_report_writer.fill_simple_sat_score_report`
+   for SAT -- see
    either module's own docstring for what does and doesn't get touched,
    and why they're different enough not to share one implementation) can
    figure out where each field goes; it returns the list of individual
@@ -272,9 +273,7 @@ worked, or to look around the folder tree while debugging.
    ever re-converted through `.xlsx` at all any more, so nothing about a
    tab's own formatting is at risk from this pipeline, no matter what
    Drive's `.xlsx` import does or doesn't preserve faithfully.
-   `write_cells` and every other Sheets-API-writing helper
-   `export_filled_report` chains (clearing cells, hiding/narrowing
-   columns, deleting rows, ...) retry automatically on a transient `429
+   `write_cells` retries automatically on a transient `429
    RATE_LIMIT_EXCEEDED` (`google_sheets_export._execute_with_rate_limit_retry`
    -- the same protection `repair-simplified-calculations` needed for the
    same quota, see "Repairing the simplified template's own formulas"
@@ -297,7 +296,7 @@ worked, or to look around the folder tree while debugging.
    lives once in `google_report_export_common.export_filled_report`,
    shared by both formats' own thin wrapper
    (`google_score_report_export.export_score_report`,
-   `google_sat_score_report_export.export_sat_score_report`).
+   `google_sat_simplified_score_report_export.export_simple_sat_score_report`).
 
    A template's own gridlines showing up in its exported PDF is a
    property of the template file itself, not something a per-report fill
@@ -378,368 +377,14 @@ worked, or to look around the folder tree while debugging.
    cancelling the dialog, which still fails the whole report -- typing
    "test" always succeeds immediately, no re-prompting.
 7. **A SAT/DSAT report only shows the Module 2 variant actually
-   administered -- and always in the same place.** The template ships
-   with two same-difficulty pairs of Module 2 blocks per subject (Higher
-   x2, Lower x2 -- see `sat_score_report_writer.py`'s own module
-   docstring on why), but a given student only ever sat one difficulty
-   per subject. `fill_sat_score_report` consolidates every subject's real
-   answers -- title, correct-answer key, your answer, Domain, Skill --
-   into one fixed column (`sat_score_report_writer._canonical_module2_col`,
-   always Higher's own canonical block): if a subject's active variant
-   already lives there they're written in place as always, otherwise
-   those same values are copied in from wherever that subject's real
-   block actually sits. Every other Module 2 occurrence -- a subject's
-   own non-matching difficulty, and every duplicate/twin -- is left
-   completely untouched and cleared and hidden instead (value, border
-   formatting, and data validation cleared via
-   `sat_score_report_writer.blocks_to_clear` +
-   `google_sheets_export.clear_cells`; the same columns hidden outright
-   via `sat_score_report_writer.columns_to_hide` +
-   `google_sheets_export.hide_columns`), so the report only ever shows
-   one Module 2 table per subject.
-
-   Consolidating into one column, rather than just clearing whichever
-   columns a subject didn't use in place (an earlier version of this
-   worked that way, and got replaced): a subject's block columns are
-   reused by column *position* across every other subject stacked
-   underneath it (the same fact that makes the shared flag-cell row work
-   at all) -- confirmed live against a real filled report where Reading &
-   Writing's active variant (Higher) and Math's (Lower) differed, so each
-   subject's real answers naturally sat in *different* columns, leaving
-   their two Module 2 tables visibly offset from each other on the
-   exported report (confirmed against the org's own reference example,
-   where both sit at identical column positions instead). Clearing in
-   place can't fix an offset like that -- it only hides or shows content
-   where it already is, it never moves anything. Consolidating removes
-   the offset entirely, and -- since every subject's score-total formulas
-   read a fixed handful of cells by absolute address regardless of which
-   subject or difficulty -- also means only one flag (the canonical
-   column's own) ever needs to be true at a time, rather than a different
-   subject-specific flag that formula was never actually built to
-   distinguish between.
-
-   `blocks_to_clear` clears each non-canonical column's *entire* height,
-   not just the rows a block's own questions occupy: now that nothing
-   real is ever left at a non-canonical column for any subject, there's
-   nothing left to protect by scoping to rows the way an earlier version
-   did. That mattered live: a non-canonical column still held things
-   outside any block's own question rows -- a boolean flag cell (whose
-   checkbox *widget* persisted even after `clear_cells` cleared its
-   value, since a checkbox is a data-validation rule independent of the
-   cell's own value -- `clear_cells` now clears data validation too, not
-   just value and border) and a repeated "Page X of Y" footer label sitting
-   well below the last question row -- both of which a row-scoped clear
-   silently left behind, occupying enough of the sheet to force the
-   exported PDF to scale down and overflow onto an extra page trying to
-   fit them in.
-
-   Clearing a non-canonical column's *values* alone still wasn't enough,
-   though -- confirmed live against a fully manual "File > Download >
-   PDF" export using "Fit to Page" scale (ruling out the export
-   mechanism itself as the cause): a cleared-but-still-present column is
-   blank, but it's still full width and still counted in the sheet's
-   print area, so "fit to page" was scaling down to fit roughly four
-   times the width the one Module 2 table per subject that's actually
-   left with content needs -- squeezing the real tables into a small
-   corner of the page with a large blank margin around them, both to the
-   right (the extra column width) and below (the same scale factor
-   applied uniformly to row height too). `columns_to_hide` hides the
-   exact same non-canonical columns `blocks_to_clear` clears, via
-   `google_sheets_export.hide_columns` (a Sheets API
-   `updateDimensionProperties` request, the same metadata change Sheets'
-   own right-click "Hide column" makes) -- removing them from the print
-   area entirely so "fit to page" scales to what's actually left to
-   show. This is safe unconditionally now for the same reason clearing
-   is: an earlier version of this codebase tried hiding columns keyed
-   only by which difficulty was "active," and abandoned it, because
-   Reading & Writing and Math share the same four column positions --
-   hiding one difficulty's columns for one subject could hide a
-   *different* subject's real answers. Now that every subject's real
-   answers always land in the same canonical column first, nothing real
-   is ever left in a non-canonical column for anyone, so hiding it is
-   never at risk of hiding real data.
-
-   Fixing the width didn't fully fix the sizing, though -- confirmed
-   live comparing a real export against the org's own reference example:
-   the tables were noticeably wider now, but still confined to roughly
-   the top 86% of the page's usable height instead of filling it, the
-   leftover space stranded below rather than distributed proportionally.
-
-   The first theory was that this had nothing to do with Module 2 at
-   all: the "Student Responses" tab itself carries stray formatting
-   (borders, fills -- no actual value) all the way out to row 996, even
-   though its real content -- every block, every score cell, the footer
-   -- ends at row 64 (confirmed against the real template file:
-   `openpyxl`'s own `ws.max_row` reports 996 there), and with no print
-   area explicitly set on the file, Sheets' PDF export falls back to the
-   sheet's full used range -- so, the theory went, those ~930 empty rows
-   were still being counted in the vertical "fit to page" scale
-   calculation right alongside the real content. Two different fixes for
-   this were tried in turn -- first hiding those rows
-   (`updateDimensionProperties`, the row-dimension version of
-   `hide_columns`), then, when that measured zero effect, deleting them
-   outright (`deleteDimension`, actually shrinking the sheet's row
-   count rather than just marking it invisible) -- and **both** measured
-   zero effect on the exported PDF: three separate real exports (no row
-   fix, rows hidden, rows deleted) came out pixel-for-pixel identical.
-   Whatever's setting this sheet's print scale, it evidently isn't
-   reading live row state the way it reads live column state (confirmed
-   hiding a column *did* measurably change the export). The theory was
-   wrong; neither fix stuck around in the code.
-
-   The org then tested Google's own "Custom" print scale directly on the
-   master template (bypassing "Fit to Page" entirely) to see whether a
-   *static* percentage would be respected any differently. It was: font
-   size measurably changed for the first time in this whole
-   investigation. But no percentage threaded the needle -- every value
-   small enough not to overflow read as too small to be worth printing,
-   and nothing in between existed. That result, together with the
-   "Fit to Page" numbers, pins down what's actually going on: Sheets'
-   print scale is one uniform percentage applied to *both* width and
-   height, and width was confirmed to be the tighter of the two (a real
-   export's rendered table width already reached the page's full
-   available width at "Fit to Page"'s own ~55% scale, while its rendered
-   height fell well short of the page's available height at that same
-   scale) -- so the scale needed to keep width inside the page was
-   smaller than height alone would have required, and that same
-   undersized scale then left height under-filled too. There is no
-   percentage that fixes this, because the problem isn't the percentage
-   -- it's that the *columns* are wide enough to need a smaller
-   percentage than the *rows* do.
-
-   Per the org's own instruction, this is fixed by reformatting the
-   sheet, not by touching print settings at all:
-   `sat_score_report_writer.visible_table_columns_to_narrow` finds every
-   *visible* answer-table column (Module 1's own title column through
-   the canonical Module 2 block's own last column -- the sidebar is
-   deliberately excluded, to avoid clipping or misaligning a graphic
-   element this never otherwise touches), and
-   `google_sheets_export.narrow_columns` shrinks each one to
-   `_TABLE_COLUMN_NARROW_FACTOR` times its own *actual current* pixel
-   width -- read live from Sheets itself via a `get` call rather than
-   converted from `openpyxl`'s character-unit column width locally,
-   since a generic conversion formula wasn't confirmed to match what
-   Sheets actually renders. Narrowing the columns that make width the
-   tighter constraint lets "fit to page" recompute a larger uniform
-   scale on its own (still guaranteed not to overflow -- "fit to page"
-   always finds whatever scale fits) -- which, applied uniformly, also
-   renders the *untouched* rows taller, filling more of the page's
-   actual height as a side effect, without narrowing anything, adjusting
-   a print setting, or resizing a single font.
-
-   The first value tried, 0.75, overshot: confirmed live against a real
-   export, it filled the page far better (font size measurably bigger,
-   matching the reference example's own fill level) but pushed a
-   subject's last couple of questions onto a nearly-blank extra page,
-   and separately exposed a *different*, previously-latent bug (see next
-   paragraph). 0.82 (a pull back toward the original, whole-print-area
-   estimate) *also* overshot, once the print area's own centering was
-   separately fixed (see the centering fix a few paragraphs down) --
-   confirmed live, closing that gap raised the achievable scale enough
-   that 0.82 pushed several of a subject's last questions onto a mostly-
-   blank extra page, a bigger overflow than 0.75 caused on its own.
-   0.90 pulled back further still, and got close: confirmed live, only
-   the Math tables' last two rows (of 22 each -- the Reading & Writing
-   tables, with more rows but no multi-line wrapped answer cells
-   inflating a couple of their row heights, fit in full) spilled onto an
-   otherwise-empty extra page, only ~26pt short of fitting. 0.95 pulled
-   back again -- confirmed live, down to only the single tallest row (the
-   multi-line wrapped answer cell) still spilling over.
-
-   At that point, switched from eyeballing overflow amounts to a
-   scale-independent signal instead: a real export's own dominant body
-   font size (measured directly off the rendered PDF -- it scales
-   linearly with the actual "fit to page" percentage regardless of how
-   much content there is, unlike row/overflow counts) compared against
-   the same measurement on a real, confirmed-good reference export of
-   the same report that never overflows, its own Question-Level Feedback
-   page filling all the way down to a bottom margin matching its top
-   margin almost exactly -- as tightly filled as this page is meant to
-   get. 0.90 measured 6.31pt, 0.95 measured 6.11pt: a consistent, linear
-   -4.0pt of font size per +1.0 of factor across the only two live data
-   points gathered since the centering fix (both above). The reference
-   export measured 5.92pt. Solving that line for 5.92 gives `f =~
-   0.9975` -- i.e. once the centering fix was in place, the columns
-   barely need narrowing at all to reach the same fill level as the
-   reference.
-
-   Confirmed live at 1.0: font size landed at 5.93pt, matching the
-   reference almost exactly -- the font-size-matching approach was
-   right. Still not quite enough, though: not a table row this time,
-   just the page's own trailing footer line (directly below one blank
-   spacer row -- nothing structural) spilled onto its own near-empty
-   extra page. Measured precisely why: the page's actual usable bottom
-   edge sits at ~736pt (mirroring its own ~56pt top margin, and matching
-   where the reference's own footer sits, right at 737pt); at 1.0, the
-   last drawn content on the page ended at 729pt -- only ~7pt of slack,
-   for a footer line that itself needs ~7pt. Matching font size means
-   matching per-row height, so that ~7pt gap reads as accumulated
-   rounding/measurement slop over ~65 rows of content, not a real
-   structural difference from the reference. `_TABLE_COLUMN_NARROW_FACTOR`
-   is now 1.09, a small *widen* rather than a narrow -- see below for
-   why 0.98 stopped being the right value, and its own comment in
-   `sat_score_report_writer.py` for the arithmetic behind every value
-   tried, six that came before this and this one.
-
-   0.98 turned out to depend on a bug elsewhere: `columns_to_hide`'s own
-   contiguous hidden-column range started one column after the canonical
-   block's own last column, not right at it -- leaving exactly one
-   column (the spacer between the two) un-narrowed and un-hidden,
-   quietly propping up every one of the six values above's own headroom
-   without ever being counted in any of their derivations. Fixing that
-   (starting the range at the canonical block's own end instead) let
-   "fit to page" compute a *larger* scale at the same 0.98 -- confirmed
-   live, font size measured 6.32pt there after the fix, not the pre-fix
-   5.99pt, overshooting the reference upward and spilling *more* onto
-   the extra page, not less. Re-deriving the same font-size-matching fit
-   against that new baseline (same slope, since the narrowing mechanism
-   itself didn't change; only its intercept shifts by removing a fixed
-   width) gives `f =~ 1.085` for 5.92pt -- these columns now need
-   widening slightly past their own natural width, not narrowing at all.
-   Rounded to 1.09; confirmed live at that value, font size measured
-   5.92pt, matching the reference essentially exactly.
-
-   Matching font size that closely still didn't guarantee matching the
-   reference's own total page fill, though: the same trailing row still
-   spilled onto its own extra page at 1.09, and by an amount that didn't
-   track the visible pixel slack the way matching font size (and so
-   per-row height) implied it should. Sheets' own pagination evidently
-   isn't decided against a continuous post-scale pixel budget the way
-   that reasoning assumed -- this factor controls how closely the report
-   matches the reference's own density, not reliably whether it fits on
-   one page, and by this point it's doing the first job about as well as
-   it can. A live test of Sheets' own PDF export endpoint accepting a
-   `bottom_margin` query parameter directly (reclaiming page height
-   without touching column width, and so without moving the font-size
-   match at all) went a different way than hoped: passing
-   `bottom_margin=0.25` didn't get ignored or clamped, it made the
-   endpoint itself fail outright (a 500 from the signed
-   `googleusercontent.com` URL it redirects to), taking the whole
-   report's export down with it -- caught by `auto_cli`'s own per-report
-   fallback (into the combined `.xlsx`, with a warning, exactly as
-   designed), but strictly worse than the overflow it was meant to fix.
-   Not necessarily true of every value or every margin parameter this
-   endpoint takes, just this one at this value, confirmed once -- but not
-   worth another live attempt at guessing a working variant blind, so
-   this code path (`export_pdf`'s own `bottom_margin_in`) exists but
-   nothing calls it with a non-`None` value any more.
-
-   The recommended fix for this last gap is a one-time edit to the
-   template file itself, not another per-export code path: reduce its
-   own saved bottom print margin directly (File > Print > Margins >
-   Custom in the Sheets UI, e.g. from its current ~0.75-0.78in down to
-   around 0.25in) and save it. `export_pdf` already defers to whatever
-   print setup is saved on the file for everything it doesn't explicitly
-   override (that's how the "fit to page" scale setting itself has
-   always worked here) -- a template-level margin change reaches every
-   future export automatically, the same way the one-time
-   `hide-gridlines` fix above does, with no code involved and none of
-   the live-export-breaking risk the query-parameter attempt carried.
-   Not yet confirmed live.
-
-   Narrowing far enough also genuinely truncated a block's own title in
-   that same real export -- not just visually overlapped by a
-   neighboring cell's background, but missing characters outright in
-   the exported PDF's own text layer. Confirmed live it wasn't
-   `narrow_columns` cutting the text off directly: a *different*
-   subject's own canonical Module 2 title, at the exact same narrowed
-   column width, rendered completely intact. Since both are literally
-   the same physical columns (just different rows), the only
-   explanation is that these two title cells never shared the same
-   `wrapStrategy` in the template to begin with -- one already tolerated
-   overflowing into its blank neighbors, the other didn't -- and only
-   narrowing a full-width column that used to paper over the gap made
-   that latent inconsistency visible. `google_sheets_export.
-   allow_text_overflow` forces `OVERFLOW_CELL` wrap strategy onto every
-   active block's own title cell (Module 1's, and whichever cell ends up
-   holding each subject's canonical Module 2 title after any
-   repositioning) regardless of what the template's own cell already
-   had, closing off the dependency on that inconsistency entirely rather
-   than hoping a wider column reliably works around it.
-
-   Narrowing had two more side effects, both confirmed live against the
-   same real export and both fixed the same way -- by patching up
-   whatever the narrowing affected, not by narrowing less:
-
-   - Each active block's own `mark_col` (the ✔/✘ column) can lose its
-     own header cell's left border entirely in the exported PDF: that
-     header cell is blank (there's no label over the mark column, unlike
-     every neighboring one), while the *data* rows below it (never
-     blank, always holding a ✔ or ✘) never lose theirs. This one took
-     two wrong turns before landing on the actual fix. First,
-     `visible_table_columns_to_narrow` simply *excluded* `mark_col` from
-     narrowing, leaving it at its own original width -- confirmed live
-     this wasn't enough; the border stayed broken. Second, a
-     `mark_columns_to_widen` function actively widened the canonical
-     block's own `mark_col` to 1.5x its real width instead (reusing
-     `narrow_columns` above 1) -- confirmed live *this* wasn't enough
-     either, and the same bug even showed up on Module 1's own
-     `mark_col` at that point, a column no narrowing fix here had ever
-     touched. Column width, in either direction, was never reliably the
-     variable. What actually fixed it: `fill_sat_score_report` now
-     writes a real, zero-width character (`_MARK_HEADER_NON_BLANK`, a
-     U+200B ZERO WIDTH SPACE) into every active block's own `mark_col`
-     header cell, matching the one confirmed, consistent distinguishing
-     factor between cells that keep their border and cells that don't --
-     not blank vs. narrow, just blank vs. not.
-   - This sheet's `printOptions horizontalCentered="1"` (confirmed
-     against the real template file -- this pipeline never sets it, so
-     it was always meant to center the print area horizontally) doesn't
-     seem to treat a *hidden* column as having zero width for centering
-     purposes, only for rendering: the visible tables came out pushed
-     left of center, with a blank gap on the right roughly the width of
-     the hidden, non-canonical Module 2 columns -- the same gap between
-     "hidden" and "actually gone" already confirmed for trailing rows,
-     just showing up in a different computation this time.
-     `hidden_columns_to_shrink` narrows those same hidden columns to
-     `_HIDDEN_COLUMN_SHRINK_FACTOR` (near-zero) via `narrow_columns`
-     too, in addition to `hide_columns` marking them hidden. That alone
-     still wasn't quite enough, though: confirmed live the blank *spacer*
-     column standing between each pair of non-canonical occurrences (and
-     the sheet's own last one) was never included in either fix, since
-     both were built from one range *per occurrence*, each exactly
-     `_CLEAR_BLOCK_WIDTH` columns wide -- leaving those spacers at their
-     own full width, still counted toward centering. `columns_to_hide`
-     now returns a single range spanning from the leftmost non-canonical
-     occurrence's own title column all the way through the rightmost
-     occurrence's own last column, sweeping the spacers up too --
-     `hidden_columns_to_shrink` (built from the same function) inherits
-     the fix automatically. Confirmed live this actually fixed it --
-     the org's own next real export centered correctly.
-
-     One spacer still slipped through even this fix, though: the one
-     between the *canonical* block's own last column and the first
-     non-canonical occurrence, since the range above started *at* that
-     occurrence's own title column, one column later than where the
-     canonical block's own end (and `visible_table_columns_to_narrow`'s
-     own range) actually stops. `columns_to_hide` now starts its range
-     right at the canonical block's own end instead, closing that last
-     gap too -- see the font-size-matching narrative below for how this
-     one was actually found (a real export's own rendered geometry, not
-     a live A/B comparison) and what it changed about
-     `_TABLE_COLUMN_NARROW_FACTOR`.
-   - Separately, this sheet's own decorative accent bar under "Your
-     Question-Level Feedback" (a solid fill spanning a fixed range of
-     columns on row 1, confirmed against the real template file to run
-     from column A through N) is exactly as wide as the sum of those
-     columns' own widths -- so narrowing the table columns inside that
-     same range (Module 1's own, from column H on) shrank the bar right
-     along with them, leaving it visibly short of where it used to
-     reach. `header_bar_extension` (paired with
-     `google_sheets_export.extend_fill`) re-applies that same fill color
-     -- read live from the sheet itself, not hardcoded -- across the
-     rest of the narrowed table's own width, so the bar spans the same
-     width as the content sitting below it again. Extracting the
-     exported PDF's own raw drawing commands (not just its text) showed
-     this fix is doing exactly what it's supposed to -- the bar's blue
-     fill genuinely does extend through the canonical block's own last
-     column now, immediately followed by a separate, correctly-bounded
-     white rectangle covering everything past it. What still reads as
-     "cut off short" is really the *centering* gap above -- the bar (tied
-     to the same columns as the table it sits above) is left of center
-     for the exact same reason the table is, and should move right along
-     with it once that's fixed, without needing a fix of its own beyond
-     what's already here.
+   administered.** Reports are filled on the simplified template (see
+   "The simplified SAT/DSAT template" below), which has exactly one
+   Module 2 slot per subject: its title gets the identified difficulty
+   ("... Module 2 - Higher Difficulty"), and its correct answers,
+   Domains, and Skills come from that same difficulty's block on the
+   test's current-format template. Nothing ever has to be cleared,
+   hidden, or resized to leave the other difficulty out -- it was never
+   on the sheet.
 8. **Where files land, and how they're named.** PDFs (and any flagged
    `.xlsx`) are written to the Desktop by default -- override with
    `--report-output-dir` or `$ANSWER_EXTRACTOR_REPORT_OUTPUT_DIR`. Each
@@ -800,25 +445,14 @@ batch.
 
 ### The simplified SAT/DSAT template
 
-Everything in "How a scan becomes a report" above about Module 2 --
-`blocks_to_clear`, `columns_to_hide`, `hidden_columns_to_shrink`,
-`header_bar_extension`, and the whole `_TABLE_COLUMN_NARROW_FACTOR`
-saga -- exists for one reason: the current-format template has to
-physically hold every Module 2 difficulty pair (Higher x2, Lower x2)
-and hide whichever three weren't administered, since which one *was*
-isn't known until a specific student's report is being filled. A
-template with a single Module 2 slot per subject, filled in directly
-once the active variant is known, never needs any of that -- not a
-smaller version of the same machinery, none of it, by construction.
-
-This is the live path now: `sat_score_report_pipeline.py`'s own
-`export_sat_report` calls `google_sat_simplified_score_report_export.
-export_simple_sat_score_report`, not the current-format
-`google_sat_score_report_export.export_sat_score_report` any more.
-That older function (and `sat_score_report_writer.fill_sat_score_report`
-behind it) is still there, still tested, just no longer called from
-this pipeline -- kept rather than deleted in case the simplified path
-needs a fallback while its real template gets shaken out.
+Reports are filled on a template with a single Module 2 slot per
+subject, filled in directly once the active variant is known:
+`sat_score_report_pipeline.py`'s own `export_sat_report` calls
+`google_sat_simplified_score_report_export.export_simple_sat_score_report`.
+(An earlier path filled each test's current-format template instead,
+which physically holds every Module 2 difficulty pair -- Higher x2,
+Lower x2 -- and had to clear, hide, and resize the three that weren't
+administered on every report. It was removed once this one was in use.)
 
 Confirmed live against a real template and a real student, in two
 rounds. First round: the title match failed for every Module 2 block --
@@ -844,9 +478,8 @@ question's Domain/Skill labels and correct answer, since the simplified
 template never carries that content itself (nothing here duplicates it
 into a second, separately-maintained source -- see
 `sat_score_report_writer.read_reference_questions`'s own docstring).
-Reading it back out of a template already made for another reason, via
-the exact same block-locating logic (`locate_sat_blocks`) that already
-finds these values for consolidation, cost nothing new to build.
+Reading it back out of a template already made for another reason
+(`locate_sat_blocks` finds each block) cost nothing new to build.
 
 **The simplified template itself is not made per test.** Unlike the
 current-format one, it carries no per-test content at all -- no
@@ -860,8 +493,8 @@ current-format templates are.
 (currently `"DSAT TEMPLATE"`) is found by exact name, in its own `SAT
 Template` folder -- a sibling of `SAT`, directly under the templates
 root, not a subfolder of it -- so `find_template_file`'s own
-substring-against-test-code matching inside `SAT/` itself is never at
-risk of also matching it. If a differently-shaped exam ever needs its
+test-code matching inside `SAT/` itself is never at risk of also
+matching it. If a differently-shaped exam ever needs its
 own version (PSAT 10 and PSAT 8/9 run shorter modules than the full
 digital SAT) that becomes a small, fixed set of named templates and a
 lookup keyed off whatever already distinguishes them -- still nowhere
@@ -1044,26 +677,22 @@ isn't a case of the wrong setting being saved, just of `export_pdf` not
 applying it the way the interactive UI does -- the same *category* of
 gap already documented on this endpoint (see its own docstring: Drive's
 generic export, which this replaced, had an analogous "fit to page"
-mismatch; even this dedicated endpoint's own pagination "isn't decided
-against a continuous post-scale pixel budget" the way `bottom_margin_in`
-assumed).
+mismatch).
 
 Fix in progress, not yet confirmed live: `export_pdf` gained a
 `fit_to_page` parameter (see its own docstring) that adds this endpoint's
 own `scale=4` ("Fit to Page," per outside reverse-engineering of this
 endpoint's parameters -- there's no official spec) to force that scale
 explicitly rather than deferring to whatever's saved, threaded through
-`export_filled_report` the same way `bottom_margin_in` already was, and
-passed as `True` only by the simplified SAT export path
+`export_filled_report` and passed as `True` only by the simplified SAT
+export path
 (`google_sat_simplified_score_report_export.export_simple_sat_score_report`).
 
 This is a workbook-wide override, not a Cover-Page-specific one -- there's
 no per-sheet `scale` when, as here, no `gid` narrows the export to one
 sheet -- and confirmed via the same local read: "Student Responses" (the
 Question-Level Feedback page) is deliberately saved at a fixed, hand-set
-54% scale instead of "Fit to page" (this is almost certainly what all of
-this project's own narrow-factor history above was tuning towards in the
-first place). Turning `fit_to_page` on overrides that page's own scale
+54% scale instead of "Fit to page". Turning `fit_to_page` on overrides that page's own scale
 too, not just Cover Page's, so verifying this fix means checking *both*
 pages in the same real export -- if Question-Level Feedback regresses,
 the next step is exporting Cover Page (and Score Report/Content) as their

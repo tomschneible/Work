@@ -1,13 +1,9 @@
 """Fill the *simplified* SAT/DSAT score-report template's "Student
 Responses" tab -- one Module 2 slot per subject, holding whichever
-variant answer_keys.annotate_rows already identified, instead of a
-checkbox-selected pair of duplicate blocks. Nothing here ever clears,
-hides, or narrows a block the way sat_score_report_writer.py's
-fill_sat_score_report does for the current-format template -- there's
-never an inactive occurrence sitting on the sheet to begin with (see this
-repo's README "Google Sheets score reports" section for the whole
-narrow/hide/clear saga this sidesteps entirely by construction, not by
-patching around it).
+variant answer_keys.annotate_rows already identified, instead of the
+current-format template's checkbox-selected pairs of duplicate blocks.
+Nothing on it ever needs clearing, hiding, or narrowing: there's never an
+inactive occurrence sitting on the sheet to begin with.
 
 A block's title can't reliably carry the right difficulty on the blank
 template itself -- it isn't known until a specific student's active
@@ -180,11 +176,18 @@ def fill_simple_sat_score_report(
 ) -> FillResult:
     """Return every cell write needed to fill the simplified template's
     `sheet_name` tab in with the student's name, test date, every answer
-    in `answers`, and (if given) each subject's scaled section score --
-    see sat_score_report_writer.fill_sat_score_report's own docstring for
-    what `active_variants`/`answers`/`section_scores` mean, all shared
-    verbatim; the difference here is entirely about *where things go*,
-    not what they mean.
+    in `answers`, and (if given) each subject's scaled section score.
+
+    `answers` maps (subject, module_slot, question) -> the student's
+    answer ("" for an omitted question). `active_variants` maps subject ->
+    "easier"/"harder", the Module 2 difficulty actually administered (from
+    answer_keys.annotate_rows); it decides each Module 2 block's title and
+    which reference block its correct answers, Domains, and Skills come
+    from. `section_scores` maps subject -> scaled score (e.g. {"math":
+    620}) -- nothing upstream can derive that from the report itself, so
+    it comes from whatever the caller got from a person; leave a subject
+    out (or the whole mapping) to keep its score cell at the template's
+    own default.
 
     `test_date` is None for a "test mode" run (gui_prompt.SKIP, translated
     to plain None by the caller -- see sat_score_report_pipeline.py's own
@@ -204,12 +207,9 @@ def fill_simple_sat_score_report(
     each block's own Correct Answer/Domain/Skill (see that function's own
     docstring for why this template doesn't carry them itself).
 
-    Unlike fill_sat_score_report, there is no repositioning, clearing, or
-    hiding to do: every block found is, by construction, the one this
-    student's report should show, so FillResult's other fields are always
-    empty here. `answers` must only contain keys for "module1" or each
-    subject's active variant, same as fill_sat_score_report -- an entry
-    for the inactive variant raises, since there'd be nowhere on this
+    Every block found is, by construction, the one this student's report
+    should show. `answers` must only contain keys for "module1" or each
+    subject's active variant -- an entry for the inactive variant raises, since there'd be nowhere on this
     template to put it (there's no "wrong" Module 2 slot left sitting
     around to accidentally write into, unlike the current-format
     template's own duplicates). Raises ValueError if a Module 2 block's

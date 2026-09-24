@@ -5,9 +5,9 @@ reports" section for the overall design and why each step exists.
 
 Filling in a report used to round-trip the *entire* workbook through
 .xlsx: export_xlsx pulled a copy down locally, a writer module
-(score_report_writer.fill_score_report / sat_score_report_writer's
-counterpart) edited it with openpyxl, and replace_content pushed the
-whole thing back in, letting Drive convert it back to native Sheets
+(score_report_writer.fill_score_report and its SAT counterpart) edited
+it with openpyxl, and a Drive files.update pushed the whole thing back
+in, letting Drive convert it back to native Sheets
 format on upload. That turned out not to be safe: confirmed live,
 re-importing an openpyxl-authored .xlsx doesn't reconstruct some of a
 template's own formatting with full fidelity to how Google's own native
@@ -30,17 +30,15 @@ Content, ...), most of which are populated by formulas referencing the
 answer tab anyway, is never re-converted through .xlsx at all, so nothing
 about their own formatting is ever at risk from this pipeline again.
 
-replace_content itself is kept here only as a thin, generically correct
-wrapper -- nothing in this codebase calls it any more. A template's own
-gridlines get turned off via hide_gridlines instead (a direct Sheets API
-metadata change, no file conversion involved at all): confirmed live the
-hard way that pointing the xlsx round-trip at a *template* file directly
-(via replace_content) is exactly as unsafe as it was for a per-report
+A template's own gridlines get turned off via hide_gridlines instead (a
+direct Sheets API metadata change, no file conversion involved at all):
+confirmed live the hard way that pointing the xlsx round-trip at a
+*template* file directly is exactly as unsafe as it was for a per-report
 copy -- it corrupted the org's own live "ACT 25MC1" template's Cover Page
 the one time it was tried, recovered only via Sheets' own version
-history. Don't reach for replace_content to fix a template's formatting;
-extend hide_gridlines's approach (a targeted batchUpdate request) instead
-of reintroducing an xlsx round-trip anywhere in this codebase.
+history. To fix a template's formatting, extend hide_gridlines's
+approach (a targeted batchUpdate request) rather than reintroducing an
+xlsx round-trip anywhere in this codebase.
 
 Deliberately thin wrappers around the official googleapiclient calls
 rather than a bigger abstraction: there's no meaningful behavior to
@@ -67,7 +65,7 @@ import requests
 from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from openpyxl.utils import get_column_letter
 
 from .google_auth import get_credentials
@@ -165,69 +163,12 @@ class CellWrite:
 @dataclasses.dataclass(frozen=True)
 class FillResult:
     """What a fill_fn (score_report_writer.fill_score_report,
-    sat_score_report_writer.fill_sat_score_report) returns to
-    google_report_export_common.export_filled_report: the individual
-    cell writes needed, plus any rectangles that should be cleared
-    (value and border formatting both) from the exported PDF once those
-    writes land, plus any whole columns that should be hidden outright.
-    Both are empty for every fill_fn except SAT's -- it uses these to
-    remove whichever Module 2 block occurrence (a subject's other
-    difficulty, or a duplicate/twin) wasn't actually administered, so
-    the report only shows the modules that were actually filled in; see
-    sat_score_report_writer.blocks_to_clear for why *both* are needed
-    (clearing alone leaves an occurrence's columns blank but still
-    taking up print-area width, which forces the exported PDF's own
-    "fit to page" scale down far more than the actually-visible content
-    needs -- confirmed live, see hide_columns' own docstring).
-
-    `cleared_ranges` entries are (sheet_name, 0-indexed start row,
-    0-indexed end row, 0-indexed start column, 0-indexed end column) --
-    all ends exclusive, the shape clear_cells' Sheets API request needs.
-    `hidden_column_ranges` entries are (sheet_name, 0-indexed start
-    column, 0-indexed end column) -- end exclusive, the shape
-    hide_columns' Sheets API request needs; whole-column, so no row
-    bounds. `deleted_row_ranges` is a *different* fix for a *different*
-    problem, not the row-dimension counterpart of hiding: (sheet_name,
-    0-indexed start row, 0-indexed end row), end exclusive, for
-    delete_rows -- used to remove a sheet's own trailing blank rows
-    outright, since merely hiding them (tried first) turned out to have
-    no effect at all on the exported PDF's print area, unlike hiding a
-    column; see delete_rows' own docstring. `narrowed_column_ranges` is
-    yet another different fix, for a third, separate problem: (sheet_name,
-    0-indexed start column, 0-indexed end column, shrink factor), end
-    column exclusive, for narrow_columns -- used to shrink the answer
-    tables' own column widths so "fit to page" doesn't have to shrink the
-    whole page's scale nearly as far to keep them within one page's
-    width, which -- since that scale applies uniformly -- was leaving
-    height under-filled even though height alone had room to spare; see
-    sat_score_report_writer.visible_table_columns_to_narrow for the full
-    reasoning. `overflow_title_cells` is a follow-on fix for a side
-    effect narrowing those columns exposed: (sheet_name, 0-indexed row,
-    0-indexed column) for every block's own title cell, for
-    allow_text_overflow -- forces `OVERFLOW_CELL` wrap strategy there
-    regardless of whatever the template's own cell already had, since
-    confirmed live one subject's own title genuinely truncated (not just
-    got visually overlapped) once its column narrowed, while a different
-    subject's own title at the same narrowed width didn't -- the two
-    cells never shared the same wrap strategy to begin with; see
-    allow_text_overflow's own docstring. `header_bar_extension` is a
-    second side effect of narrowing those same columns: (sheet_name,
-    0-indexed row, ARGB hex color, 0-indexed start column, 0-indexed end
-    column [exclusive]), for extend_fill -- a decorative full-row fill
-    happened to span some of the same columns being narrowed for size,
-    so it visibly shrank right along with them; this re-applies the same
-    fill color across the columns it now needs to cover the table's own
-    (narrower) width again. See
-    sat_score_report_writer.header_bar_extension for the full reasoning
-    and why this doesn't just hardcode a color."""
+    sat_simplified_score_report_writer.fill_simple_sat_score_report)
+    returns to google_report_export_common.export_filled_report: the
+    individual cell writes needed, pushed into the live Sheet by
+    write_cells."""
 
     cell_writes: List[CellWrite]
-    cleared_ranges: Sequence[Tuple[str, int, int, int, int]] = ()
-    hidden_column_ranges: Sequence[Tuple[str, int, int]] = ()
-    deleted_row_ranges: Sequence[Tuple[str, int, int]] = ()
-    narrowed_column_ranges: Sequence[Tuple[str, int, int, float]] = ()
-    header_bar_extension: Sequence[Tuple[str, int, str, int, int]] = ()
-    overflow_title_cells: Sequence[Tuple[str, int, int]] = ()
 
 
 def format_date_for_sheets(value: dt.date | str) -> str:
@@ -341,7 +282,7 @@ def _export(drive: Resource, file_id: str, mime_type: str) -> bytes:
     return buffer.getvalue()
 
 
-def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fit_to_page: bool = False) -> bytes:
+def export_pdf(spreadsheet_id: str, fit_to_page: bool = False) -> bytes:
     """The Sheets file at `spreadsheet_id`, rendered to PDF via Sheets'
     own dedicated export endpoint (`docs.google.com/spreadsheets/d/{id}/
     export?format=pdf`) -- the same URL "File > Download > PDF" in the
@@ -360,37 +301,10 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fi
     workbook (every visible sheet), matching the Drive-based export it
     replaces.
 
-    `bottom_margin_in`, if given, overrides just the bottom print margin
-    (inches, the same unit Sheets' own print-setup UI uses) via this
-    endpoint's own `bottom_margin` query parameter -- left as `None` (no
-    override, deferring to the saved margin like every other print
-    setting this endpoint doesn't touch) for every caller except SAT's
-    own export path. Exists because matching a reference export's own
-    dominant font size (sat_score_report_writer._TABLE_COLUMN_NARROW_FACTOR)
-    turned out not to guarantee matching its total content height too,
-    even once that factor was re-derived to hit the same font size almost
-    exactly: confirmed live, a 5.92pt-vs-5.92pt match still left a
-    single trailing row spilling onto its own extra page, by an amount
-    that didn't track the visible pixel slack left below the last row the
-    way matching font size (and so per-row height) was expected to --
-    Sheets' own pagination evidently isn't decided against a continuous
-    post-scale pixel budget the way that reasoning assumed. Rather than
-    keep chasing that factor for a fit it doesn't fully control, reclaiming
-    a fixed amount of page height directly (a print setting Sheets exposes
-    on this very endpoint, just never previously passed) sidesteps it
-    entirely -- and does so without touching column width, so unlike that
-    factor, it can't move the font-size match this already got right.
-    `bottom_margin` itself is a widely-used, long-standing query parameter
-    on this same undocumented endpoint (the same family as `format`,
-    `gid`, and `scale`, none of which have a formal spec either) -- not
-    yet confirmed live against this specific template, unlike the rest of
-    this endpoint's own usage here.
-
     `fit_to_page`, if true, adds this same endpoint's own `scale=4`
     ("Fit to Page" -- values 1-4 are Normal/Fit-Width/Fit-Height/Fit-Page,
     per outside reverse-engineering of this endpoint's own parameters;
-    there's no official spec for any of them, same as `bottom_margin`
-    above) to force that scale explicitly rather than deferring to
+    there's no official spec for any of them) to force that scale explicitly rather than deferring to
     whatever's already saved. Exists for the simplified SAT template's
     own Cover Page: confirmed via a local read of the real template,
     "Fit to page" is *already* the saved setting there (and on Score
@@ -409,9 +323,7 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fi
     `gid` narrows the call to one sheet), and at least one sheet in this
     same workbook -- "Student Responses" (the Question-Level Feedback
     page) -- is deliberately saved at a fixed, hand-set 54% scale instead
-    of "Fit to page" (see sat_score_report_writer's own narrow-factor
-    history for why that page's own sizing got so much dedicated
-    attention). Passing `fit_to_page=True` overrides that page's own
+    of "Fit to page". Passing `fit_to_page=True` overrides that page's own
     saved scale too, not just Cover Page's -- a caller turning this on
     needs to verify *both* pages in the same real export, not just the
     one this was written to fix.
@@ -428,8 +340,6 @@ def export_pdf(spreadsheet_id: str, bottom_margin_in: Optional[float] = None, fi
     session = AuthorizedSession(creds)
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export"
     params = {"format": "pdf"}
-    if bottom_margin_in is not None:
-        params["bottom_margin"] = str(bottom_margin_in)
     if fit_to_page:
         params["scale"] = "4"
     response = _get_with_retry(session, url, params)
@@ -471,22 +381,6 @@ def export_xlsx(drive: Resource, file_id: str) -> bytes:
     re-uploaded wholesale any more, only used to locate cells for
     write_cells."""
     return _export(drive, file_id, _XLSX_MIME_TYPE)
-
-
-def replace_content(drive: Resource, file_id: str, local_xlsx_path: str) -> None:
-    """Overwrite the Sheets file at `file_id` with the contents of a local
-    .xlsx -- Drive converts it to native Sheets format on upload, the same
-    conversion Google Sheets' own File > Import > Replace spreadsheet
-    does. Nothing in this codebase calls this any more (see this
-    module's own docstring): confirmed live that pointing it at a
-    template file directly doesn't reconstruct that file's own
-    formatting with full fidelity, corrupting a real template the one
-    time this was tried for template maintenance. Kept only as a thin,
-    correct wrapper -- don't reach for this to fix a template's
-    formatting; use a targeted Sheets API batchUpdate (see
-    hide_gridlines) instead."""
-    media = MediaFileUpload(local_xlsx_path, mimetype=_XLSX_MIME_TYPE)
-    drive.files().update(fileId=file_id, media_body=media, supportsAllDrives=True).execute()
 
 
 def delete_file(drive: Resource, file_id: str) -> None:
@@ -531,405 +425,6 @@ def write_cells(sheets: Resource, spreadsheet_id: str, cells: Sequence[CellWrite
             spreadsheetId=spreadsheet_id,
             body={"valueInputOption": "USER_ENTERED", "data": data},
         )
-    )
-
-
-def clear_cells(
-    sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int, int, int]]
-) -> None:
-    """Clear the value, border formatting, *and* data validation of every
-    cell in each of `ranges` -- (sheet_name, 0-indexed start row,
-    0-indexed end row, 0-indexed start column, 0-indexed end column), all
-    ends exclusive, the shape FillResult.cleared_ranges carries -- via one
-    Sheets API `batchUpdate` `repeatCell` request per range. A per-report,
-    per-copy content change (unrelated to hide_gridlines' template-wide
-    metadata fix above) -- used by sat_score_report_writer.
-    fill_sat_score_report to remove a Module 2 block occurrence that
-    wasn't administered. Data validation is cleared alongside value and
-    border deliberately: a boolean-type validation renders as a checkbox
-    *widget* independent of the cell's own value, so clearing only the
-    value left an empty, unchecked checkbox floating with nothing else
-    around it -- confirmed live. One `get` call resolves every sheet name
-    to its numeric sheetId first, since the batchUpdate request itself
-    only accepts that, not a name. A no-op (no API call at all) if
-    `ranges` is empty. Raises ValueError if a range names a sheet this
-    spreadsheet doesn't have."""
-    if not ranges:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    requests = []
-    for sheet_name, start_row, end_row, start_col, end_col in ranges:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-        requests.append(
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": sheet_id_by_title[sheet_name],
-                        "startRowIndex": start_row,
-                        "endRowIndex": end_row,
-                        "startColumnIndex": start_col,
-                        "endColumnIndex": end_col,
-                    },
-                    "cell": {},
-                    "fields": "userEnteredValue,userEnteredFormat.borders,dataValidation",
-                }
-            }
-        )
-    _execute_with_rate_limit_retry(
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-    )
-
-
-def narrow_columns(
-    sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int, float]]
-) -> None:
-    """Shrink every column in each of `ranges` -- (sheet_name, 0-indexed
-    start column, 0-indexed end column [exclusive], shrink factor) -- to
-    `factor` times its own *current* width, via one Sheets API `get` call
-    that reads each column's actual current `pixelSize`, followed by one
-    `updateDimensionProperties` request per column setting its new
-    `pixelSize` explicitly (`round(current * factor)`, floored at 1px). A
-    no-op (no API call at all) if `ranges` is empty.
-
-    This exists because Sheets' "fit to page" print scale is computed
-    from the print area's *natural* (unscaled) size -- confirmed live
-    (see sat_score_report_writer.visible_table_columns_to_narrow's own
-    docstring for the full reasoning and the real numbers behind it):
-    with the Module 2 answer tables' natural column widths as wide as
-    they currently are, "fit to page" has to shrink everything down to
-    ~55% to keep the *widest* dimension (width, confirmed the binding
-    one -- a real export's rendered width already reached the page's
-    full available width at that scale, while its rendered height fell
-    well short of the page's available height) inside one page -- and
-    since scale applies uniformly to both dimensions, that same
-    width-driven 55% leaves height under-filled even though height alone
-    had plenty of room to spare. Narrowing the columns that make width
-    the tighter constraint lets "fit to page" recompute a *larger*
-    uniform scale on its own (still never overflowing -- "fit to page"
-    always finds whatever scale fits, regardless of how large or small
-    the natural size is), which -- being applied uniformly -- makes the
-    *unshrunk* rows render taller too, filling more of the page's actual
-    height. This changes column *width*, not font size or row height, on
-    the theory that width is what's forcing the scale down in the first
-    place; nothing about font size is touched here.
-
-    Deliberately reads each column's *actual* current pixel width from
-    Sheets itself, rather than trying to convert `openpyxl`'s own
-    (character-unit) column width into pixels locally -- confirmed live
-    that a generic char-unit-to-pixel formula doesn't reliably match
-    what Sheets actually renders a given `width` as; reading the real
-    `pixelSize` avoids compounding that guesswork into an already
-    uncertain factor.
-
-    Rows and columns are *not* interchangeable for this kind of fix --
-    confirmed live, painfully: hiding and deleting a sheet's own trailing
-    rows (see delete_rows) had *zero* measurable effect on the exported
-    PDF, while hiding columns (hide_columns) measurably changed it. This
-    function only ever touches columns for that reason.
-
-    One `get` call resolves every sheet name to its numeric sheetId and
-    reads that sheet's current column widths together (multiple `ranges`
-    for the same sheet are matched back up by request order -- the
-    Sheets API's own `get` response groups `data` entries per sheet, not
-    per requested range, so this doesn't just zip `ranges` against the
-    response 1:1). Raises ValueError if a range names a sheet this
-    spreadsheet doesn't have."""
-    if not ranges:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    for sheet_name, _start, _end, _factor in ranges:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-
-    a1_ranges = [
-        f"'{sheet_name}'!{get_column_letter(start_col + 1)}1:{get_column_letter(end_col)}1"
-        for sheet_name, start_col, end_col, _factor in ranges
-    ]
-    widths_response = sheets.spreadsheets().get(
-        spreadsheetId=spreadsheet_id,
-        ranges=a1_ranges,
-        fields="sheets.properties.sheetId,sheets.data.columnMetadata.pixelSize",
-    ).execute()
-    data_by_sheet_id: Dict[int, List[dict]] = {
-        sheet_result["properties"]["sheetId"]: sheet_result.get("data", [])
-        for sheet_result in widths_response.get("sheets", [])
-    }
-    next_data_index: Dict[int, int] = {}
-
-    requests = []
-    for sheet_name, start_col, end_col, factor in ranges:
-        sheet_id = sheet_id_by_title[sheet_name]
-        data_index = next_data_index.get(sheet_id, 0)
-        next_data_index[sheet_id] = data_index + 1
-        column_metadata = data_by_sheet_id.get(sheet_id, [])[data_index].get("columnMetadata", [])
-        for offset, col_meta in enumerate(column_metadata):
-            current_width = col_meta.get("pixelSize")
-            if current_width is None:
-                continue
-            new_width = max(1, round(current_width * factor))
-            col_index = start_col + offset
-            requests.append(
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": col_index,
-                            "endIndex": col_index + 1,
-                        },
-                        "properties": {"pixelSize": new_width},
-                        "fields": "pixelSize",
-                    }
-                }
-            )
-    if requests:
-        _execute_with_rate_limit_retry(
-            sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-        )
-
-
-def allow_text_overflow(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, int]]) -> None:
-    """Set `OVERFLOW_CELL` wrap strategy on each of `cells` -- (sheet_name,
-    0-indexed row, 0-indexed column) -- via one Sheets API `batchUpdate`
-    `repeatCell` request per cell, so text too wide for its own column
-    visibly spills into blank neighboring cells instead of being clipped.
-    A no-op (no API call at all) if `cells` is empty.
-
-    Exists because narrow_columns can shrink a block's own title column
-    enough to expose an inconsistency already latent in the template
-    itself: confirmed live against a real export, one subject's own
-    canonical Module 2 title rendered with the end of its text missing
-    entirely -- not just visually overlapped by a neighboring cell's own
-    background, but genuinely truncated in the exported PDF's own text
-    layer -- while a *different* subject's own canonical Module 2 title,
-    at the same narrowed column width, rendered completely. Since both
-    are the exact same physical columns (just different rows), the only
-    explanation is that these two cells never shared the same
-    `wrapStrategy` in the template to begin with -- one already tolerated
-    overflowing into its blank neighbors, the other didn't, and only
-    widening the gap (narrow_columns) that a full-width column used to
-    paper over made that latent difference visible. Explicitly setting
-    `OVERFLOW_CELL` on every title cell removes the dependence on
-    whatever the template happens to already have there, rather than
-    hoping a wider column reliably works around it.
-
-    One `get` call resolves every sheet name to its numeric sheetId
-    first, since the batchUpdate request itself only accepts that, not a
-    name. Raises ValueError if a cell names a sheet this spreadsheet
-    doesn't have."""
-    if not cells:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    requests = []
-    for sheet_name, row, col in cells:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-        requests.append(
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": sheet_id_by_title[sheet_name],
-                        "startRowIndex": row,
-                        "endRowIndex": row + 1,
-                        "startColumnIndex": col,
-                        "endColumnIndex": col + 1,
-                    },
-                    "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
-                    "fields": "userEnteredFormat.wrapStrategy",
-                }
-            }
-        )
-    _execute_with_rate_limit_retry(
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-    )
-
-
-def _hex_to_color(hex_rgb: str) -> Dict[str, float]:
-    """An 8-digit ARGB hex string (openpyxl's own `Color.rgb` format,
-    e.g. "FF0497D4") to a Sheets API `Color` object -- alpha is dropped
-    (Sheets' `backgroundColor` field has no alpha channel of its own)."""
-    hex_rgb = hex_rgb[-6:]  # drop a leading 2-digit alpha if present
-    return {
-        "red": int(hex_rgb[0:2], 16) / 255,
-        "green": int(hex_rgb[2:4], 16) / 255,
-        "blue": int(hex_rgb[4:6], 16) / 255,
-    }
-
-
-def extend_fill(sheets: Resource, spreadsheet_id: str, cells: Sequence[Tuple[str, int, str, int, int]]) -> None:
-    """Set a solid background fill on each of `cells` -- (sheet_name,
-    0-indexed row, ARGB hex color, 0-indexed start column, 0-indexed end
-    column [exclusive]) -- via one Sheets API `batchUpdate` `repeatCell`
-    request per entry. A no-op (no API call at all) if `cells` is empty.
-
-    Exists to extend a decorative full-row accent fill that
-    narrow_columns has a side effect on: confirmed live, a fill spanning
-    a fixed range of columns is exactly as wide as the sum of those
-    columns' own widths, so narrowing any of the columns it covers
-    narrows the fill along with them -- see
-    sat_score_report_writer.header_bar_extension's own docstring for the
-    real numbers behind it. This re-applies the *same* color (read from
-    the sheet itself, not hardcoded) across the additional columns that
-    still need it to match the table's own narrowed width.
-
-    One `get` call resolves every sheet name to its numeric sheetId
-    first, since the batchUpdate request itself only accepts that, not a
-    name. Raises ValueError if a cell names a sheet this spreadsheet
-    doesn't have."""
-    if not cells:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    requests = []
-    for sheet_name, row, hex_color, start_col, end_col in cells:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-        requests.append(
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": sheet_id_by_title[sheet_name],
-                        "startRowIndex": row,
-                        "endRowIndex": row + 1,
-                        "startColumnIndex": start_col,
-                        "endColumnIndex": end_col,
-                    },
-                    "cell": {"userEnteredFormat": {"backgroundColor": _hex_to_color(hex_color)}},
-                    "fields": "userEnteredFormat.backgroundColor",
-                }
-            }
-        )
-    _execute_with_rate_limit_retry(
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-    )
-
-
-def hide_columns(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
-    """Hide every whole column in each of `ranges` -- (sheet_name,
-    0-indexed start column, 0-indexed end column), end exclusive, the
-    shape FillResult.hidden_column_ranges carries -- via one Sheets API
-    `batchUpdate` `updateDimensionProperties` request per range, the same
-    metadata change Sheets' own right-click "Hide column" sets
-    (`hiddenByUser`).
-
-    Used alongside clear_cells, not instead of it: clearing a Module 2
-    occurrence's cells removes its *content* but leaves its columns
-    still fully present (and still full width) in the sheet's print
-    area -- confirmed live against a real export, a cleared-but-not-
-    hidden occurrence's blank columns were still being counted when
-    "fit to page" computed its scale, forcing that scale down far below
-    what the actually-visible content needed and leaving the exported
-    PDF's real tables squeezed into a fraction of the page with a large
-    blank margin around them. Hiding the same columns this clears
-    removes them from the print area entirely, letting "fit to page"
-    scale to the content that's actually left.
-
-    This used to be how a Module 2 occurrence was hidden at all, before
-    fill_sat_score_report started consolidating every subject's real
-    answers into one shared column (_canonical_module2_col) -- back then
-    hiding was keyed only by which difficulty was "active," which broke
-    the moment two subjects administered *different* difficulties (each
-    needing a *different* column hidden, but Reading & Writing and Math
-    share the same four column positions -- see sat_score_report_writer's
-    own module docstring). Now that every subject's real answers always
-    land in the same canonical column and every other occurrence is
-    always cleared regardless of subject, the same non-canonical columns
-    are always the ones being hidden too -- safe again, since nothing
-    real is ever left there for *any* subject to lose.
-
-    One `get` call resolves every sheet name to its numeric sheetId
-    first, since the batchUpdate request itself only accepts that, not a
-    name. A no-op (no API call at all) if `ranges` is empty. Raises
-    ValueError if a range names a sheet this spreadsheet doesn't have."""
-    if not ranges:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    requests = []
-    for sheet_name, start_col, end_col in ranges:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-        requests.append(
-            {
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id_by_title[sheet_name],
-                        "dimension": "COLUMNS",
-                        "startIndex": start_col,
-                        "endIndex": end_col,
-                    },
-                    "properties": {"hiddenByUser": True},
-                    "fields": "hiddenByUser",
-                }
-            }
-        )
-    _execute_with_rate_limit_retry(
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-    )
-
-
-def delete_rows(sheets: Resource, spreadsheet_id: str, ranges: Sequence[Tuple[str, int, int]]) -> None:
-    """Permanently remove every whole row in each of `ranges` --
-    (sheet_name, 0-indexed start row, 0-indexed end row), end exclusive,
-    the shape FillResult.deleted_row_ranges carries -- via one Sheets API
-    `batchUpdate` `deleteDimension` request per range.
-
-    This used to be `hide_rows` (`updateDimensionProperties`, setting
-    `hiddenByUser` -- the exact same *kind* of request hide_columns still
-    uses for Module 2's non-canonical columns) -- confirmed live that
-    hiding rows this way had *no effect at all* on the exported PDF's
-    "fit to page" scale, unlike hiding columns, which measurably fixed
-    the analogous width problem: a real export before and after hiding
-    the same trailing rows came out pixel-for-pixel identical. Deleting
-    the rows outright instead of hiding them does what hiding evidently
-    doesn't -- it actually shrinks the sheet's own row count, so there's
-    nothing left there at all for Sheets' print-area/used-range
-    computation to still be counting.
-
-    Used for a different problem than hide_columns, though: not a Module
-    2 occurrence that wasn't administered, but a sheet's own trailing
-    rows that were never real content to begin with. Confirmed live
-    against the real "Student Responses" tab: it carries formatting
-    (row heights, borders) out to row 996 even though its real content
-    -- every block, every score cell, the footer -- ends at row 64; see
-    sat_score_report_writer.trailing_rows_to_delete for how that boundary
-    is found. Safe to delete outright (rather than merely hide) because
-    it's *only ever* the sheet's own trailing rows, strictly below every
-    row anything real -- a formula, a flag cell, an answer -- lives on:
-    deleting rows shifts row numbers for whatever comes *after* the
-    deleted range, and nothing does, since this is always the sheet's own
-    last rows.
-
-    One `get` call resolves every sheet name to its numeric sheetId
-    first, since the batchUpdate request itself only accepts that, not a
-    name. A no-op (no API call at all) if `ranges` is empty. Raises
-    ValueError if a range names a sheet this spreadsheet doesn't have."""
-    if not ranges:
-        return
-    meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
-    sheet_id_by_title = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-    requests = []
-    for sheet_name, start_row, end_row in ranges:
-        if sheet_name not in sheet_id_by_title:
-            raise ValueError(f"No sheet named {sheet_name!r} in spreadsheet {spreadsheet_id}")
-        requests.append(
-            {
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": sheet_id_by_title[sheet_name],
-                        "dimension": "ROWS",
-                        "startIndex": start_row,
-                        "endIndex": end_row,
-                    },
-                }
-            }
-        )
-    _execute_with_rate_limit_retry(
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
     )
 
 
